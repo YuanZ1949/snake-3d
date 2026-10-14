@@ -130,7 +130,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
 | `rooms` | — | 主动请求房间列表 |
-| `create` | `name, size, theme, rock, portal` | 创建自定义房间；非法值回退主题默认 |
+| `create` | `name, size, theme, rock, portal, winMode, limit, respawn` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生） |
 | `watch` | `room` | 进入旁观（会先 `leave_room`） |
 | `join` | `room, name, skin` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效 |
 | `leave` | — | **新增**：返回主页，把自己移出房间（旧客户端不发，行为不变） |
@@ -154,14 +154,15 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
 | `snap` | 见下 | **50ms 一次的全量快照** |
 
-**`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[], proj[], ev[], round, win, over`
+**`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[], proj[], ev[], round, win, over, winMode, limit, respawn, remain`
+> 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 
 **`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost}, user, cause, by`
 
-**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over`
+**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn`
 > `players` 是**已连接人数**（含旁观），`alive` 是存活蛇数。
 
-**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win`
+**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn`
 > 顶层消息由 `onMsg` 的 switch 处理，`snap` 在 switch 之外单独分支；事件只随快照下发，不单独成帧。
 > `bite{eater,victim,cut,score}`、`hit{x,y,by,victim,cut,score}` 是截断类事件。
 
@@ -196,6 +197,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `COMBO_MS` | 3000 | 连击窗口：两次吃果间隔超此值连击重置 |
 | `COMBO_TIERS` | 15/10/5 → x2.5/x2/x1.5 | 连击倍率档位（1-4 连 x1） |
 | `MAP_MIN / MAP_MAX` | 12 / **96** | 地图尺寸上下限 |
+| `RESPAWN_MS` | 3000 | 无限复活模式下死亡到重生的等待 ms |
+| `LIMIT_MAX` | 3600 | 限时模式上限（秒） |
 | `FRUITS` | 10/15/20/15/15 | 5 种水果分值 |
 | `USAGE_MAX` | 8 MB | 用量日志轮转阈值 |
 
@@ -209,6 +212,12 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **速度**：客户端三档 `慢260 / 中150 / 快85`（比例约 3 倍），服务端 `apply_speed()` 立即生效，实际 tick 保持在 `[base-45, base]`（吃水果会累积加速），下限 60ms；加速道具再 ×0.6（下限 60）。
 - **出生点**：`spawn_player` 会规避其他蛇与障碍，且初始朝向**不指向最近外墙**；出生后 2.5 秒无敌。
 - **胜利**：分数 ≥ `WIN_SCORE` 或场上只剩一条存活蛇时进入 `win_pending`，等各客户端 `ready` 后 `new_round()`。
+- **战场自定义（批1）**：每房间 `win_mode / limit / respawn` 三参数决定结算（`check_win()` 四级判定，按顺序）：
+  1. **限时**（`limit>0`，计时自 `round_started`，新局重置）：时间到 → 当前比分最高者 +`WIN_SCORE` 胜（`ev('win')` 带 `reason:'time'`），并列最高 → 平局；
+  2. **无限复活**（`respawn=True`）：死亡不触发淘汰结算，`died_at` 起 3s 后原地重生（`spawn_player` 重建身体 + `ev('respawn')`）；
+  3. **积分赛**（`win_mode='score'`）：**全员死亡**才按比分结算（`reason:'score'`）；
+  4. **死斗**（默认 `last`）：只剩一条存活 → 胜；全死 → 平局。
+  丢人（drop_player）同样走 `check_win`。参数校验：`winMode` 非 last/score 回退 last；`limit` 夹 0–3600；`respawn` 必须布尔；limit=0 时 score→300s、respawn→120s 兜底（score 优先）。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -226,7 +235,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 ## 7. 房间系统
 
 - **默认房间**：`a` 新手村 16×16、`b` 标准局 24×24、`c` 大神场 32×32 —— **永不回收**。
-- **自定义房间**：`create` 时一次性决定 `size(12–96)/theme/rock(0.0–4.0)/portal(bool)/name(≤16 字)`，并在**创建瞬间**构建地形与放置水果（`baa9843` 修复）。
+- **自定义房间**：`create` 时一次性决定 `size(12–96)/theme/rock(0.0–4.0)/portal(bool)/name(≤16 字)/winMode(last|score)/limit(0–3600 秒)/respawn(bool)`，并在**创建瞬间**构建地形与放置水果（`baa9843` 修复）。
 - **尺寸档位（前端下拉，已分组）**：小 12·16 ｜ 标准 24·32 ｜ 大 40·48·64 ｜ 超大 80·96。
 - **房间列表**：默认只列**至少 1 人**的房间并按人数倒序，同时始终显示当前选中房间；加入/离开/创建时主动广播刷新。
 - **回收规则 `gc_empty_rooms()`**：房间无人（无玩家、无旁观）**且创建者会话已消失**才删除。调用点：`watch`/`join`/`leave` 处理器内（此时目标房间已就位，避免"换房时旧房被误删/新加入的房被删"竞态）以及 handler 的 `finally`（在 `all_sessions.discard` 之后）。

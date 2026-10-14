@@ -24,6 +24,8 @@ SPAWN_INV = 2500        # 重生无敌保护 ms
 ITEM_LIFE = 12000       # 道具在地图上的存活时间
 EFFECT_MS = 6000        # 道具效果持续时间
 MIN_LEN = 2             # 蛇被截断后保留的最少格数
+RESPAWN_MS = 3000       # 复活模式：死亡后延迟复活 ms
+LIMIT_MAX = 3600        # 战场限时上限（秒）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage')
@@ -290,13 +292,29 @@ usage = Usage()
 
 # ============================================================ 房间
 class Room:
-    def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None):
+    def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
+                 win_mode='last', limit=0, respawn=False):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
         self.theme_fixed = theme_fixed if theme_fixed in THEMES else None  # 固定主题（None=每局随机）
         self.rock_mult = rock_mult          # 岩石密度倍率覆盖
         self.portal_on = portal_on          # 传送门开关覆盖
+        # ---- 战场自定义：获胜模式（last=死斗留最后一人 / score=积分赛）/ 限时秒（0=不限）/ 无限复活 ----
+        self.win_mode = win_mode if win_mode in ('last', 'score') else 'last'
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 0
+        self.limit = max(0, min(LIMIT_MAX, limit))
+        self.respawn = isinstance(respawn, bool) and respawn
+        # 限时兜底：积分赛必须有终点；复活模式不能靠淘汰结算，也必须限时
+        if self.limit == 0:
+            if self.win_mode == 'score':
+                self.limit = 300
+            elif self.respawn:
+                self.limit = 120
+        self.round_started = now_ms()        # 本局开始时间（限时结算的时钟）
         self.owner = None                   # 创建者会话 id，断开后空房间才回收
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
         self.players = {}          # pid -> player dict
@@ -413,6 +431,9 @@ class Room:
             'watchers': max(0, len(self.subs) - len(self.players)),
             'round': self.round_no,
             'over': self.win_pending is not None,
+            'winMode': self.win_mode,                  # 获胜模式（last=死斗 / score=积分）
+            'limit': self.limit,                       # 限时秒（0=不限）
+            'respawn': self.respawn,                   # 是否无限复活
         }
 
     # -------- 玩家生命周期 --------
@@ -461,6 +482,7 @@ class Room:
         p['grow'] = 0
         p['combo'] = 0
         p['combo_at'] = 0
+        p.pop('died_at', None)
         if not fresh_cells and p.get('cells'):
             return
         pid = p.get('id')
@@ -589,6 +611,39 @@ class Room:
         joined = [pid for pid in self.round_ids if pid in self.players]
         if len(joined) < 2:
             return
+        # 1) 限时到：一律按当前比分最高者胜（并列 → 平局）
+        if self.limit and now - self.round_started >= self.limit * 1000:
+            top = max(self.players[pid]['score'] for pid in joined)
+            leaders = [pid for pid in joined if self.players[pid]['score'] == top]
+            if len(leaders) == 1:
+                w = self.players[leaders[0]]
+                w['score'] += WIN_SCORE
+                self.win_pending = {'winner': leaders[0]}
+                self.ev('win', id=leaders[0], name=w['name'], bonus=WIN_SCORE, reason='time')
+                self._credit_win(w)
+            else:
+                self.win_pending = {'winner': None}
+                self.ev('win', id=None, name=None, bonus=0, reason='time')
+            return
+        # 2) 复活模式：淘汰不结算，只等限时
+        if self.respawn:
+            return
+        # 3) 积分赛：直到所有人死亡才按比分结算
+        if self.win_mode == 'score':
+            if len(alive) == 0:
+                top = max(self.players[pid]['score'] for pid in joined)
+                leaders = [pid for pid in joined if self.players[pid]['score'] == top]
+                if len(leaders) == 1:
+                    w = self.players[leaders[0]]
+                    w['score'] += WIN_SCORE
+                    self.win_pending = {'winner': leaders[0]}
+                    self.ev('win', id=leaders[0], name=w['name'], bonus=WIN_SCORE, reason='score')
+                    self._credit_win(w)
+                else:
+                    self.win_pending = {'winner': None}
+                    self.ev('win', id=None, name=None, bonus=0, reason='score')
+            return
+        # 4) 死斗（默认）：最后一人获胜，全灭平局
         if len(alive) == 1:
             w = self.players[alive[0]]
             w['score'] += WIN_SCORE
@@ -624,6 +679,7 @@ class Room:
         self.bonus = None
         self.items = []
         self.round_no += 1
+        self.round_started = now_ms()        # 限时模式的时钟随新一局重置
         self._pick_theme()
         self.build_terrain()
         for pid in list(self.round_ids):
@@ -641,15 +697,8 @@ class Room:
         self.ready.discard(pid)
         if p and p.get('user'):
             store.record_best(p['user'], p['score'])
-        if self.round_ids and not self.win_pending:
-            alive = [i for i in self.round_ids if i in self.players and self.players[i]['alive']]
-            joined = [i for i in self.round_ids if i in self.players]
-            if len(joined) >= 2 and len(alive) == 1:
-                w = self.players[alive[0]]
-                w['score'] += WIN_SCORE
-                self.win_pending = {'winner': alive[0]}
-                self.ev('win', id=alive[0], name=w['name'], bonus=WIN_SCORE)
-                self._credit_win(w)
+        # 退房也走统一结算（含限时/获胜模式判定），不再内联"剩一人即胜"
+        self.check_win(now_ms())
         if self.win_pending and not any(i in self.players for i in self.round_ids):
             self.win_pending = None
             self.ready.clear()
@@ -760,6 +809,7 @@ class Room:
                 q['alive'] = False
                 q['cause'] = 'bite'
                 q['by'] = eid
+                q['died_at'] = now
                 ep['grow'] = ep.get('grow', 0) + cut
                 gained = self.score_gain(ep, BITE_SCORE_PER_CELL * cut, now)
                 if ep.get('user'):
@@ -784,6 +834,7 @@ class Room:
         for p in due:
             if id(p) in dead:
                 p['alive'] = False
+                p['died_at'] = now
                 self.ev('die', id=p['id'], cause=p.get('cause', 'wall'), by=p.get('by'))
                 if p.get('user'):
                     store.inc(p['user'], 'deaths')
@@ -886,6 +937,13 @@ class Room:
         return ATK_COOL // 2 if self.effect_active(p, 'rage', now) else ATK_COOL
 
     def step_wrapper(self, dt, now):
+        # 复活模式：死亡延迟到点后原地重建（限时内不结算淘汰）
+        if self.respawn and not self.win_pending:
+            for p in list(self.players.values()):
+                if not p['alive'] and p.get('died_at') and now - p['died_at'] >= RESPAWN_MS:
+                    self.spawn_player(p)
+                    p.pop('died_at', None)
+                    self.ev('respawn', id=p['id'], name=p['name'])
         self._magnet_pull(now)
         # 星星与道具过期
         if self.bonus and now - self.bonus['born'] > BONUS_LIFE:
@@ -972,6 +1030,8 @@ class Room:
                       'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0)}
                      for pr in self.projectiles],
             'round': self.round_no, 'cols': self.cols, 'rows': self.rows,
+            'winMode': self.win_mode, 'limit': self.limit, 'respawn': self.respawn,
+            'remain': max(0, self.limit - int((now - self.round_started) // 1000)) if self.limit else 0,
             'win': None if not self.win_pending else self.win_pending['winner'],
             'over': self.win_pending is not None,
             'ev': self.events[:],
@@ -1193,7 +1253,18 @@ async def handle_msg(sess, m):
         portal = m.get('portal')
         if not isinstance(portal, bool):
             portal = None
-        rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal)
+        # ---- 战场配置：获胜模式 / 限时秒 / 无限复活（非法值回退默认） ----
+        win_mode = m.get('winMode')
+        if win_mode not in ('last', 'score'):
+            win_mode = 'last'
+        try:
+            limit = int(m.get('limit', 0))
+        except (TypeError, ValueError):
+            limit = 0
+        limit = max(0, min(LIMIT_MAX, limit))
+        respawn = m.get('respawn') is True
+        rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
+                          win_mode=win_mode, limit=limit, respawn=respawn)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})

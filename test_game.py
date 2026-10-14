@@ -28,8 +28,8 @@ def mk(room, pid, name, cells, d):
     return p
 
 
-def fresh(size=10):
-    r = serve.Room("t", "t", size)
+def fresh(size=10, **kw):
+    r = serve.Room("t", "t", size, **kw)
     r.rocks = []
     r.walls = []
     r.portals = []
@@ -449,6 +449,126 @@ def test_rage_halves_cooldown_and_speeds_bullet():
     print("rage OK: cd", serve.ATK_COOL // 2, "bullet spd x1.5")
 
 
+def test_battle_mode_config():
+    r = serve.Room("t", "t", 10, win_mode="score", limit=60, respawn=True)
+    assert r.win_mode == "score" and r.limit == 60 and r.respawn is True
+    bad = serve.Room("t", "t", 10, win_mode="hack", limit=-5, respawn="yes")
+    assert bad.win_mode == "last" and bad.limit == 0 and bad.respawn is False, (
+        bad.win_mode, bad.limit, bad.respawn)
+    over = serve.Room("t", "t", 10, limit=99999)
+    assert over.limit == 3600, over.limit
+    rs = serve.Room("t", "t", 10, respawn=True)
+    assert rs.limit == 120, rs.limit            # 无限复活默认 2 分钟
+    sc = serve.Room("t", "t", 10, win_mode="score")
+    assert sc.limit == 300, sc.limit            # 积分赛默认 5 分钟
+    both = serve.Room("t", "t", 10, win_mode="score", respawn=True)
+    assert both.limit == 300, both.limit        # 积分赛优先（并列取更长）
+    info = r.info()
+    assert info["winMode"] == "score" and info["limit"] == 60 and info["respawn"] is True, info
+    snap = r.snapshot(serve.now_ms())
+    assert snap["winMode"] == "score" and snap["limit"] == 60 and snap["respawn"] is True, snap
+    assert isinstance(snap.get("remain"), int) and snap["remain"] > 0, snap.get("remain")
+    # 回合时钟随 new_round 重置
+    old = r.round_started
+    r.round_ids = set()
+    r.new_round()
+    assert r.round_started >= old, (r.round_started, old)
+    print("battle config OK: mode=%s limit=%d respawn=%s" % (
+        r.win_mode, r.limit, r.respawn))
+
+
+def test_time_limit_ends_by_score():
+    now = serve.now_ms()
+    r = fresh(10, limit=10)
+    r.round_started = now - 11000
+    p1 = mk(r, 1, "A", [(4, 4), (3, 4), (2, 4)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (6, 7), (5, 7)], (1, 0))
+    p1["score"], p2["score"] = 50, 30
+    r.check_win(now)
+    assert r.win_pending == {"winner": 1}, r.win_pending
+    assert p1["score"] == 50 + serve.WIN_SCORE, p1["score"]
+    print("time limit OK: winner=higher score")
+
+
+def test_time_limit_tie_is_draw():
+    now = serve.now_ms()
+    r = fresh(10, limit=10)
+    r.round_started = now - 11000
+    p1 = mk(r, 1, "A", [(4, 4), (3, 4), (2, 4)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (6, 7), (5, 7)], (1, 0))
+    p1["score"] = p2["score"] = 40
+    r.check_win(now)
+    assert r.win_pending == {"winner": None}, r.win_pending
+    assert p1["score"] == 40 and p2["score"] == 40, "平局不加分"
+    print("time limit tie -> draw OK")
+
+
+def test_score_mode_ends_only_when_all_dead():
+    now = serve.now_ms()
+    r = fresh(10, win_mode="score")
+    assert r.limit == 300, r.limit
+    p1 = mk(r, 1, "A", [(4, 4), (3, 4), (2, 4)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (6, 7), (5, 7)], (1, 0))
+    p1["score"], p2["score"] = 10, 20
+    p1["alive"] = False
+    r.check_win(now)
+    assert r.win_pending is None, "积分赛一人死不算结束"
+    p2["alive"] = False
+    r.check_win(now)
+    assert r.win_pending == {"winner": 2}, r.win_pending
+    assert p2["score"] == 20 + serve.WIN_SCORE, p2["score"]
+    print("score mode OK: ends when all dead, higher score wins")
+
+
+def test_last_mode_survival_win_still_works():
+    now = serve.now_ms()
+    r = fresh(10)
+    p1 = mk(r, 1, "A", [(4, 4), (3, 4), (2, 4)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (6, 7), (5, 7)], (1, 0))
+    p2["alive"] = False
+    r.check_win(now)
+    assert r.win_pending == {"winner": 1}, r.win_pending
+    assert p1["score"] == serve.WIN_SCORE, p1["score"]
+    # 全灭 → 平局
+    r.win_pending = None
+    p1["alive"] = False
+    r.check_win(now)
+    assert r.win_pending == {"winner": None}, r.win_pending
+    print("last mode survival/draw OK")
+
+
+def test_respawn_never_ends_by_elimination():
+    now = serve.now_ms()
+    r = fresh(10, respawn=True)
+    assert r.limit == 120, r.limit
+    p1 = mk(r, 1, "A", [(4, 4), (3, 4), (2, 4)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (6, 7), (5, 7)], (1, 0))
+    p1["alive"] = False
+    r.check_win(now)
+    assert r.win_pending is None, "复活模式一人死不结算"
+    p2["alive"] = False
+    r.check_win(now)
+    assert r.win_pending is None, "复活模式全死也不结算（等复活/限时）"
+    print("respawn no-elimination OK")
+
+
+def test_respawn_after_delay():
+    now = serve.now_ms()
+    r = fresh(10, respawn=True)
+    p1 = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    p2 = mk(r, 2, "B", [(0, 2), (1, 2), (2, 2)], (-1, 0))
+    r.step(0.05, now)
+    assert not p2["alive"] and p2.get("cause") == "wall", p2.get("cause")
+    assert p2.get("died_at") == now, p2.get("died_at")
+    r.step_wrapper(0.05, now + serve.RESPAWN_MS - 500)
+    assert not p2["alive"], "未到复活时间不该复活"
+    r.step_wrapper(0.05, now + serve.RESPAWN_MS + 100)
+    assert p2["alive"], "到点应复活"
+    assert len(p2["cells"]) == 3, p2["cells"]
+    assert r.win_pending is None, "复活模式不因存活人数结算"
+    print("respawn delay OK")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -459,6 +579,10 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_free_cells_big_map, test_usage_log,
            test_combo_increments_and_expires, test_combo_multiplier_tiers,
            test_double_item_doubles_score, test_magnet_pulls_food,
-           test_rage_halves_cooldown_and_speeds_bullet]:
+           test_rage_halves_cooldown_and_speeds_bullet,
+           test_battle_mode_config, test_time_limit_ends_by_score,
+           test_time_limit_tie_is_draw, test_score_mode_ends_only_when_all_dead,
+           test_last_mode_survival_win_still_works,
+           test_respawn_never_ends_by_elimination, test_respawn_after_delay]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

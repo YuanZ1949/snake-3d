@@ -387,6 +387,7 @@
   <div class="hud">
     <span class="chip">得分 <b id="score">0</b></span>
     <span class="chip combo hidden" id="comboChip">🔥 <b id="comboN">0</b></span>
+    <span class="chip hidden" id="timeChip">⏱ <b id="timeN">0:00</b></span>
     <span class="chip">最高 <b id="best">0</b></span>
     <button class="chip" id="btnSpeed" aria-label="速度">速度 <b id="speed">中</b></button>
     <button class="chip" id="btnMute" aria-label="静音">🔊</button>
@@ -474,6 +475,27 @@
                 <option value="">跟随主题</option>
                 <option value="1">开</option>
                 <option value="0">关</option>
+              </select>
+            </label>
+            <label><span>获胜</span>
+              <select class="nameIn sm" id="cWin" aria-label="获胜模式">
+                <option value="">死斗·留最后一人</option>
+                <option value="score">积分·全员阵亡结算</option>
+              </select>
+            </label>
+            <label><span>限时</span>
+              <select class="nameIn sm" id="cLimit" aria-label="限时">
+                <option value="">不限时</option>
+                <option value="60">1 分钟</option>
+                <option value="120">2 分钟</option>
+                <option value="300">5 分钟</option>
+                <option value="600">10 分钟</option>
+              </select>
+            </label>
+            <label><span>复活</span>
+              <select class="nameIn sm" id="cRespawn" aria-label="复活模式">
+                <option value="">关闭·阵亡观战</option>
+                <option value="1">无限复活</option>
               </select>
             </label>
           </div>
@@ -592,6 +614,7 @@
   let myStats = null;
   let authReq = '';            // 最近一次 auth 请求类型：authtoken / login / register
   let roomList = [];
+  let roomCfg = {winMode: 'last', limit: 0, respawn: false, remain: 0};  // 当前房间战场配置（来自快照）
   let curRoom = localStorage.getItem(ROOM_KEY) || 'a';
   let myInv = 0, myEff = {};
   const ITEMS = {
@@ -1334,6 +1357,13 @@
   function updateHud() {
     scoreEl.textContent = (joined && myEnt) ? myEnt.score : score;
     speedEl.textContent = speedText(speedIdx);
+    const tc = $('timeChip');
+    if (roomCfg.limit > 0 && (joined || spectating)) {
+      tc.classList.remove('hidden');
+      $('timeN').textContent = fmtDur(roomCfg.remain | 0);
+    } else {
+      tc.classList.add('hidden');
+    }
     const c = (joined && myEnt) ? (myEnt.combo | 0) : 0;
     const chip = $('comboChip');
     chip.classList.toggle('hidden', c < 2);
@@ -1940,6 +1970,8 @@
         startScreen.classList.add('hidden');
       }
       const meta = {round: m.round, win: m.win, over: m.over, cols: m.cols, rows: m.rows};
+      roomCfg = {winMode: m.winMode || 'last', limit: m.limit | 0,
+                 respawn: !!m.respawn, remain: m.remain | 0};
       if (joined || spectating) {
         applyWorld(m, now);
         for (const e of (m.ev || [])) applyEvent(e);
@@ -2043,6 +2075,16 @@
         if (ev.ids && ev.ids.includes(myId)) { dirQ = []; sTurn(); }
         break;
       }
+      case 'respawn': {
+        const e = ents.get(ev.id);
+        if (e && e.cells[0]) {
+          const q = cellW(e.cells[0].x, e.cells[0].y);
+          burst(q.x, .6, q.z, 0x9bff9b, 20);
+          if (ev.id === myId) floater(q.x, 1.3, q.z, '已复活');
+        }
+        if (ev.id !== myId) beep(520, .08, 'triangle', .05);
+        break;
+      }
       case 'fire': {
         if (ev.id !== myId) sAtk();
         break;
@@ -2096,7 +2138,7 @@
       const killer = ents.get(ev.by);
       sub = killer ? ('被 ' + killer.name + ' 咬死了') : sub;
     }
-    sub += '　·　随时点击下方按钮重新入局';
+    sub += (roomCfg.respawn ? '　·　稍候自动复活' : '　·　随时点击下方按钮重新入局');
     $('overSub').textContent = sub;
     finalScore.textContent = sc;
     if (sc > best) {
@@ -2435,6 +2477,12 @@
     acctTip('已退出登录', '');
   }
 
+  function fmtDur(sec) {
+    sec = Math.max(0, sec | 0);
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
   function rockLabel(m) {
     if (typeof m !== 'number') return '岩石标准';
     if (m <= 0.01) return '无岩石';
@@ -2447,6 +2495,9 @@
     const th = THEME_LABEL[r.theme] || r.theme || '常规';
     const bits = [`${r.cols}×${r.rows}`, th + (r.themeFixed ? '' : '·每局随机'),
                   rockLabel(r.rock), r.portal ? '传送门开' : '传送门关'];
+    if (r.winMode === 'score') bits.push('积分赛');
+    if (r.respawn) bits.push('无限复活');
+    if (r.limit > 0) bits.push(`限时${fmtDur(r.limit)}`);
     if (r.round > 1) bits.push(`第${r.round}局`);
     if (r.over) bits.push('结算中');
     if (r.alive > 0 && r.alive !== r.players) bits.push(`存活${r.alive}`);
@@ -2558,6 +2609,11 @@
     if (rock !== '') msg.rock = parseFloat(rock);
     const portal = $('cPortal').value;
     if (portal !== '') msg.portal = portal === '1';
+    const wm = $('cWin').value;
+    if (wm) msg.winMode = wm;
+    const lim = $('cLimit').value;
+    if (lim !== '') msg.limit = parseInt(lim, 10) || 0;
+    if ($('cRespawn').value) msg.respawn = true;
     send(msg);
     localStorage.setItem('snake-map', msg.size);
     $('cName').value = '';
