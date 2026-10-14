@@ -137,6 +137,147 @@ store = Store(STORE_PATH)
 tokens = {}             # token -> username
 
 
+# ============================================================ 使用情况记录（后台）
+# 只落两个文件，页面 / 协议 / 接口一概不体现：
+#   data/usage.log   明细，JSONL 一行一个事件（超限轮转成 usage.log.1）
+#   data/usage.json  汇总，按天 / 按用户统计
+USAGE_LOG = DATA_DIR / 'usage.log'
+USAGE_SUM = DATA_DIR / 'usage.json'
+USAGE_MAX = 8 * 1024 * 1024          # 明细文件大小上限
+
+
+def _day_key():
+    return time.strftime('%Y-%m-%d')
+
+
+class Usage:
+    """后台记录用户对服务器的使用情况：连接、进房、时长、登录注册、胜负。"""
+
+    def __init__(self, log=USAGE_LOG, summ=USAGE_SUM):
+        self.log = Path(log)
+        self.summ = Path(summ)
+        self.data = {}
+        self._last = 0.0
+        self.load()
+
+    def load(self):
+        try:
+            self.data = json.loads(self.summ.read_text('utf-8'))
+        except Exception:
+            self.data = {}
+        if not isinstance(self.data, dict):
+            self.data = {}
+        self.data.setdefault('totals', {})
+        self.data.setdefault('days', {})
+        self.data.setdefault('users', {})
+
+    def save(self):
+        self._last = time.time()
+        try:
+            self.summ.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.summ.with_suffix('.tmp')
+            tmp.write_text(json.dumps(self.data, ensure_ascii=False), 'utf-8')
+            tmp.replace(self.summ)
+        except Exception:
+            pass
+
+    def _maybe_save(self):
+        # 高频事件（如登录尝试）节流落盘，避免每次登录都重写整个汇总文件
+        if time.time() - self._last >= 5:
+            self.save()
+
+    def line(self, obj):
+        """追加一条明细，超出上限后轮转"""
+        try:
+            self.log.parent.mkdir(parents=True, exist_ok=True)
+            if self.log.exists() and self.log.stat().st_size > USAGE_MAX:
+                self.log.replace(self.log.parent / 'usage.log.1')
+            with self.log.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+    def _day(self):
+        return self.data['days'].setdefault(_day_key(), {
+            'sessions': 0, 'conn_s': 0, 'play_s': 0, 'joins': 0,
+            'logins': 0, 'registers': 0, 'wins': 0, 'users': []})
+
+    def _user(self, name):
+        return self.data['users'].setdefault(str(name), {
+            'sessions': 0, 'conn_s': 0, 'play_s': 0, 'joins': 0,
+            'wins': 0, 'best': 0, 'last': 0})
+
+    def _tot(self, k, n=1):
+        t = self.data['totals']
+        t[k] = int(t.get(k, 0) or 0) + int(n)
+
+    # ---- 事件 ----
+    def session(self, info):
+        """一次连接结束：写明细并汇总（连接时长 / 玩局时长 / 进房次数 / 得分）"""
+        rec = {'e': 'session', 'at': int(time.time())}
+        rec.update(info)
+        self.line(rec)
+        d = self._day()
+        d['sessions'] = int(d.get('sessions', 0) or 0) + 1
+        self._tot('sessions')
+        for k in ('conn_s', 'play_s', 'joins'):
+            v = int(info.get(k) or 0)
+            d[k] = int(d.get(k, 0) or 0) + v
+            self._tot(k, v)
+        u = info.get('user')
+        if u:
+            us = self._user(u)
+            us['sessions'] = int(us.get('sessions', 0) or 0) + 1
+            for k in ('conn_s', 'play_s', 'joins'):
+                us[k] = int(us.get(k, 0) or 0) + int(info.get(k) or 0)
+            us['last'] = rec['at']
+            us['best'] = max(int(us.get('best') or 0), int(info.get('score') or 0))
+            if u not in d['users'] and len(d['users']) < 400:
+                d['users'].append(u)
+        self.save()
+        return rec
+
+    def auth(self, kind, ok, user=None, ip=None):
+        """登录 / 注册 / 令牌校验（含失败原因，便于发现异常尝试）"""
+        self.line({'e': 'auth', 'kind': kind, 'ok': bool(ok), 'user': user,
+                   'ip': ip, 'at': int(time.time())})
+        if not ok:
+            return
+        k = {'login': 'logins', 'register': 'registers'}.get(kind)
+        if not k:
+            return
+        now = int(time.time())
+        d = self._day()
+        d[k] = int(d.get(k, 0) or 0) + 1
+        self._tot(k)
+        us = self._user(user)
+        us['last'] = now
+        if kind == 'register':
+            us.setdefault('first', now)
+        self._maybe_save()
+
+    def win(self, room, name, user, score):
+        self.line({'e': 'win', 'room': room, 'name': name, 'user': user,
+                   'score': int(score or 0), 'at': int(time.time())})
+        d = self._day()
+        d['wins'] = int(d.get('wins', 0) or 0) + 1
+        self._tot('wins')
+        if user:
+            us = self._user(user)
+            us['wins'] = int(us.get('wins', 0) or 0) + 1
+            us['best'] = max(int(us.get('best') or 0), int(score or 0))
+        self.save()   # 一局结束才一次，立即落盘
+
+    def note(self, kind, **kw):
+        """零散事件只写明细，不进汇总"""
+        rec = {'e': kind, 'at': int(time.time())}
+        rec.update(kw)
+        self.line(rec)
+
+
+usage = Usage()
+
+
 # ============================================================ 房间
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None):
@@ -425,6 +566,10 @@ class Room:
         if name:
             store.inc(name, 'wins')
             store.record_best(name, p['score'])
+        try:
+            usage.win(self.id, p.get('name'), name, p.get('score'))
+        except Exception:
+            pass
 
     def maybe_start_round(self):
         if not self.win_pending:
@@ -796,6 +941,17 @@ class Session:
         self.room = None          # 当前房间
         self.pid = None           # 房间内玩家 id
         self.want_play = False
+        # ---- 使用情况统计（仅后台记录，不上页面） ----
+        self.t0 = time.time()     # 连接时刻
+        self.msgs = 0             # 收到的消息条数
+        self.joins = 0            # 进房次数
+        self.play_ms = 0          # 作为玩家的累计毫秒
+        self.play_from = None     # 本次进房起始时刻
+        self.last_room = None     # 最后所在房间
+        self.last_name = None     # 最后使用的昵称
+        self.last_score = 0       # 本连接内最高得分
+        self.ip = None
+        self.ua = None
 
 
 def now_ms():
@@ -851,23 +1007,27 @@ def tokens_inv(name):
 async def handle_msg(sess, m):
     global next_pid
     t = m.get('t')
+    sess.msgs += 1
 
     # -------- 账户 --------
+    uname = str(m.get('user') or '').strip()
     if t == 'register':
         ok, err = store.register(m.get('user'), m.get('pass'))
         if ok:
-            sess.user = str(m.get('user')).strip()
+            sess.user = uname
             await send(sess, auth_payload(sess.user))
         else:
             await send(sess, {'t': 'auth', 'ok': False, 'err': err})
+        usage.auth('register', ok, uname, sess.ip)
         return
     if t == 'login':
         ok, err = store.login(m.get('user'), m.get('pass'))
         if ok:
-            sess.user = str(m.get('user')).strip()
+            sess.user = uname
             await send(sess, auth_payload(sess.user))
         else:
             await send(sess, {'t': 'auth', 'ok': False, 'err': err})
+        usage.auth('login', ok, uname, sess.ip)
         return
     if t == 'authtoken':
         name = tokens.get(m.get('token'))
@@ -875,9 +1035,12 @@ async def handle_msg(sess, m):
             sess.user = name
             await send(sess, auth_payload(name))
         else:
+            name = None
             await send(sess, {'t': 'auth', 'ok': False, 'err': '登录已过期'})
+        usage.auth('authtoken', name is not None, name, sess.ip)
         return
     if t == 'logout':
+        usage.note('logout', user=sess.user, sid=sess.sid, ip=sess.ip)
         if sess.user:
             for tok, u in list(tokens.items()):
                 if u == sess.user:
@@ -969,6 +1132,13 @@ async def handle_msg(sess, m):
         if p.get('user'):
             store.inc(p['user'], 'games')
         room.check_win(now_ms())
+        # ---- 使用情况（仅后台记录） ----
+        sess.joins += 1
+        sess.play_from = time.time()
+        sess.last_room = room.id
+        sess.last_name = p['name']
+        usage.note('join', sid=sess.sid, room=room.id, name=p['name'],
+                   user=sess.user, ip=sess.ip)
         gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user, 'id': pid})
         await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
@@ -1022,6 +1192,16 @@ def leave_room(sess):
     room = sess.room
     if not room:
         return
+    # ---- 使用情况：累计本局时长，并留下最后一局的房间/昵称/得分 ----
+    if sess.play_from:
+        sess.play_ms += int((time.time() - sess.play_from) * 1000)
+        sess.play_from = None
+    if sess.pid is not None:
+        p = room.players.get(sess.pid)
+        if p:
+            sess.last_room = room.id
+            sess.last_name = p.get('name') or sess.last_name
+            sess.last_score = max(sess.last_score, int(p.get('score') or 0))
     room.subs.discard(sess)
     if sess.pid is not None:
         room.drop_player(sess.pid)
@@ -1041,7 +1221,17 @@ all_sessions = set()
 
 async def handler(ws):
     sess = Session(ws)
+    try:
+        addr = getattr(ws, 'remote_address', None)
+        if addr:
+            sess.ip = addr[0]
+        hdr = getattr(ws, 'request_headers', None)
+        if hdr:
+            sess.ua = str(hdr.get('User-Agent') or '')[:160]
+    except Exception:
+        pass
     all_sessions.add(sess)
+    usage.note('conn', sid=sess.sid, ip=sess.ip, ua=sess.ua)
     try:
         await send(sess, {'t': 'welcome', 'id': sess.sid, 'rooms': room_list()})
         async for raw in ws:
@@ -1058,6 +1248,15 @@ async def handler(ws):
     finally:
         all_sessions.discard(sess)   # 先下线，自己的自定义房间才能被回收
         leave_room(sess)
+        try:                        # 记录这次连接的使用情况（仅后台落盘）
+            usage.session({'sid': sess.sid, 'ip': sess.ip, 'ua': sess.ua,
+                           'user': sess.user, 'name': sess.last_name,
+                           'room': sess.last_room, 'score': sess.last_score,
+                           'conn_s': max(0, int(time.time() - sess.t0)),
+                           'play_s': int(sess.play_ms / 1000),
+                           'msgs': sess.msgs, 'joins': sess.joins})
+        except Exception:
+            pass
         try:
             gc_empty_rooms()
             await broadcast_rooms()   # 有人退出，刷新其它客户端看到的房间列表
@@ -1118,6 +1317,7 @@ PORT = int(os.environ.get('PORT', '20000'))
 
 async def main():
     init_rooms()
+    usage.note('start', port=PORT, pid=os.getpid() if hasattr(os, 'getpid') else None)
     async with websockets.serve(handler, '0.0.0.0', PORT,
                                 process_request=process_request,
                                 ping_interval=20, ping_timeout=20,

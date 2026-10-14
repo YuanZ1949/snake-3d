@@ -1828,6 +1828,8 @@
           localStorage.removeItem(TOKEN_KEY);
           updateAcctUI();
           acctTip('登录已过期，请重新登录', 'err');
+        } else if (authReq === 'logout') {
+          // 退出已在本地处理完毕，忽略服务端回执
         } else {
           acctTip(m.err || '操作失败', 'err');
         }
@@ -2336,6 +2338,7 @@
   }
 
   function doLogout() {
+    authReq = 'logout';
     send({t: 'logout'});
     loggedUser = ''; authToken = ''; myStats = null;
     localStorage.removeItem(USER_KEY);

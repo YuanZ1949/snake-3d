@@ -251,12 +251,54 @@ def test_room_custom_config():
     print("default room follows theme OK:", d.theme, d.eff_rock(), d.eff_portal())
 
 
+def test_usage_log():
+    """后台使用记录：只落盘，不进协议"""
+    import tempfile, shutil, json as _json
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix="snake-usage-"))
+    try:
+        u = serve.Usage(d / "usage.log", d / "usage.json")
+        u.session({"sid": 1, "ip": "1.2.3.4", "user": "alice", "name": "Alice",
+                   "room": "a", "score": 42, "conn_s": 100, "play_s": 60,
+                   "msgs": 5, "joins": 1})
+        u.session({"sid": 2, "ip": "5.6.7.8", "user": None, "name": "游客",
+                   "room": "b", "score": 0, "conn_s": 30, "play_s": 0,
+                   "msgs": 2, "joins": 0})
+        u.auth("login", True, "alice", "1.2.3.4")
+        u.auth("login", False, "alice", "9.9.9.9")     # 失败也要留痕
+        u.win("a", "Alice", "alice", 42)
+        u.note("join", sid=1, room="a", name="Alice")
+
+        lines = [_json.loads(x) for x in (d / "usage.log").read_text("utf-8").splitlines()]
+        kinds = [x["e"] for x in lines]
+        assert kinds == ["session", "session", "auth", "auth", "win", "join"], kinds
+        auths = [x for x in lines if x["e"] == "auth"]
+        assert auths[0]["ok"] is True and auths[0]["kind"] == "login"
+        assert auths[1]["ok"] is False and auths[1]["ip"] == "9.9.9.9"
+
+        s = _json.loads((d / "usage.json").read_text("utf-8"))
+        t = s["totals"]
+        assert t["sessions"] == 2 and t["conn_s"] == 130 and t["play_s"] == 60, t
+        assert t["joins"] == 1 and t["logins"] == 1 and t["wins"] == 1, t
+        a = s["users"]["alice"]
+        assert a["sessions"] == 1 and a["play_s"] == 60 and a["joins"] == 1, a
+        assert a["wins"] == 1 and a["best"] == 42, a
+        day = list(s["days"].values())[0]
+        assert day["sessions"] == 2 and day["users"] == ["alice"], day
+
+        u2 = serve.Usage(d / "usage.log", d / "usage.json")     # 重新加载
+        assert u2.data["totals"]["sessions"] == 2
+        print("usage log OK:", kinds, t)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_respects_min_len, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
-           test_room_custom_config]:
+           test_room_custom_config, test_usage_log]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
