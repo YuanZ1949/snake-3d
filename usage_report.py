@@ -134,6 +134,61 @@ def main():
             print('-' * 42)
             for room in sorted(rj, key=rj.get, reverse=True)[:15]:
                 print(L(room, 10) + R(rj[room], 8) + R(len(rs.get(room, ())), 8) + R(rw.get(room, 0), 8))
+        # IP 分布 / 登录失败 / 匿名访问（批12 追加：按 conn/auth 明细的 ip 维度聚合）
+        ip_conn, ip_first, ip_last, ip_sids, ip_uas = {}, {}, {}, {}, {}
+        for o in evs:
+            if o.get('e') != 'conn' or not o.get('ip'):
+                continue
+            ip = o['ip']
+            ip_conn[ip] = ip_conn.get(ip, 0) + 1
+            t = int(o.get('at') or 0)
+            ip_first[ip] = min(ip_first.get(ip, t), t) if t else ip_first.get(ip, t)
+            ip_last[ip] = max(ip_last.get(ip, 0), t)
+            ip_sids.setdefault(ip, set()).add(o.get('sid'))
+            if o.get('ua'):
+                ip_uas.setdefault(ip, set()).add(str(o['ua'])[:40])
+        if ip_conn:
+            print('\nIP 分布（TOP 15，按连接次数）')
+            print(L('IP', 18) + R('连接', 6) + R('会话', 6) + R('首次', 17) + R('最后', 17) + '  UA')
+            print('-' * 74)
+            for ip in sorted(ip_conn, key=ip_conn.get, reverse=True)[:15]:
+                print(L(ip, 18) + R(ip_conn[ip], 6) + R(len(ip_sids.get(ip, ())), 6)
+                      + R(time.strftime('%m-%d %H:%M', time.localtime(ip_first[ip])), 17)
+                      + R(time.strftime('%m-%d %H:%M', time.localtime(ip_last[ip])), 17)
+                      + '  ' + (' / '.join(sorted(ip_uas.get(ip, ()))[:2]) or '-'))
+        fails = [o for o in evs if o.get('e') == 'auth' and not o.get('ok')]
+        if fails:
+            f_ip, f_user, f_at, f_kind = {}, {}, {}, {}
+            for o in fails:
+                ip = o.get('ip') or '-'
+                f_ip[ip] = f_ip.get(ip, 0) + 1
+                if o.get('user'):
+                    f_user[o['user']] = f_user.get(o['user'], 0) + 1
+                f_at[ip] = max(f_at.get(ip, 0), int(o.get('at') or 0))
+                k = '%s:%s' % (o.get('kind'), (o.get('err') or 'fail')[:20])
+                f_kind[k] = f_kind.get(k, 0) + 1
+            print('\n登录失败（共 %d 次，防爆破排查）' % len(fails))
+            print(L('IP', 18) + R('次数', 6) + R('最近', 17) + '  尝试账号')
+            print('-' * 74)
+            for ip in sorted(f_ip, key=f_ip.get, reverse=True)[:10]:
+                print(L(ip, 18) + R(f_ip[ip], 6)
+                      + R(time.strftime('%m-%d %H:%M', time.localtime(f_at[ip])), 17)
+                      + '  ' + ', '.join(sorted({str(o.get('user')) for o in fails
+                                                 if (o.get('ip') or '-') == ip and o.get('user')})[:4]))
+            print('  失败类型分布：' + '  '.join('%s×%d' % (k, v) for k, v in sorted(f_kind.items(), key=lambda kv: -kv[1])[:6]))
+        logged_ok = {o.get('ip') for o in evs
+                     if o.get('e') == 'auth' and o.get('ok') and o.get('kind') in ('login', 'register', 'authtoken')}
+        anon = {ip: c for ip, c in ip_conn.items() if ip not in logged_ok}
+        if not anon:
+            print('\n匿名访问：无（所有 IP 均有登录成功记录）')
+        else:
+            print('\n匿名访问（未见任何登录成功记录的 IP，TOP 15）')
+            print(L('IP', 18) + R('连接', 6) + R('会话', 6) + R('最后活跃', 17) + '  UA')
+            print('-' * 74)
+            for ip in sorted(anon, key=anon.get, reverse=True)[:15]:
+                print(L(ip, 18) + R(anon[ip], 6) + R(len(ip_sids.get(ip, ())), 6)
+                      + R(time.strftime('%m-%d %H:%M', time.localtime(ip_last.get(ip, 0))), 17)
+                      + '  ' + (' / '.join(sorted(ip_uas.get(ip, ()))[:2]) or '-'))
     else:
         print('\n（还没有明细，无法聚合在线曲线/房间热度）')
 
