@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>贪吃蛇 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    background: radial-gradient(1200px 800px at 50% -10%, #1b2140 0%, #0d1020 55%, #090b16 100%);
+    color: #e8eaf6;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 18px 14px 44px;
+    -webkit-user-select: none;
+    user-select: none;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 8px;
+    background: linear-gradient(90deg, #7ee787, #a5d6ff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 24px rgba(126,231,135,.25);
+  }
+  .hud { display: flex; gap: 10px; font-size: 14px; flex-wrap: wrap; justify-content: center; }
+  .hud .chip {
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 6px 14px;
+    border-radius: 999px;
+    color: #9aa0c3;
+    display: flex;
+    gap: 7px;
+    align-items: baseline;
+    backdrop-filter: blur(4px);
+  }
+  .hud b { color: #7ee787; font-variant-numeric: tabular-nums; font-size: 15px; }
+  .hud .chip.speed b { color: #a5d6ff; }
+  .hud button.chip { cursor: pointer; font-size: 15px; padding: 6px 12px; color: #e8eaf6; font-family: inherit; }
+  .hud button.chip:active { transform: scale(.94); }
+
+  .wrap { position: relative; }
+  .edgeHint {
+    position: absolute;
+    top: 0; left: 0;
+    width: 34px; height: 34px;
+    margin: -17px 0 0 -17px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  #foodEdge { filter: drop-shadow(0 0 6px rgba(255,107,107,.95)); }
+  #bonusEdge { filter: drop-shadow(0 0 6px rgba(255,209,102,.95)); }
+  .edgeHint.hidden { display: none; }
+  #btnJoinIn {
+    position: absolute;
+    bottom: 16px; left: 50%; transform: translateX(-50%);
+    padding: 9px 26px;
+    font-size: 15px; font-weight: 700; letter-spacing: 2px;
+    color: #0d1020;
+    background: linear-gradient(180deg, #a5d6ff, #61b0ff);
+    border: none; border-radius: 999px; cursor: pointer;
+    box-shadow: 0 6px 18px rgba(120,180,255,.35);
+    z-index: 6;
+  }
+  #btnJoinIn:active { transform: translateX(-50%) scale(.96); }
+  #btnJoinIn.hidden { display: none; }
+  .startBtns { display: flex; gap: 10px; margin-top: 4px; }
+  .startBtns .chip {
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.14);
+    padding: 7px 16px;
+    border-radius: 999px;
+    color: #c5cae8;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+  }
+  .startBtns .chip:active { transform: scale(.95); }
+  .startBtns a.chip { text-decoration: none; cursor: pointer; }
+  a.dl { color: #a5d6ff; text-decoration: none; }
+  a.dl:hover { text-decoration: underline; }
+  #btnAtk.ready { color: #ffd166; border-color: rgba(255,209,102,.5); }
+  #btnAtk.cool { opacity: .45; }
+  #connChip { font-size: 12px; }
+  #connChip.ok { color: #7ee787; border-color: rgba(126,231,135,.35); }
+  #connChip.bad { color: #ff6b6b; border-color: rgba(255,107,107,.35); }
+
+  #board {
+    width: min(560px, 96vw);
+    margin: 2px auto 0;
+    padding: 10px 14px 12px;
+    background: rgba(8,10,20,.72);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    font-size: 13px;
+    color: #9aa0c3;
+  }
+  #board.hidden { display: none; }
+  #board .bhead { font-size: 11px; letter-spacing: 3px; color: #6b7194; margin-bottom: 5px; }
+  #board .brow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #board .brow.me { color: #7ee787; font-weight: 600; }
+  #board .brow.dead { opacity: .45; }
+  #board .bdot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+  #board .bname { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  #board .bscore { font-variant-numeric: tabular-nums; color: #e8eaf6; }
+  canvas {
+    display: block;
+    border-radius: 14px;
+    box-shadow: 0 14px 50px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.06);
+    touch-action: none;
+  }
+
+  .overlay {
+    position: absolute;
+    inset: 0;
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
+    backdrop-filter: blur(5px);
+    animation: fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .overlay.hidden { display: none; }
+  #startScreen { background: rgba(10,12,24,.45); }
+  #pauseScreen, #overScreen { background: rgba(10,12,24,.82); }
+  .overlay h2 { font-size: 26px; letter-spacing: 4px; text-shadow: 0 2px 12px rgba(0,0,0,.6); }
+  .overlay .sub { color: #c5cae8; font-size: 14px; line-height: 1.8; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+  .overlay .big {
+    font-size: 44px;
+    font-weight: 800;
+    line-height: 1;
+    background: linear-gradient(180deg, #b7ffce, #7ee787);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .overlay .record { color: #ffd166; font-size: 14px; min-height: 18px; }
+  button.primary {
+    margin-top: 8px;
+    padding: 11px 34px;
+    font-size: 16px;
+    color: #0d1020;
+    background: linear-gradient(180deg, #9bffb0, #61d97a);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    font-weight: 700;
+    letter-spacing: 2px;
+    box-shadow: 0 6px 18px rgba(126,231,135,.35), inset 0 1px 0 rgba(255,255,255,.6);
+    transition: transform .12s ease;
+  }
+  button.primary:hover { transform: translateY(-2px) scale(1.03); }
+  button.primary:active { transform: scale(.97); }
+  .nameIn {
+    width: 200px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #e8eaf6;
+    text-align: center;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 999px;
+    outline: none;
+  }
+  .nameIn::placeholder { color: #6b7194; }
+  .nameIn:focus { border-color: rgba(126,231,135,.45); }
+
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 74px);
+    grid-template-rows: repeat(3, 56px);
+    gap: 8px;
+    justify-content: center;
+    touch-action: none;
+  }
+  body.follow .dpad { grid-template-columns: 130px 74px 130px; grid-template-rows: 56px 56px; }
+  body.follow .dpad [data-dir="up"],
+  body.follow .dpad [data-dir="down"],
+  body.follow .dpad .blank { display: none; }
+  body.follow .dpad [data-dir="left"] { grid-column: 1; grid-row: 1; }
+  body.follow .dpad #btnPause { grid-column: 2; grid-row: 1; }
+  body.follow .dpad [data-dir="right"] { grid-column: 3; grid-row: 1; }
+  body.follow .dpad #btnAtk { grid-column: 1 / span 3; grid-row: 2; }
+  .dpad button {
+    background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+    border: 1px solid rgba(255,255,255,.12);
+    border-bottom-color: rgba(0,0,0,.4);
+    color: #cdd2f0;
+    border-radius: 13px;
+    font-size: 19px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 0 rgba(0,0,0,.35);
+    transition: transform .06s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dpad button:active, .dpad button.pressed {
+    transform: translateY(3px);
+    box-shadow: none;
+    background: linear-gradient(180deg, rgba(126,231,135,.35), rgba(126,231,135,.15));
+    color: #eafff0;
+  }
+  .dpad .center { font-size: 15px; color: #7ee787; letter-spacing: 1px; }
+  .dpad .center.off { opacity: .35; cursor: default; }
+  .dpad .blank { visibility: hidden; }
+  .dpad #btnAtk { font-size: 22px; }
+
+  .tips { font-size: 12px; color: #6b7194; line-height: 1.7; text-align: center; }
+  .tips kbd {
+    background: #232848;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 11px;
+    color: #cdd2f0;
+  }
+  @media (max-height: 720px) {
+    .tips { display: none; }
+    h1 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+  <h1>贪吃蛇 3D</h1>
+
+  <div class="hud">
+    <span class="chip">得分 <b id="score">0</b></span>
+    <span class="chip">最高 <b id="best">0</b></span>
+    <button class="chip" id="btnSpeed" aria-label="速度">速度 <b id="speed">中</b></button>
+    <button class="chip" id="btnMute" aria-label="静音">🔊</button>
+    <button class="chip" id="btnSkin" aria-label="皮肤">🐍 翠野</button>
+    <button class="chip" id="btnCam" aria-label="镜头模式">🎥跟随</button>
+    <span class="chip" id="connChip">● 连接中…</span>
+  </div>
+
+  <div class="wrap" id="wrap">
+    <canvas id="game" width="560" height="560"></canvas>
+    <div id="foodEdge" class="edgeHint hidden">🍎</div>
+    <div id="bonusEdge" class="edgeHint hidden">⭐</div>
+    <button id="btnJoinIn" class="hidden">入局</button>
+
+    <div class="overlay" id="startScreen">
+      <h2>贪吃蛇 3D</h2>
+      <div class="sub">共享棋盘多人对战：吃水果变长加速，⭐ +50<br>咬到别人的身子直接淘汰对方 (+100)<br>撞墙 / 岩石 / 自己会被淘汰，剩最后一人获胜 (+200)</div>
+      <input class="nameIn" id="nameIn" maxlength="8" placeholder="昵称（可选）" autocomplete="off">
+      <div class="sub" id="connTip">正在连接服务器…</div>
+      <button class="primary" id="btnStart">开始游戏</button>
+      <div class="startBtns">
+        <button class="chip" id="btnMap">🗺 中</button>
+        <button class="chip" id="btnSpectate">👁 观战</button>
+        <a class="chip dl" href="/download">⬇ 下载程序</a>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseScreen">
+      <h2>已暂停</h2>
+      <button class="primary" id="btnResume">继续</button>
+    </div>
+
+    <div class="overlay hidden" id="overScreen">
+      <h2 id="overTitle">游戏结束</h2>
+      <div class="sub" id="overSub"></div>
+      <div class="big" id="finalScore">0</div>
+      <div class="record" id="recordTip"></div>
+      <button class="primary" id="btnRestart">重新入局</button>
+    </div>
+  </div>
+
+  <div class="dpad">
+    <button class="blank" tabindex="-1"></button>
+    <button data-dir="up" aria-label="上">▲</button>
+    <button class="blank" tabindex="-1"></button>
+    <button data-dir="left" aria-label="左">◀</button>
+    <button class="center" id="btnPause" aria-label="暂停">暂停</button>
+    <button data-dir="right" aria-label="右">▶</button>
+    <button class="blank" tabindex="-1"></button>
+    <button data-dir="down" aria-label="下">▼</button>
+    <button id="btnAtk" aria-label="攻击">⚔️</button>
+  </div>
+
+  <div class="tips">
+    跟随视角（默认）：只按 <kbd>←</kbd><kbd>→</kbd> 左右转 · 固定视角：<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动
+    &nbsp;·&nbsp; <kbd>J</kbd> / ⚔️ 发射打碎岩石 (+5)
+    &nbsp;·&nbsp; 滑动屏幕换向 &nbsp;·&nbsp; 鼠标拖动转视角
+    &nbsp;·&nbsp; <a class="dl" href="/download">⬇ 下载整个程序</a>
+  </div>
+
+  <div id="board" class="hidden">
+    <div class="bhead">排行榜</div>
+    <div id="boardRows"></div>
+  </div>
+
+<script src="three.min.js"></script>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const $ = id => document.getElementById(id);
+  const scoreEl = $('score'), bestEl = $('best'), speedEl = $('speed'), btnMute = $('btnMute');
+  const startScreen = $('startScreen'), pauseScreen = $('pauseScreen'), overScreen = $('overScreen');
+  const finalScore = $('finalScore'), recordTip = $('recordTip'), btnPause = $('btnPause'), btnRestart = $('btnRestart');
+
+  let COLS = 24, ROWS = 24;
+  const MAP_SIZES = [{n: '小', v: 16}, {n: '中', v: 24}, {n: '大', v: 32}, {n: '巨大', v: 40}];
+  let mapSizeIdx = Math.max(0, MAP_SIZES.findIndex(s => s.v === Number(localStorage.getItem('snake-map') || 24)));
+  const BEST_KEY = 'snake-best', MUTE_KEY = 'snake-muted';
+
+  const FRUITS = [
+    {score: 10, color: 0xff5f5f},
+    {score: 15, color: 0xe74c3c},
+    {score: 20, color: 0xff6b81},
+    {score: 15, color: 0xa78bfa},
+    {score: 15, color: 0xffa94d},
+  ];
+
+  let snake, lastCells, dir, food, bonus, score, best, state, lastTick;
+  let particles = [], floaters = [], shake = 0, audio = null;
+  let muted = localStorage.getItem(MUTE_KEY) === '1';
+  let foodMesh = null, bonusMesh = null, bonusLight = null;
+  let rocks = [], rockPool = [], fruitsEaten = 0;
+  let camYaw = 0, userYaw = 0, camDist = 11, prevFrame = 0, bgmTimer = null, bgmStep = 0;
+  let camFollow = true;
+  let rotT = [];
+  const SPEEDS = [{n: '慢', ms: 190}, {n: '中', ms: 150}, {n: '快', ms: 110}];
+  let speedIdx = Number(localStorage.getItem('snake-speed') || 1);
+  let lastAtk = 0;
+  const ATK_COOL = 800;
+  // ---- 网络 / 多人 ----
+  let ws = null, wsOpen = false, myId = null, joined = false, wantPlay = false;
+  const ents = new Map();          // id -> ent
+  let myEnt = null;
+  let dirQ = [];                   // 本地镜像的已发送方向队列（跟随视角计算用）
+  let foodKey = '', rockKey = '', bonusKey = '', projKey = '';
+  let projMeshes = [];             // 服务器弹药的渲染体
+  let winRound = false;            // 本轮已出胜负
+  let spectating = false;          // 观战模式（未入局但观看他人对局）
+  let roundNo = -1;
+  let demoPaused = false;
+  const NAME_KEY = 'snake-name';
+  let playerName = localStorage.getItem(NAME_KEY) || '';
+  const _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _edgeV = new THREE.Vector3();
+  const camBase = new THREE.Vector3(0, 5.4, 30), camLook = new THREE.Vector3();
+  const cw = (x, y, out) => out.set(x - COLS/2 + .5, SEG_H/2 + .02, y - ROWS/2 + .5);
+  const yawTo = (cur, tgt, k) => cur + Math.atan2(Math.sin(tgt - cur), Math.cos(tgt - cur)) * k;
+
+  best = Number(localStorage.getItem(BEST_KEY) || 0);
+  bestEl.textContent = best;
+  btnMute.textContent = muted ? '🔇' : '🔊';
+
+  // ================= 3D 场景 =================
+  const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d1020);
+  scene.fog = new THREE.Fog(0x0d1020, 40, 95);
+
+  const camera = new THREE.PerspectiveCamera(52, 1, .1, 200);
+  const CAM = {h: 5.4};
+
+  function resize() {
+    const s = Math.min(window.innerWidth * .96, window.innerHeight * .68, 860);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setSize(s, s);
+    canvas.style.width = s + 'px';
+    canvas.style.height = s + 'px';
+    camera.aspect = 1;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  scene.add(new THREE.HemisphereLight(0x8fa8ff, 0x14182c, .55));
+  const sun = new THREE.DirectionalLight(0xffffff, .95);
+  sun.position.set(10, 24, 8);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(512, 512);
+  sun.shadow.camera.left = -16; sun.shadow.camera.right = 16;
+  sun.shadow.camera.top = 16; sun.shadow.camera.bottom = -16;
+  sun.shadow.camera.far = 60;
+  scene.add(sun);
+
+  // 星空
+  {
+    const g = new THREE.BufferGeometry();
+    const pos = [];
+    for (let i = 0; i < 500; i++) {
+      const a = Math.random() * Math.PI * 2, r = 55 + Math.random() * 35, h = Math.random() * 45 - 5;
+      pos.push(Math.cos(a) * r, h, Math.sin(a) * r);
+    }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    scene.add(new THREE.Points(g, new THREE.PointsMaterial({color: 0xcdd7ff, size: .45, sizeAttenuation: true})));
+  }
+
+  // 棋盘（可随地图尺寸重建）
+  const goldMat = new THREE.MeshStandardMaterial({color: 0xffd166, emissive: 0xffb84d, emissiveIntensity: .45, roughness: .35, metalness: .6});
+  const wallMat = new THREE.MeshStandardMaterial({color: 0x7ee787, transparent: true, opacity: .07, side: THREE.DoubleSide, roughness: .3});
+  const baseMat = new THREE.MeshStandardMaterial({color: 0x222a4e, roughness: .7, metalness: .2});
+  let boardMeshes = [];
+
+  function clearBoard() {
+    for (const m of boardMeshes) {
+      scene.remove(m);
+      if (m.geometry) m.geometry.dispose();
+    }
+    boardMeshes = [];
+  }
+
+  function buildBoard() {
+    clearBoard();
+    const dim = Math.max(COLS, ROWS), cp = 40;
+    const c = document.createElement('canvas');
+    c.width = c.height = dim * cp;
+    const g = c.getContext('2d');
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++) {
+        g.fillStyle = (x + y) % 2 ? '#181e38' : '#141933';
+        g.fillRect(x * cp, y * cp, cp, cp);
+      }
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(COLS, ROWS),
+      new THREE.MeshStandardMaterial({map: new THREE.CanvasTexture(c), roughness: .9})
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = .005;
+    floor.receiveShadow = true;
+    scene.add(floor); boardMeshes.push(floor);
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(COLS + 1.2, .8, ROWS + 1.2), baseMat);
+    base.position.y = -.4;
+    base.receiveShadow = true;
+    scene.add(base); boardMeshes.push(base);
+
+    const frameGeoX = new THREE.BoxGeometry(COLS + 1.8, .35, .45);
+    const frameGeoZ = new THREE.BoxGeometry(.45, .35, ROWS + 1.8);
+    [[0, ROWS/2 + .55, frameGeoX], [0, -ROWS/2 - .55, frameGeoX]].forEach(([x, z, geo]) => {
+      const m = new THREE.Mesh(geo, goldMat); m.position.set(x, .12, z); scene.add(m); boardMeshes.push(m);
+    });
+    [[COLS/2 + .55, 0, frameGeoZ], [-COLS/2 - .55, 0, frameGeoZ]].forEach(([x, z, geo]) => {
+      const m = new THREE.Mesh(geo, goldMat); m.position.set(x, .12, z); scene.add(m); boardMeshes.push(m);
+    });
+
+    const wallGeoX = new THREE.PlaneGeometry(COLS + 1.1, 1.4);
+    const wallGeoZ = new THREE.PlaneGeometry(ROWS + 1.1, 1.4);
+    [[0, ROWS/2 + .5, 0, wallGeoX], [0, -ROWS/2 - .5, 0, wallGeoX]].forEach(([x, z, , geo]) => {
+      const m = new THREE.Mesh(geo, wallMat); m.position.set(x, .7, z); scene.add(m); boardMeshes.push(m);
+    });
+    [[COLS/2 + .5, 0, Math.PI/2, wallGeoZ], [-COLS/2 - .5, 0, Math.PI/2, wallGeoZ]].forEach(([x, z, ry, geo]) => {
+      const m = new THREE.Mesh(geo, wallMat); m.position.set(x, .7, z); m.rotation.y = ry; scene.add(m); boardMeshes.push(m);
+    });
+  }
+
+  function ensureBoard(cols, rows) {
+    if (!cols || !rows || (cols === COLS && rows === ROWS)) return;
+    COLS = cols; ROWS = rows;
+    buildBoard();
+    const half = Math.max(COLS, ROWS) / 2 + 2;
+    sun.shadow.camera.left = -half; sun.shadow.camera.right = half;
+    sun.shadow.camera.top = half; sun.shadow.camera.bottom = -half;
+    sun.shadow.camera.updateProjectionMatrix();
+  }
+  buildBoard();
+
+  // ================= 蛇（连续管状身体 + 皮肤） =================
+  const SEG_H = .52;
+  const SKINS = [
+    {name: '翠野', base: '#2f9e44', dark: '#1b5e2a', belly: '#d8f5a2', head: 0x9dffb5, pattern: 'diamond', metal: .05},
+    {name: '金鳞', base: '#f59f00', dark: '#b07000', belly: '#fff3bf', head: 0xffd43b, pattern: 'diamond', metal: .4},
+    {name: '蓝焰', base: '#1c7ed6', dark: '#124a91', belly: '#d0ebff', head: 0x74c0fc, pattern: 'wave', metal: .1},
+    {name: '紫雾', base: '#9c36b5', dark: '#5b21a0', belly: '#eebefa', head: 0xd0bfff, pattern: 'spot', metal: .1},
+    {name: '熔岩', base: '#495057', dark: '#1a1d21', belly: '#ff8787', head: 0xff6b6b, pattern: 'crack', metal: .25},
+  ];
+  let skinIdx = Number(localStorage.getItem('snake-skin') || 0);
+  const skinTexCache = {};
+
+  function makeSkinTexture(s) {
+    if (skinTexCache[s.name]) return skinTexCache[s.name];
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = s.base;
+    g.fillRect(0, 0, 256, 64);
+    if (s.pattern === 'diamond') {
+      g.strokeStyle = s.dark;
+      g.lineWidth = 1.5;
+      for (let y = -8; y < 72; y += 12)
+        for (let x = -8; x < 264; x += 14) {
+          const ox = ((y / 12) | 0) % 2 ? 7 : 0;
+          g.beginPath();
+          g.moveTo(x + ox, y + 6); g.lineTo(x + ox + 7, y);
+          g.lineTo(x + ox + 14, y + 6); g.lineTo(x + ox + 7, y + 12);
+          g.closePath(); g.stroke();
+        }
+    } else if (s.pattern === 'wave') {
+      g.strokeStyle = s.dark;
+      g.lineWidth = 2;
+      for (let y = 6; y < 64; y += 10) {
+        g.beginPath();
+        for (let x = 0; x <= 256; x += 4)
+          x === 0 ? g.moveTo(x, y + Math.sin(x / 14 + y) * 2.5) : g.lineTo(x, y + Math.sin(x / 14 + y) * 2.5);
+        g.stroke();
+      }
+    } else if (s.pattern === 'spot') {
+      g.fillStyle = s.dark;
+      for (let i = 0; i < 90; i++) {
+        g.beginPath();
+        g.arc(Math.random() * 256, Math.random() * 64, 2 + Math.random() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+    } else if (s.pattern === 'crack') {
+      g.strokeStyle = '#ff4d4d';
+      g.lineWidth = 1.5;
+      g.shadowColor = '#ff4d4d';
+      g.shadowBlur = 4;
+      for (let i = 0; i < 26; i++) {
+        let x = Math.random() * 256, y = Math.random() * 64;
+        g.beginPath(); g.moveTo(x, y);
+        for (let k = 0; k < 4; k++) {
+          x += (Math.random() - .5) * 22; y += (Math.random() - .5) * 14;
+          g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+      g.shadowBlur = 0;
+    }
+    const gr = g.createLinearGradient(0, .5 * 64, 0, 1.05 * 64);
+    gr.addColorStop(0, 'rgba(0,0,0,0)');
+    gr.addColorStop(.5, s.belly);
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr;
+    g.fillRect(0, .5 * 64, 256, .55 * 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    skinTexCache[s.name] = tex;
+    return tex;
+  }
+
+  const bodyMat = new THREE.MeshStandardMaterial({roughness: .55, metalness: .05});
+  const bodyMesh = new THREE.Mesh(new THREE.BufferGeometry(), bodyMat);
+  bodyMesh.castShadow = true;
+  bodyMesh.frustumCulled = false;
+  scene.add(bodyMesh);
+  const spine = [];
+
+  const _up = new THREE.Vector3(0, 1, 0);
+  const _tan = new THREE.Vector3(), _nrm = new THREE.Vector3(), _bin = new THREE.Vector3(), _off = new THREE.Vector3();
+
+  function buildTubeGeometry(pts) {
+    const n = pts.length;
+    if (n < 2) return null;
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const count = Math.min(260, Math.max(28, (n - 1) * 4));
+    const sampled = curve.getSpacedPoints(count);
+    const radial = 10;
+    const totalLen = curve.getLength();
+    const vcount = (count + 1) * (radial + 1);
+    const pos = new Float32Array(vcount * 3);
+    const nor = new Float32Array(vcount * 3);
+    const uvs = new Float32Array(vcount * 2);
+    const idx = [];
+    for (let i = 0; i <= count; i++) {
+      const t = i / count;
+      const p = sampled[i];
+      _tan.subVectors(sampled[Math.min(count, i + 1)], sampled[Math.max(0, i - 1)]).normalize();
+      _nrm.crossVectors(_up, _tan);
+      if (_nrm.lengthSq() < 1e-8) _nrm.set(1, 0, 0); else _nrm.normalize();
+      _bin.crossVectors(_tan, _nrm).normalize();
+      const r = .05 + .21 * Math.pow(1 - t, .75);
+      for (let j = 0; j <= radial; j++) {
+        const a = j / radial * Math.PI * 2;
+        _off.copy(_nrm).multiplyScalar(Math.cos(a) * r).addScaledVector(_bin, Math.sin(a) * r * .92);
+        const vi = (i * (radial + 1) + j) * 3;
+        pos[vi] = p.x + _off.x; pos[vi + 1] = p.y + _off.y; pos[vi + 2] = p.z + _off.z;
+        _off.normalize();
+        nor[vi] = _off.x; nor[vi + 1] = _off.y; nor[vi + 2] = _off.z;
+        const ui = (i * (radial + 1) + j) * 2;
+        uvs[ui] = totalLen * t / 1.1;
+        uvs[ui + 1] = j / radial;
+      }
+    }
+    for (let i = 0; i < count; i++)
+      for (let j = 0; j < radial; j++) {
+        const a = i * (radial + 1) + j, b = a + radial + 1;
+        idx.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    return geo;
+  }
+
+  function paintEnt(e) {
+    const s = SKINS[e.skin % SKINS.length];
+    e.bodyMat.map = makeSkinTexture(s);
+    e.bodyMat.metalness = s.metal;
+    e.bodyMat.needsUpdate = true;
+    e.skull.material.color.setHex(s.head);
+  }
+
+  function applySkin() {
+    const s = SKINS[skinIdx];
+    $('btnSkin').textContent = '🐍 ' + s.name;
+    bodyMat.map = makeSkinTexture(s);
+    bodyMat.metalness = s.metal;
+    bodyMat.needsUpdate = true;
+    skullMesh.material.color.setHex(s.head);
+    if (myEnt) { myEnt.skin = skinIdx; paintEnt(myEnt); send({t: 'skin', i: skinIdx}); }
+  }
+
+  function makeHeadGroup() {
+    const g = new THREE.Group();
+    const skull = new THREE.Mesh(
+      new THREE.SphereGeometry(.3, 16, 14),
+      new THREE.MeshStandardMaterial({color: 0x9dffb5, roughness: .4, metalness: .05})
+    );
+    skull.scale.set(1, .85, 1.15);
+    skull.castShadow = true;
+    g.add(skull);
+    const eyeW = new THREE.MeshStandardMaterial({color: 0xffffff, roughness: .3});
+    const eyeB = new THREE.MeshStandardMaterial({color: 0x101426, roughness: .3});
+    for (const s of [1, -1]) {
+      const e = new THREE.Mesh(new THREE.SphereGeometry(.08, 10, 10), eyeW);
+      e.position.set(.14 * s, .1, .24);
+      g.add(e);
+      const p = new THREE.Mesh(new THREE.SphereGeometry(.04, 8, 8), eyeB);
+      p.position.set(.14 * s, .1, .3);
+      g.add(p);
+    }
+    const tongue = new THREE.Mesh(
+      new THREE.BoxGeometry(.04, .02, .22),
+      new THREE.MeshStandardMaterial({color: 0xff5f5f, emissive: 0xff2222, emissiveIntensity: .3})
+    );
+    tongue.position.set(0, -.04, .4);
+    tongue.name = 'tongue';
+    g.add(tongue);
+    return g;
+  }
+
+  const head = makeHeadGroup();
+  scene.add(head);
+  const tongueMesh = head.getObjectByName('tongue');
+  const skullMesh = head.children[0];
+
+  // ================= 粒子与飘字 =================
+  const partGeo = new THREE.BoxGeometry(.14, .14, .14);
+  const partMats = {};
+  function partMat(color) {
+    return partMats[color] || (partMats[color] = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: .35}));
+  }
+  function burst(x, y, z, color, n) {
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(partGeo, partMat(color));
+      m.position.set(x, y, z);
+      scene.add(m);
+      const a = Math.random() * Math.PI * 2, sp = .06 + Math.random() * .14;
+      particles.push({m, vx: Math.cos(a)*sp, vy: .08 + Math.random()*.14, vz: Math.sin(a)*sp, life: 1});
+    }
+  }
+  const spriteCache = {};
+  function textSprite(text) {
+    if (!spriteCache[text]) {
+      const c = document.createElement('canvas');
+      c.width = 256; c.height = 128;
+      const g = c.getContext('2d');
+      g.font = 'bold 72px system-ui, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 12;
+      g.fillStyle = '#7ee787';
+      g.fillText(text, 128, 64);
+      spriteCache[text] = new THREE.SpriteMaterial({map: new THREE.CanvasTexture(c), transparent: true});
+    }
+    return spriteCache[text].clone();
+  }
+  function floater(x, y, z, text) {
+    const sp = new THREE.Sprite(textSprite(text));
+    sp.position.set(x, y, z);
+    sp.scale.set(2.2, 1.1, 1);
+    scene.add(sp);
+    floaters.push({sp, life: 1});
+  }
+
+  // ================= 音效（加大音量） =================
+  function ac() {
+    if (!audio) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audio = new AC();
+    }
+    if (audio && audio.state === 'suspended') audio.resume();
+    return audio;
+  }
+  function beep(freq, dur, type = 'square', vol = .12, slide = 0) {
+    if (muted) return;
+    const a = ac();
+    if (!a) return;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, a.currentTime);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), a.currentTime + dur);
+    g.gain.setValueAtTime(vol, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, a.currentTime + dur);
+    o.connect(g).connect(a.destination);
+    o.start();
+    o.stop(a.currentTime + dur);
+  }
+  const sEat = () => { beep(660, .1, 'square', .12); setTimeout(() => beep(990, .12, 'square', .12), 60); };
+  const sStar = () => { beep(880, .09, 'triangle', .15); setTimeout(() => beep(1320, .13, 'triangle', .15), 70); setTimeout(() => beep(1760, .16, 'triangle', .13), 150); };
+  const sDie = () => beep(220, .5, 'sawtooth', .18, -170);
+  const sTurn = () => beep(440, .05, 'triangle', .07);
+
+  // 背景音乐：五声音阶琶音循环
+  const BGM_SCALE = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 440.0, 392.0, 329.63, 293.66];
+  function bgmNote() {
+    if (muted || state !== 'playing') return;
+    const a = ac();
+    if (!a) return;
+    const f = BGM_SCALE[bgmStep % BGM_SCALE.length];
+    bgmStep++;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f, a.currentTime);
+    g.gain.setValueAtTime(.04, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, a.currentTime + .35);
+    o.connect(g).connect(a.destination);
+    o.start();
+    o.stop(a.currentTime + .4);
+    if (bgmStep % 4 === 1) {
+      const b = a.createOscillator(), bg = a.createGain();
+      b.type = 'sine';
+      b.frequency.setValueAtTime(f / 2, a.currentTime);
+      bg.gain.setValueAtTime(.06, a.currentTime);
+      bg.gain.exponentialRampToValueAtTime(.0001, a.currentTime + .5);
+      b.connect(bg).connect(a.destination);
+      b.start();
+      b.stop(a.currentTime + .55);
+    }
+  }
+  function bgmStart() {
+    if (bgmTimer) return;
+    bgmTimer = setInterval(bgmNote, 320);
+  }
+
+  // ================= 坐标与模型 =================
+  const cellW = (x, y) => new THREE.Vector3(x - COLS/2 + .5, SEG_H/2 + .02, y - ROWS/2 + .5);
+  const clearMesh = m => { if (m) scene.remove(m); };
+
+  function makeFruit(type) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(.36, 18, 16),
+      new THREE.MeshStandardMaterial({color: type.color, roughness: .4, metalness: .1, emissive: type.color, emissiveIntensity: .12})
+    );
+    body.scale.y = .92;
+    body.castShadow = true;
+    g.add(body);
+    const stem = new THREE.Mesh(
+      new THREE.CylinderGeometry(.03, .045, .18, 8),
+      new THREE.MeshStandardMaterial({color: 0x8a5a3b, roughness: .8})
+    );
+    stem.position.y = .4;
+    stem.rotation.z = .18;
+    g.add(stem);
+    const leaf = new THREE.Mesh(
+      new THREE.SphereGeometry(.1, 8, 6),
+      new THREE.MeshStandardMaterial({color: 0x7ee787, roughness: .6, emissive: 0x2f8f45, emissiveIntensity: .2})
+    );
+    leaf.scale.set(1.6, .35, .8);
+    leaf.position.set(.12, .45, 0);
+    g.add(leaf);
+    return g;
+  }
+
+  function makeStar() {
+    const shape = new THREE.Shape();
+    const spikes = 5, outer = .48, inner = .2;
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 ? inner : outer;
+      const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y);
+    }
+    shape.closePath();
+    const mesh = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(shape, {depth: .12, bevelEnabled: true, bevelSize: .04, bevelThickness: .04, bevelSegments: 2}),
+      new THREE.MeshStandardMaterial({color: 0xffd166, emissive: 0xffb84d, emissiveIntensity: .55, roughness: .3, metalness: .5})
+    );
+    mesh.castShadow = true;
+    return mesh;
+  }
+
+  // ================= 流程 =================
+  function reset() {
+    snake = [{x:8,y:12},{x:7,y:12},{x:6,y:12}];
+    lastCells = snake.map(s => ({...s}));
+    dir = {x:1,y:0};
+    score = 0;
+    particles.forEach(p => scene.remove(p.m));
+    particles = [];
+    floaters.forEach(f => scene.remove(f.sp));
+    floaters = [];
+    projMeshes.forEach(m => scene.remove(m));
+    projMeshes = [];
+    shake = 0;
+    clearMesh(bonusMesh); bonusMesh = null;
+    if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
+    bonus = null;
+    rocks = [];
+    rockPool.forEach(m => { m.visible = false; });
+    fruitsEaten = 0;
+    foodKey = rockKey = bonusKey = projKey = '';
+    placeFood();
+    updateHud();
+    rotT = snake.map(() => Math.atan2(dir.x, dir.y));
+    head.rotation.y = rotT[0];
+    spine.length = 0;
+    for (const s of snake) {
+      const v = new THREE.Vector3();
+      cw(s.x, s.y, v);
+      spine.push(v);
+    }
+    head.visible = true;
+    bodyMesh.visible = true;
+  }
+
+  function randFree() {
+    const free = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (!snake.some(s => s.x === x && s.y === y) &&
+            !rocks.some(r => r.x === x && r.y === y) &&
+            !(food && food.x === x && food.y === y) &&
+            !(bonus && bonus.x === x && bonus.y === y)) free.push({x, y});
+    return free.length ? free[Math.floor(Math.random() * free.length)] : null;
+  }
+
+  function placeFood() {
+    const p = randFree();
+    if (!p) return;
+    food = {...p, ...FRUITS[Math.floor(Math.random() * FRUITS.length)], born: performance.now()};
+    clearMesh(foodMesh);
+    foodMesh = makeFruit(food);
+    scene.add(foodMesh);
+  }
+
+  function maybeBonus(now) {
+    if (bonus && now - bonus.born > 8000) {
+      const w = cellW(bonus.x, bonus.y);
+      burst(w.x, .6, w.z, 0xffd166, 10);
+      clearMesh(bonusMesh); bonusMesh = null;
+      if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
+      bonus = null;
+    }
+    if (!bonus && Math.random() < .012) {
+      const p = randFree();
+      if (!p) return;
+      bonus = {...p, score: 50, born: now};
+      bonusMesh = makeStar();
+      scene.add(bonusMesh);
+      bonusLight = new THREE.PointLight(0xffd166, .9, 5);
+      scene.add(bonusLight);
+    }
+  }
+
+  function getRockMesh(i) {
+    if (!rockPool[i]) {
+      const m = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(.44, 0),
+        new THREE.MeshStandardMaterial({color: 0x6b7394, roughness: .85, metalness: .15, flatShading: true})
+      );
+      m.castShadow = true;
+      m.visible = false;
+      scene.add(m);
+      rockPool[i] = m;
+    }
+    return rockPool[i];
+  }
+
+  // 网络模式：取一个空闲（隐藏）的岩石网格，或新建
+  function takeRockMesh() {
+    for (const m of rockPool) if (!m.visible) return m;
+    const m = getRockMesh(rockPool.length);
+    return m;
+  }
+
+  function maybeRocks() {
+    if (fruitsEaten % 3 !== 0) return;
+    const target = Math.min(24, Math.floor(fruitsEaten / 3));
+    const h = snake[0];
+    let tries = 20;
+    while (rocks.length < target && tries-- > 0) {
+      const p = randFree();
+      if (!p) return;
+      if (Math.abs(p.x - h.x) + Math.abs(p.y - h.y) < 4) continue;
+      const m = getRockMesh(rocks.length);
+      const w = cellW(p.x, p.y);
+      m.position.set(w.x, .3, w.z);
+      m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      m.scale.setScalar(.85 + Math.random() * .35);
+      m.visible = true;
+      rocks.push({x: p.x, y: p.y, mesh: m});
+    }
+  }
+
+  function updateHud() {
+    scoreEl.textContent = (joined && myEnt) ? myEnt.score : score;
+    speedEl.textContent = SPEEDS[speedIdx].n;
+  }
+
+  // ================= 网络层 =================
+  function send(o) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+  }
+  function setConn(text, cls) {
+    const el = $('connChip');
+    el.textContent = text;
+    el.className = 'chip' + (cls ? ' ' + cls : '');
+  }
+
+  function connect() {
+    if (ws && ws.readyState <= 1) return;
+    setConn('● 连接中…', '');
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/');
+    ws.onopen = () => {
+      wsOpen = true;
+      setConn('● 已连接', 'ok');
+      $('connTip').textContent = wantPlay ? '已连接，入局中…' : '已连接服务器';
+      if (wantPlay) doJoin();
+    };
+    ws.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch (_) {} };
+    ws.onclose = () => { ws = null; wsOpen = false; onDisconnect(); };
+    ws.onerror = () => {};
+  }
+
+  function doJoin() {
+    send({t: 'join', name: playerName, skin: skinIdx, size: MAP_SIZES[mapSizeIdx].v});
+    send({t: 'speed', ms: SPEEDS[speedIdx].ms});
+    if (state === 'idle' || state === 'over') state = 'joining';
+  }
+
+  function onDisconnect() {
+    setConn('● 连接断开', 'bad');
+    clearEnts();
+    reset(); // 恢复本地演示世界
+    joined = false; myEnt = null; myId = null;
+    dirQ = [];
+    winRound = false;
+    spectating = false;
+    $('btnJoinIn').classList.add('hidden');
+    btnPause.classList.remove('off');
+    if (wantPlay) {
+      state = 'joining';
+      overScreen.classList.add('hidden');
+      pauseScreen.classList.add('hidden');
+      startScreen.classList.remove('hidden');
+      $('connTip').textContent = '连接断开，重连中…';
+      setTimeout(() => { if (!wsOpen) connect(); }, 2000);
+    } else {
+      state = 'idle';
+      startScreen.classList.remove('hidden');
+      $('connTip').textContent = '连接断开，点击重试';
+    }
+  }
+
+  // ================= 攻击 =================
+  const projGeo = new THREE.SphereGeometry(.13, 8, 8);
+  const projMat = new THREE.MeshStandardMaterial({color: 0xffe08a, emissive: 0xffb84d, emissiveIntensity: .9});
+  const sAtk = () => beep(1000, .08, 'square', .1, -400);
+
+  function fire() {
+    if (state !== 'playing' || !joined) return;
+    const now = performance.now();
+    if (now - lastAtk < ATK_COOL) return;
+    lastAtk = now;
+    send({t: 'atk'});
+    sAtk();
+  }
+
+  function start() {
+    ac();
+    bgmStart();
+    playerName = $('nameIn').value.trim().slice(0, 8);
+    localStorage.setItem(NAME_KEY, playerName);
+    wantPlay = true;
+    state = 'joining';
+    // 开始屏保留到第一帧快照确认入局，避免连接慢时黑屏
+    overScreen.classList.add('hidden');
+    pauseScreen.classList.add('hidden');
+    btnPause.classList.add('off');
+    $('connTip').textContent = '入局中…';
+    if (wsOpen) doJoin(); else connect();
+  }
+
+  function respawn() {
+    if (!wsOpen) { start(); return; }
+    // 服务器仅在未存活时生成；成功与否由下一帧快照驱动状态迁移
+    send({t: 'respawn'});
+    dirQ = [];
+    lastTick = performance.now();
+  }
+
+  function spectate() {
+    ac();
+    bgmStart();
+    spectating = true;
+    wantPlay = false;
+    state = 'joining';
+    overScreen.classList.add('hidden');
+    pauseScreen.classList.add('hidden');
+    startScreen.classList.add('hidden');
+    demoBodyShow(false);
+    $('btnJoinIn').classList.remove('hidden');
+    setConn('● 观战中', 'ok');
+    if (!wsOpen) connect();
+  }
+
+  function joinIn() {
+    spectating = false;
+    wantPlay = true;
+    $('btnJoinIn').classList.add('hidden');
+    start(); // 复用入局流程（内部会 doJoin）
+  }
+
+  function togglePause() {
+    if (joined) return; // 对战中不可暂停
+    if (demoPaused) {
+      demoPaused = false;
+      lastTick = performance.now();
+      pauseScreen.classList.add('hidden');
+      btnPause.textContent = '暂停';
+    } else {
+      demoPaused = true;
+      pauseScreen.classList.remove('hidden');
+      btnPause.textContent = '继续';
+    }
+  }
+
+  function demoDir() {
+    const h = snake[0];
+    const opts = [[1,0],[-1,0],[0,1],[0,-1]]
+      .filter(([x,y]) => !(x === -dir.x && y === -dir.y))
+      .filter(([x,y]) => {
+        const n = {x: h.x + x, y: h.y + y};
+        return n.x >= 0 && n.y >= 0 && n.x < COLS && n.y < ROWS &&
+               !snake.some(s => s.x === n.x && s.y === n.y) &&
+               !rocks.some(r => r.x === n.x && r.y === n.y);
+      });
+    if (!opts.length) return null;
+    opts.sort(([ax,ay],[bx,by]) => {
+      const da = Math.abs(h.x + ax - food.x) + Math.abs(h.y + ay - food.y);
+      const db = Math.abs(h.x + bx - food.x) + Math.abs(h.y + by - food.y);
+      return da - db;
+    });
+    const [x, y] = opts[Math.floor(Math.random() * Math.min(2, opts.length))];
+    return {x, y};
+  }
+
+  // 本地演示蛇（未入局时的背景动画）
+  function step() {
+    lastCells = snake.map(s => ({...s}));
+    const nd = demoDir();
+    if (!nd) { reset(); return; }
+    dir = nd;
+
+    const headCell = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+    const hitWall = headCell.x < 0 || headCell.y < 0 || headCell.x >= COLS || headCell.y >= ROWS;
+    const hitSelf = snake.some(s => s.x === headCell.x && s.y === headCell.y);
+    const hitRock = rocks.some(r => r.x === headCell.x && r.y === headCell.y);
+    if (hitWall || hitSelf || hitRock) { reset(); return; }
+    snake.unshift(headCell);
+
+    let ate = false;
+    if (food && headCell.x === food.x && headCell.y === food.y) {
+      ate = true;
+      const w = cellW(food.x, food.y);
+      burst(w.x, .55, w.z, 0xff8787, 12);
+      fruitsEaten++;
+      placeFood();
+      maybeRocks();
+    }
+    if (bonus && headCell.x === bonus.x && headCell.y === bonus.y) {
+      ate = true;
+      const w = cellW(bonus.x, bonus.y);
+      burst(w.x, .6, w.z, 0xffd166, 22);
+      clearMesh(bonusMesh); bonusMesh = null;
+      if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
+      bonus = null;
+    }
+    if (!ate) snake.pop();
+    maybeBonus(performance.now());
+    updateMotionTargets();
+  }
+
+  function updateMotionTargets() {
+    rotT.length = snake.length;
+    rotT[0] = Math.atan2(dir.x, dir.y);
+    for (let i = 1; i < snake.length; i++) {
+      const to = snake[i], from = lastCells[i] || to;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      rotT[i] = (dx || dy) ? Math.atan2(dx, dy) : (rotT[i - 1] != null ? rotT[i - 1] : rotT[0]);
+    }
+  }
+
+  function setDir(x, y) {
+    if (state === 'idle') { start(); return; }
+    if (state !== 'playing' || !myEnt) return;
+    if (camFollow) {
+      if (!x) return;
+      const base = dirQ.length ? dirQ[dirQ.length - 1] : myEnt.dir;
+      const nd = x > 0 ? {x: -base.y, y: base.x} : {x: base.y, y: -base.x};
+      if (dirQ.length < 4) { dirQ.push(nd); send({t: 'dir', x: nd.x, y: nd.y}); sTurn(); }
+      return;
+    }
+    const lastDir = dirQ.length ? dirQ[dirQ.length - 1] : myEnt.dir;
+    if (x === -lastDir.x && y === -lastDir.y) return;
+    if (x === lastDir.x && y === lastDir.y) return;
+    if (dirQ.length < 4) { dirQ.push({x, y}); send({t: 'dir', x, y}); sTurn(); }
+  }
+
+  // ================= 实体与快照 =================
+  function makeEnt(id) {
+    const e = {
+      id, name: '', skin: 0, alive: true, score: 0,
+      cells: [], lastCells: [], spine: [], rotT: [], dir: {x: 1, y: 0},
+      deathAt: 0, flashAt: 0,
+      bodyMat: new THREE.MeshStandardMaterial({roughness: .55, metalness: .05}),
+      bodyMesh: null, head: null, tongue: null, skull: null, nameSp: null, nameText: '',
+    };
+    e.bodyMesh = new THREE.Mesh(new THREE.BufferGeometry(), e.bodyMat);
+    e.bodyMesh.castShadow = true;
+    e.bodyMesh.frustumCulled = false;
+    scene.add(e.bodyMesh);
+    e.head = makeHeadGroup();
+    scene.add(e.head);
+    e.tongue = e.head.getObjectByName('tongue');
+    e.skull = e.head.children[0];
+    return e;
+  }
+
+  function removeEnt(e) {
+    scene.remove(e.bodyMesh);
+    e.bodyMesh.geometry.dispose();
+    e.bodyMat.dispose();
+    scene.remove(e.head);
+    if (e.nameSp) scene.remove(e.nameSp);
+  }
+
+  function clearEnts() {
+    ents.forEach(e => removeEnt(e));
+    ents.clear();
+    demoBodyShow(true);
+  }
+
+  function demoBodyShow(v) {
+    bodyMesh.visible = v;
+    head.visible = v;
+  }
+
+  function nameSprite(e, txt) {
+    if (e.nameText === txt && e.nameSp) return;
+    e.nameText = txt;
+    if (e.nameSp) scene.remove(e.nameSp);
+    const sp = new THREE.Sprite(textSprite(txt));
+    sp.scale.set(2.4, 1.2, 1);
+    scene.add(sp);
+    e.nameSp = sp;
+  }
+
+  function cellsChanged(a, b) {
+    if (a.length !== b.length) return true;
+    for (let i = 0; i < a.length; i++)
+      if (a[i].x !== b[i].x || a[i].y !== b[i].y) return true;
+    return false;
+  }
+
+  function applyPlayers(plist, now) {
+    const seen = new Set();
+    for (const p of plist) {
+      if (!p.cells || !p.cells.length) continue; // 尚未入局
+      seen.add(p.id);
+      let e = ents.get(p.id);
+      if (!e) {
+        e = makeEnt(p.id);
+        ents.set(p.id, e);
+        e.name = p.name || '';
+        e.cells = p.cells.map(c => ({x: c[0], y: c[1]}));
+        e.lastCells = e.cells.map(c => ({...c}));
+        e.dir = {x: p.dir[0], y: p.dir[1]};
+        e.alive = p.alive;
+        e.deathAt = p.alive ? 0 : now;
+        e.rotT = e.cells.map(() => Math.atan2(e.dir.x, e.dir.y));
+        e.score = p.score;
+        e.skin = p.skin;
+        paintEnt(e);
+      } else {
+        const wasAlive = e.alive;
+        const nc = p.cells.map(c => ({x: c[0], y: c[1]}));
+        if (cellsChanged(nc, e.cells)) { e.lastCells = e.cells; e.cells = nc; }
+        e.dir = {x: p.dir[0], y: p.dir[1]};
+        e.score = p.score;
+        if (e.name !== p.name) e.name = p.name || '';
+        if (e.skin !== p.skin) { e.skin = p.skin; paintEnt(e); }
+        if (wasAlive && !p.alive) { e.deathAt = now; e.flashAt = now; }
+        if (!wasAlive && p.alive) {
+          // 复活：位置整体跳变，脊柱直接重置，避免从尸体位置滑过去
+          e.deathAt = 0;
+          e.lastCells = nc.map(c => ({...c}));
+          e.cells = nc;
+          e.spine.length = 0;
+          e.rotT = nc.map(() => Math.atan2(e.dir.x, e.dir.y));
+          dirQ = [];
+        }
+        e.alive = p.alive;
+      }
+      if (e.score !== undefined && e.id === myId) updateHud();
+    }
+    for (const [id, e] of [...ents]) {
+      if (!seen.has(id)) { removeEnt(e); ents.delete(id); if (id === myId) myEnt = null; }
+    }
+    myEnt = myId != null ? ents.get(myId) : null;
+    if (myEnt) demoBodyShow(false);
+  }
+
+  function applyWorld(s, now) {
+    // 食物
+    const f = s.food;
+    if (f) {
+      const key = f.x + ',' + f.y + ',' + f.color;
+      if (key !== foodKey) {
+        foodKey = key;
+        food = {x: f.x, y: f.y, score: f.score, color: f.color, born: now};
+        clearMesh(foodMesh);
+        foodMesh = makeFruit(food);
+        scene.add(foodMesh);
+      }
+    } else if (food) {
+      food = null; foodKey = '';
+      clearMesh(foodMesh); foodMesh = null;
+    }
+    // 星星（服务器 born 为单调时钟，本地记出现时间；用唯一 id 作键避免过期重刷竞态）
+    const b = s.bonus;
+    if (b) {
+      const key = String(b.id);
+      if (key !== bonusKey) {
+        bonusKey = key;
+        bonus = {x: b.x, y: b.y, score: b.score, born: now};
+        clearMesh(bonusMesh); bonusMesh = makeStar();
+        scene.add(bonusMesh);
+        if (bonusLight) scene.remove(bonusLight);
+        bonusLight = new THREE.PointLight(0xffd166, .9, 5);
+        scene.add(bonusLight);
+      } else if (bonus) {
+        bonus.x = b.x; bonus.y = b.y; bonus.score = b.score;
+      }
+    } else if (bonus) {
+      bonus = null; bonusKey = '';
+      clearMesh(bonusMesh); bonusMesh = null;
+      if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
+    }
+    // 岩石
+    const rk = (s.rocks || []).map(r => r[0] + ',' + r[1]).join('|');
+    if (rk !== rockKey) {
+      rockKey = rk;
+      const want = (s.rocks || []).map(r => r[0] + ',' + r[1]);
+      const wset = new Set(want);
+      rocks.forEach(r => { if (!wset.has(r.x + ',' + r.y)) r.mesh.visible = false; });
+      const kept = new Map(rocks.filter(r => wset.has(r.x + ',' + r.y)).map(r => [r.x + ',' + r.y, r]));
+      const next = [];
+      for (const r of (s.rocks || [])) {
+        const k = r[0] + ',' + r[1];
+        let entry = kept.get(k);
+        if (!entry) {
+          const m = takeRockMesh();
+          const w = cellW(r[0], r[1]);
+          m.position.set(w.x, .3, w.z);
+          m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+          m.scale.setScalar(.85 + Math.random() * .35);
+          m.visible = true;
+          entry = {x: r[0], y: r[1], mesh: m};
+        }
+        next.push(entry);
+      }
+      rocks = next;
+    }
+    // 弹药
+    syncProjectiles(s.proj || []);
+    return {round: s.round, win: s.win};
+  }
+
+  function syncProjectiles(list) {
+    // 按数量增减重建，位置通过 updateProjectiles 每帧外推
+    const sig = list.map(p => p.dx + ',' + p.dy).join('|');
+    if (sig !== projKey || projMeshes.length !== list.length) {
+      projKey = sig;
+      projMeshes.forEach(m => scene.remove(m));
+      projMeshes = list.map(p => {
+        const m = new THREE.Mesh(projGeo, projMat);
+        m.position.set(p.x - COLS/2 + .5, SEG_H/2, p.y - ROWS/2 + .5);
+        m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, at: performance.now()};
+        scene.add(m);
+        return m;
+      });
+      return;
+    }
+    // 数量一致 → 只同步服务器坐标与方向，保留网格做平滑外推
+    for (let i = 0; i < list.length; i++) {
+      const m = projMeshes[i], p = list[i], u = m.userData;
+      const dist = Math.abs(p.x - u.gx) + Math.abs(p.y - u.gy);
+      const turned = p.dx !== u.dx || p.dy !== u.dy;
+      if (dist > 1.5 || turned) u.at = performance.now();
+      u.gx = p.x; u.gy = p.y; u.dx = p.dx; u.dy = p.dy;
+    }
+  }
+
+  function updateProjectiles(now) {
+    for (const m of projMeshes) {
+      const u = m.userData;
+      const t = Math.max(0, Math.min(.1, (now - u.at) / 1000));
+      m.position.x = u.gx - COLS/2 + .5 + u.dx * 22 * t;
+      m.position.z = u.gy - ROWS/2 + .5 + u.dy * 22 * t;
+    }
+  }
+
+  function updateBoard() {
+    const rows = $('boardRows');
+    const list = [...ents.values()].filter(e => e.cells.length);
+    list.sort((a, b) => b.score - a.score);
+    if (!list.length) { $('board').classList.add('hidden'); return; }
+    $('board').classList.remove('hidden');
+    rows.textContent = '';
+    for (const e of list) {
+      const div = document.createElement('div');
+      div.className = 'brow' + (e.id === myId ? ' me' : '') + (e.alive ? '' : ' dead');
+      const dot = document.createElement('span');
+      dot.className = 'bdot';
+      dot.style.background = SKINS[e.skin % SKINS.length].base;
+      const nm = document.createElement('span');
+      nm.className = 'bname';
+      nm.textContent = e.name + (e.id === myId ? '（我）' : '');
+      const sc = document.createElement('span');
+      sc.className = 'bscore';
+      sc.textContent = e.score;
+      div.append(dot, nm, sc);
+      rows.appendChild(div);
+    }
+  }
+
+  // ================= 消息与事件 =================
+  function onMsg(m) {
+    if (m.t === 'welcome') {
+      myId = m.id;
+      return;
+    }
+    if (m.t === 'snap') {
+      if (!wsOpen) return;
+      const now = performance.now();
+      applyPlayers(m.players, now);
+      // 方向队列镜像：服务器已应用队首时出队
+      if (myEnt && dirQ.length) {
+        while (dirQ.length && dirQ[0].x === myEnt.dir.x && dirQ[0].y === myEnt.dir.y) dirQ.shift();
+      }
+      if (!joined && myEnt) {
+        joined = true;
+        startScreen.classList.add('hidden');
+      }
+      const meta = {round: m.round, win: m.win, over: m.over, cols: m.cols, rows: m.rows};
+      if (joined || spectating) {
+        applyWorld(m, now);
+        for (const e of (m.ev || [])) applyEvent(e);
+      }
+      handleRound(meta);
+      // 快照兜底：丢失 die 事件也能检测死亡
+      if (joined && myEnt && !myEnt.alive &&
+          (state === 'playing' || state === 'joining')) {
+        onMyDeath({cause: 'wall', by: null});
+      }
+      // 入局/复活/新一局 → 回到进行中
+      if (joined && myEnt && myEnt.alive && !winRound &&
+          (state === 'joining' || state === 'over' || state === 'win')) {
+        state = 'playing';
+        overScreen.classList.add('hidden');
+        btnRestart.textContent = '重新入局';
+        dirQ = [];
+        lastTick = now;
+      }
+      updateBoard();
+      updateHud();
+    }
+  }
+
+  function handleRound(meta) {
+    ensureBoard(meta.cols, meta.rows);
+    if (roundNo === -1) roundNo = meta.round;
+    else if (meta.round !== roundNo) {
+      roundNo = meta.round;
+      winRound = false;
+      overScreen.classList.add('hidden');
+      btnRestart.textContent = '重新入局';
+      btnRestart.disabled = false;
+      if (myEnt && myEnt.alive && state !== 'playing') state = 'playing';
+      lastTick = performance.now();
+    }
+    if (meta.over) winRound = true;
+  }
+
+  function applyEvent(ev) {
+    const w = ev.x !== undefined ? cellW(ev.x, ev.y) : null;
+    switch (ev.t) {
+      case 'eat': {
+        const e = ents.get(ev.id);
+        const p = w || (e && e.cells[0] ? cellW(e.cells[0].x, e.cells[0].y) : null);
+        if (p) burst(p.x, .55, p.z, 0xff8787, ev.id === myId ? 14 : 6);
+        if (ev.id === myId) {
+          if (p) floater(p.x, 1.2, p.z, '+' + ev.score);
+          sEat();
+        }
+        break;
+      }
+      case 'star': {
+        const e = ents.get(ev.id);
+        const p = w || (e && e.cells[0] ? cellW(e.cells[0].x, e.cells[0].y) : null);
+        if (p) burst(p.x, .6, p.z, 0xffd166, 22);
+        if (ev.id === myId) {
+          if (p) floater(p.x, 1.3, p.z, '+' + ev.score);
+          sStar();
+        }
+        break;
+      }
+      case 'kill': {
+        const e = ents.get(ev.eater);
+        const p = e && e.cells[0] ? cellW(e.cells[0].x, e.cells[0].y) : null;
+        if (p) floater(p.x, 1.5, p.z, '+' + ev.bonus);
+        if (ev.eater === myId) sStar();
+        break;
+      }
+      case 'die': {
+        const e = ents.get(ev.id);
+        if (e && e.cells[0]) burst(cellW(e.cells[0].x, e.cells[0].y).x, .6, cellW(e.cells[0].x, e.cells[0].y).z, 0xb7ffce, 24);
+        if (ev.id === myId) onMyDeath(ev);
+        break;
+      }
+      case 'clash': {
+        shake = Math.max(shake, .8);
+        if (ev.ids && ev.ids.includes(myId)) { dirQ = []; sTurn(); }
+        break;
+      }
+      case 'fire': {
+        if (ev.id !== myId) sAtk();
+        break;
+      }
+      case 'rock': {
+        if (w) {
+          burst(w.x, .4, w.z, 0x9aa6c8, 16);
+          if (ev.by === myId) { floater(w.x, 1.1, w.z, '+' + ev.score); beep(160, .2, 'sawtooth', .14, -80); }
+        }
+        break;
+      }
+      case 'expire': {
+        // 仅播爆裂特效；网格清理由 applyWorld 依据快照 bonus 是否为空统一处理，
+        // 避免"过期+同格重刷"时把刚生成的新星星误删（奖励吃两次的 bug）
+        if (w) burst(w.x, .75, w.z, 0xffd166, 12);
+        break;
+      }
+      case 'win': {
+        onWin(ev);
+        break;
+      }
+      case 'round': {
+        winRound = false;
+        overScreen.classList.add('hidden');
+        lastTick = performance.now();
+        break;
+      }
+      case 'join': {
+        if (ev.id !== myId) beep(660, .08, 'triangle', .06);
+        break;
+      }
+    }
+  }
+
+  const CAUSE_TEXT = {
+    wall: '撞墙了',
+    rock: '撞上岩石了',
+    self: '咬到自己了',
+    eaten: '被咬死了',
+  };
+
+  function onMyDeath(ev) {
+    state = 'over';
+    shake = Math.max(shake, 1);
+    sDie();
+    const sc = myEnt ? myEnt.score : 0;
+    $('overTitle').textContent = '你被淘汰了';
+    let sub = CAUSE_TEXT[ev.cause] || '被淘汰';
+    if (ev.cause === 'eaten' && ev.by != null) {
+      const killer = ents.get(ev.by);
+      sub = killer ? ('被 ' + killer.name + ' 咬死了') : sub;
+    }
+    sub += '　·　随时点击下方按钮重新入局';
+    $('overSub').textContent = sub;
+    finalScore.textContent = sc;
+    if (sc > best) {
+      best = sc;
+      localStorage.setItem(BEST_KEY, best);
+      bestEl.textContent = best;
+      recordTip.textContent = '🎉 新纪录！';
+    } else {
+      recordTip.textContent = '最高分 ' + best;
+    }
+    dirQ = [];
+    setTimeout(() => { if (state === 'over') overScreen.classList.remove('hidden'); }, 500);
+  }
+
+  function onWin(ev) {
+    const draw = ev.id == null;
+    const winEnt = draw ? null : ents.get(ev.id);
+    const isMe = !draw && ev.id === myId;
+    if (draw) {
+      $('overTitle').textContent = '平局';
+      $('overSub').textContent = '同时淘汰　·　点击准备进入下一局';
+    } else {
+      $('overTitle').textContent = isMe ? '🏆 你赢了！' : ('🏆 ' + (ev.name || (winEnt ? winEnt.name : '玩家')));
+      $('overSub').textContent = isMe ? ('本轮获胜 +' + ev.bonus + '　·　点击准备进入下一局') : '点击准备进入下一局';
+    }
+    finalScore.textContent = (isMe && winEnt) ? winEnt.score : (myEnt ? myEnt.score : 0);
+    const sc = (isMe && winEnt) ? winEnt.score : 0;
+    if (sc > best) {
+      best = sc;
+      localStorage.setItem(BEST_KEY, best);
+      bestEl.textContent = best;
+      recordTip.textContent = '🎉 新纪录！';
+    } else {
+      recordTip.textContent = '最高分 ' + best;
+    }
+    if (isMe) sStar();
+    if (state !== 'playing' || isMe || draw) {
+      state = 'win';
+      setTimeout(() => { if (state === 'win') showReadyScreen(); }, 400);
+    } else {
+      $('overTitle').textContent = '🏆 ' + (ev.name || '对手') + ' 获胜';
+      showReadyScreen();
+    }
+  }
+
+  function showReadyScreen() {
+    overScreen.classList.remove('hidden');
+    btnRestart.textContent = '准备';
+    btnRestart.disabled = false;
+  }
+
+  function sendReady() {
+    send({t: 'ready'});
+    btnRestart.textContent = '等待其他玩家…';
+    btnRestart.disabled = true;
+  }
+
+  // ================= 渲染 =================
+  // 通用：把一格一格的 cells 平滑插值成连续管状身体
+  function syncBody(cells, spine, dir, rotT, bodyMesh, bodyMat, head, tongue, skull, opts, dt) {
+    const now = opts.now;
+    const dead = !!opts.dead;
+    const gray = dead ? Math.min(1, (now - opts.deathAt) / 500) : 0;
+    const t0 = Math.max(0, (now - opts.deathAt) / 1000);
+    const fall = dead ? Math.min(1.2, t0 * t0 * 2.5) : 0;
+    const kp = 1 - Math.exp(-dt * 26);
+    const kr = 1 - Math.exp(-dt * 16);
+
+    while (spine.length < cells.length) {
+      const v = new THREE.Vector3();
+      const last = spine[spine.length - 1];
+      if (last) v.copy(last); else cw(cells[0].x, cells[0].y, v);
+      spine.push(v);
+    }
+    spine.length = cells.length;
+
+    for (let i = 0; i < cells.length; i++) {
+      cw(cells[i].x, cells[i].y, _vb);
+      spine[i].lerp(_vb, kp);
+      if (fall) spine[i].y -= i === 0 ? fall : fall * .5;
+    }
+
+    head.visible = true;
+    head.position.copy(spine[0]);
+    head.rotation.y = yawTo(head.rotation.y, rotT[0] || 0, kr);
+    tongue.visible = !dead && Math.floor(now / 450) % 5 === 4;
+    if (gray) skull.material.color.setHSL(.35, .3 * (1 - gray), .55 - gray * .25);
+    else skull.material.color.setHex(opts.headColor);
+
+    if (cells.length >= 2) {
+      const old = bodyMesh.geometry;
+      const geo = buildTubeGeometry(spine);
+      if (geo) {
+        bodyMesh.geometry = geo;
+        if (old) old.dispose();
+      }
+      bodyMesh.visible = true;
+    }
+    bodyMat.color.setRGB(1 - gray * .75, 1 - gray * .75, 1 - gray * .75);
+  }
+
+  // 服务器实体：算旋转目标 + 名牌
+  function syncEnt(e, dt, now) {
+    if (!e.cells.length) return;
+    e.rotT.length = e.cells.length;
+    e.rotT[0] = Math.atan2(e.dir.x, e.dir.y);
+    for (let i = 1; i < e.cells.length; i++) {
+      const to = e.cells[i], from = e.lastCells[i] || to;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      e.rotT[i] = (dx || dy) ? Math.atan2(dx, dy) : (e.rotT[i - 1] != null ? e.rotT[i - 1] : e.rotT[0]);
+    }
+    syncBody(e.cells, e.spine, e.dir, e.rotT, e.bodyMesh, e.bodyMat, e.head, e.tongue, e.skull, {
+      now, dead: !e.alive, deathAt: e.deathAt, headColor: SKINS[e.skin % SKINS.length].head,
+    }, dt);
+    if (e.name) {
+      nameSprite(e, e.name);
+      e.nameSp.position.copy(e.spine[0]);
+      e.nameSp.position.y += 1.0;
+      e.nameSp.visible = true;
+    }
+    if (now - e.flashAt < 300) e.bodyMat.emissive.setHex(0x7ee787);
+    else e.bodyMat.emissive.setHex(0x000000);
+  }
+
+  // 本地演示蛇（未入局背景）
+  function syncSnake(dt) {
+    const now = performance.now();
+    updateMotionTargets();
+    syncBody(snake, spine, dir, rotT, bodyMesh, bodyMat, head, tongueMesh, skullMesh, {
+      now, dead: false, deathAt: 0, headColor: SKINS[skinIdx].head,
+    }, dt);
+  }
+
+  function syncFood(now) {
+    if (foodMesh && food) {
+      const w = cellW(food.x, food.y);
+      foodMesh.position.set(w.x, .42 + Math.sin(now / 250) * .1, w.z);
+      foodMesh.rotation.y = now / 900;
+    }
+    if (bonusMesh && bonus) {
+      const w = cellW(bonus.x, bonus.y);
+      const blink = (now - bonus.born) / 8000 > .7 ? (Math.floor(now / 180) % 2 ? .3 : 1) : 1;
+      bonusMesh.position.set(w.x, .75 + Math.sin(now / 220) * .12, w.z);
+      bonusMesh.rotation.z = Math.sin(now / 300) * .25;
+      bonusMesh.rotation.y = now / 500;
+      bonusMesh.scale.setScalar(blink);
+      if (bonusLight) {
+        bonusLight.position.set(w.x, 1.2, w.z);
+        bonusLight.intensity = .7 + Math.sin(now / 150) * .25;
+      }
+    }
+  }
+
+  function updateFx() {
+    particles.forEach(p => {
+      p.m.position.x += p.vx;
+      p.m.position.y += p.vy;
+      p.m.position.z += p.vz;
+      p.vy -= .012;
+      p.life -= .03;
+      p.m.scale.setScalar(Math.max(.01, p.life));
+      if (p.life <= 0) scene.remove(p.m);
+    });
+    particles = particles.filter(p => p.life > 0);
+    floaters.forEach(f => {
+      f.sp.position.y += .035;
+      f.life -= .02;
+      f.sp.material.opacity = Math.max(0, f.life);
+      if (f.life <= 0) scene.remove(f.sp);
+    });
+    floaters = floaters.filter(f => f.life > 0);
+    if (shake > 0) shake -= .04;
+  }
+
+  // ================= 屏外方位指示（替代小地图） =================
+  // 把世界坐标投影到屏幕，若在视野外则沿"中心→目标"方向与画面边缘求交，贴边显示
+  function placeEdge(el, wx, wy, opts) {
+    if (wx == null || wy == null) { el.classList.add('hidden'); return; }
+    _edgeV.copy(cellW(wx, wy)).project(camera);
+    const nx = _edgeV.x, ny = _edgeV.y, nz = _edgeV.z;
+    const onScreen = nz < 1 && nx >= -0.9 && nx <= 0.9 && ny >= -0.9 && ny <= 0.9;
+    if (onScreen) { el.classList.add('hidden'); return; }
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width, h = rect.height, pad = 22;
+    const ux = nx, uy = -ny;                 // 像素空间方向（y 向下）
+    if (!ux && !uy) { el.classList.add('hidden'); return; }
+    const halfW = w / 2 - pad, halfH = h / 2 - pad;
+    let t = Infinity;
+    if (Math.abs(ux) > 1e-6) t = Math.min(t, halfW / Math.abs(ux));
+    if (Math.abs(uy) > 1e-6) t = Math.min(t, halfH / Math.abs(uy));
+    if (!isFinite(t)) { el.classList.add('hidden'); return; }
+    el.style.left = (w / 2 + ux * t) + 'px';
+    el.style.top = (h / 2 + uy * t) + 'px';
+    if (opts && opts.blink !== undefined) el.style.opacity = opts.blink ? '.4' : '1';
+    el.classList.remove('hidden');
+  }
+
+  function updateEdgeHints() {
+    placeEdge($('foodEdge'), food ? food.x : null, food ? food.y : null, null);
+    const blink = bonus
+      ? (performance.now() - bonus.born) / 8000 > .7 && Math.floor(performance.now() / 180) % 2
+      : undefined;
+    placeEdge($('bonusEdge'), bonus ? bonus.x : null, bonus ? bonus.y : null, {blink});
+  }
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = Math.min(.05, (now - prevFrame) / 1000);
+    prevFrame = now;
+
+    const demoMode = !joined && !spectating;
+    if (demoMode) {
+      // 其他玩家的实体（已入局但本地还没入局）先藏起来
+      if (ents.size) {
+        for (const e of ents.values()) {
+          e.bodyMesh.visible = false;
+          e.head.visible = false;
+          if (e.nameSp) e.nameSp.visible = false;
+        }
+      }
+      if (!demoPaused) {
+        let n = 0;
+        while (now - lastTick >= 180 && n++ < 4) { lastTick += 180; step(); }
+        if (now - lastTick > 720) lastTick = now;
+      }
+      syncSnake(dt);
+      syncFood(now);
+    } else {
+      for (const e of ents.values()) syncEnt(e, dt, now);
+      syncFood(now);
+      updateProjectiles(now);
+      if (myEnt) updateHud();
+    }
+
+    updateFx();
+
+    const atkBtn = $('btnAtk');
+    const cooling = now - lastAtk < ATK_COOL;
+    atkBtn.classList.toggle('cool', cooling);
+    atkBtn.classList.toggle('ready', !cooling && joined && state === 'playing');
+
+    // 相机：入局跟随自己；观战跟随领先者；否则跟随演示蛇
+    let hw, heading;
+    if (joined && myEnt && myEnt.spine.length) {
+      hw = myEnt.spine[0];
+      heading = Math.atan2(myEnt.dir.x, myEnt.dir.y);
+    } else if (spectating) {
+      const alive = [...ents.values()].filter(e => e.alive && e.spine.length);
+      alive.sort((a, b) => b.score - a.score);
+      const lead = alive[0];
+      if (lead) {
+        hw = lead.spine[0];
+        heading = Math.atan2(lead.dir.x, lead.dir.y);
+      } else {
+        hw = spine.length ? spine[0] : cellW(snake[0].x, snake[0].y);
+        heading = Math.atan2(dir.x, dir.y);
+      }
+    } else {
+      hw = spine.length ? spine[0] : cellW(snake[0].x, snake[0].y);
+      heading = Math.atan2(dir.x, dir.y);
+    }
+    if (camFollow) {
+      const delta = Math.atan2(Math.sin(heading - camYaw), Math.cos(heading - camYaw));
+      camYaw += delta * Math.min(1, dt * 3.2);
+    }
+    const a = (camFollow ? camYaw + Math.PI : 0) + userYaw;
+    const ax = Math.sin(a), az = Math.cos(a);
+    const kc = 1 - Math.exp(-dt * 12);
+    camBase.lerp(_va.set(hw.x + ax * camDist, CAM.h, hw.z + az * camDist), kc);
+    camLook.lerp(_vb.set(hw.x - ax * 2, .4, hw.z - az * 2), kc);
+    const sx = shake > 0 ? (Math.random() - .5) * shake * 1.2 : 0;
+    const sy = shake > 0 ? (Math.random() - .5) * shake * .8 : 0;
+    camera.position.set(camBase.x + sx, camBase.y + sy, camBase.z);
+    camera.lookAt(camLook);
+    renderer.render(scene, camera);
+    updateEdgeHints();
+  }
+
+  // ================= 输入 =================
+  const KEYS = {arrowup:[0,-1], w:[0,-1], arrowdown:[0,1], s:[0,1], arrowleft:[-1,0], a:[-1,0], arrowright:[1,0], d:[1,0]};
+  document.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (k.startsWith('arrow') || k === ' ') e.preventDefault();
+    if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
+    else if (k === 'j') { if (!e.repeat) fire(); }
+    else if (k === ' ') {
+      if (joined) fire();
+      else if (demoPaused) togglePause();
+      else if (state === 'idle') start();
+    } else if (k === 'enter') {
+      if (state === 'idle') start();
+      else if (state === 'over') respawn();
+    }
+  });
+
+  document.querySelectorAll('.dpad [data-dir]').forEach(btn => {
+    const dirs = {up:[0,-1], down:[0,1], left:[-1,0], right:[1,0]};
+    const fire = e => { e.preventDefault(); btn.classList.add('pressed'); setDir(...dirs[btn.dataset.dir]); };
+    btn.addEventListener('pointerdown', fire);
+    btn.addEventListener('pointerup', () => { btn.classList.remove('pressed'); btn.blur(); });
+    btn.addEventListener('pointerleave', () => btn.classList.remove('pressed'));
+    btn.addEventListener('pointercancel', () => btn.classList.remove('pressed'));
+  });
+
+  let dragging = false, lastDragX = 0;
+  canvas.addEventListener('mousedown', e => { dragging = true; lastDragX = e.clientX; });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    userYaw -= (e.clientX - lastDragX) * .006;
+    lastDragX = e.clientX;
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDist = Math.min(20, Math.max(7, camDist + e.deltaY * .01));
+  }, {passive: false});
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  let touchStart = null;
+  canvas.addEventListener('touchstart', e => { touchStart = e.touches[0]; }, {passive: true});
+  canvas.addEventListener('touchend', e => {
+    if (!touchStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.clientX, dy = t.clientY - touchStart.clientY;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+    if (camFollow) {
+      if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 1 : -1, 0);
+    } else if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 1 : -1, 0);
+    else setDir(0, dy > 0 ? 1 : -1);
+    touchStart = null;
+  }, {passive: true});
+
+  $('btnStart').onclick = start;
+  $('btnSpectate').onclick = spectate;
+  $('btnJoinIn').onclick = joinIn;
+  $('btnRestart').onclick = () => { if (winRound) sendReady(); else respawn(); };
+  $('btnResume').onclick = togglePause;
+  btnPause.onclick = togglePause;
+  $('btnAtk').onclick = fire;
+  $('btnSpeed').onclick = () => {
+    speedIdx = (speedIdx + 1) % SPEEDS.length;
+    localStorage.setItem('snake-speed', speedIdx);
+    speedEl.textContent = SPEEDS[speedIdx].n;
+    if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
+  };
+  ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnMap', 'btnSpectate', 'btnJoinIn'].forEach(id =>
+    $(id).addEventListener('click', e => e.currentTarget.blur()));
+  btnMute.onclick = () => {
+    muted = !muted;
+    localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+    btnMute.textContent = muted ? '🔇' : '🔊';
+    if (!muted) sEat();
+  };
+  $('btnCam').onclick = () => {
+    camFollow = !camFollow;
+    $('btnCam').textContent = camFollow ? '🎥跟随' : '🧭固定';
+    document.body.classList.toggle('follow', camFollow);
+  };
+  $('btnSkin').onclick = () => {
+    skinIdx = (skinIdx + 1) % SKINS.length;
+    localStorage.setItem('snake-skin', skinIdx);
+    applySkin();
+    sEat();
+  };
+  $('btnMap').onclick = () => {
+    mapSizeIdx = (mapSizeIdx + 1) % MAP_SIZES.length;
+    localStorage.setItem('snake-map', MAP_SIZES[mapSizeIdx].v);
+    $('btnMap').textContent = '🗺 ' + MAP_SIZES[mapSizeIdx].n;
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && !joined && state === 'idle' && !demoPaused) togglePause();
+  });
+
+  state = 'idle';
+  applySkin();
+  reset();
+  document.body.classList.add('follow');
+  $('btnMap').textContent = '🗺 ' + MAP_SIZES[mapSizeIdx].n;
+  $('nameIn').value = playerName;
+  lastTick = performance.now();
+  connect();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
