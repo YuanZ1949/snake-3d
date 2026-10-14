@@ -1,5 +1,81 @@
 # 全量开发计划（backlog-sprint 候选池，23 项 → 11 批）
 
+---
+
+# 第二轮计划（批13-19，待子代理审阅）
+
+总纲（m0221）：考察全部候选 → 列入计划 → 子代理审阅 → 直接执行 → 回归 → 上线（部署生产 8090）；决策自主按推荐。
+
+## 候选池与考察结论（两个 explore 子代理报告 + 已确认）
+
+| 项 | 症状 | 已考察根因（关键行号） |
+|---|---|---|
+| D 方向失控 | 某些时刻按键无效但视角可调，蛇沿旧方向撞墙 | ① dirQ 出队只比队头 `index.html:2134-2136`，服务端丢弃/改向（win_pending serve.py:1756、deflect 清队列 958、portal 改向 905、队满 1761、send 未发出 index.html:1486）造成队头永久失步 → `dirQ.length<4` 上限锁死；② 回合切换不清 dirQ（handleRound 2148→2177 先置 playing，2155 复位块被跳过；'round' 2286 也不清）+ onWin else 保持 playing（2362-2364）；③ send 异常只置 sess.room=None（serve.py:1313-1314）不摘 subs/pid → dir 永远走 1746 静默丢但快照照发 |
+| C AI 吃不到水果 | AI 绕水果转、水果不消失 | ① place_food 无可达性检查（serve.py:640-670）→ 水果落蛇圈/岩石口袋永不可达；② _bot_think 无绕行搜索（serve.py:835-863，单步曼哈顿+固定次序 → 沿障碍绕圈）；③ bonus 优先压过 food（844-847，星星约 40% 时间常驻 → AI 无视水果）；④ spawn 可压在水果上（_solid serve.py:558 不含 food）；次要：head_on 冻结抖拍、快照帧丢失（1296 先更新 sig 后发送，异常被 1469 吞） |
+| F 碰撞卡叠 | 蛇互相穿插/卡住不分离 | ① spawn_player 兜底分支零占用检查（serve.py:629-638）→ 两蛇同格同向 → head_on 每 tick force_right 永久死锁（914-935 + 1024 不移动）；② _protected 只拦咬不拦进入（974 continue vs 1027 插头）→ 无敌/护盾期穿身；③ 尸体不清且不阻挡（1015 只置 alive=False）；④ off_at 挂起蛇静止 10s 仍参与碰撞/挡 AI（869 vs 926/970/984）；⑤ portal 出口无占用预检 + 出口朝向恒东（902 因 561 把传送门算实心，_open_ahead 恒 0）；⑥ spawn 可压 food（同 C）；⑦ 双重 force_right 同帧右转两次反向自杀（914-935 互不检查 head_on） |
+| B 下拉栏 | 建房面板 select 原生白底下拉（m0193） | 未考察细节：Chrome 原生下拉不吃 option 背景色 → 需 `color-scheme: dark` 或 appearance 自绘；小改动 |
+| E 房间参数编辑 | 局中/房间改 win_mode/limit/respawn/bots 等（m0198） | 已有 create 解析全套参数（批1）；需新消息 `roomcfg` + 房主鉴权 + 重开局语义；client 复用建房面板控件 |
+| G 死亡后直接观赛 | 死亡屏加「观战」按钮（m0209） | onMyDeath/overScreen 已在 index.html:2311-2335；spectate() 1637-1653 已存在；只差按钮+状态衔接 |
+| H 碰外墙偏转项 | 新增房间选项：撞边界墙自动偏转（不用 deflect 道具）；石头/场内岩石照死、被别人咬到 <2 照死（m0222） | _deflect_dir + 折返机制批2 已有（serve.py:952-960、1072-1089）；只差 Room 参数 `walldeflect` + 判死处 947 分支 + 建房控件 + info/snapshot 下发 |
+| A2 本地 CI 等价脚本 | 一键回归（单测+8 E2E+静态+Playwright） | 命令套路已固化（见 HANDOVER）；写 scripts/local_ci.ps1 |
+| A3 服务器清理 | /tmp 探测脚本 + 部署目录 6 个 .bak + index.html.bak-* | 部署时已识别；上线时顺手清（保留 predeploy tar 备份） |
+
+A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）。
+
+## Oracle 审阅（ses_ec42f5645ffe…）：需修改后执行 → 已按必改项修订（采纳）
+
+**必改项（已并入各批方案）**：
+1. 批13① dirQ 校准不闭环 → players 快照加 `q=len(p['queue'])` 对账：客户端队头规则之外，按 q 截断/校正 dirQ，显式覆盖 955-959/723/1761 清队路径。
+2. 批13③ send 失败（serve.py:1312-1314）改调 `leave_room(sess, hard=False)`，禁止手写 pid 清理（否则绕过 off_at/resumable → 重连变新蛇、幽灵实体、房间永不回收）。
+3. 批14② protected 进入拦截否决裸 force_right → 本帧 skip_move（复刻 1024 模式；改 dir 本帧照样 1027 插头，且 723 清队反噬批13）。
+4. 批14 加破僵局机制：同格同向 ≥2 tick 判死或确定性 tie-break（head_on 每 tick 重建 908，「跳过已 head_on」和 spawn 修复都破不了永久死锁）。
+5. 批14④ off_at 排除精确限定在 970-978（咬）+ 926-929（顶头）；`_solid`/`free_cells`/`check_win(728)` 不动；`resume`(549-554) 加位置复核，冲突则 fresh spawn。
+6. 批15① 可达性改「静态地形可达集 + 失效缓存」（失效点：build_terrain/maybe_rocks/岩石摧毁1196），按 MAP_MAX=96（9216格）估成本，删「重掷 N 次」，加 <5ms 计时断言。
+7. 批18 放弃「立即 new_round」→ **live 生效**（check_win/快照 1260-1261 现读现发，零协议改动）+ `set_bots()` 显式增减；鉴权用 `sess.user`（owner==sid 重连即失效，1611/1711）。
+8. 批13/14 补自动化验证：批14 ≥7 例先红后绿 + 小图 6-8 bot 30s 活性压力（断言无同格 ≥3 tick）；批13 服务端单测（monkeypatch ws.send 抛异常 → 断言 off_at → 重连 resume 命中）。
+
+**建议采纳**：A2 local_ci.ps1 **前移为批13 前置**（批19 只留清理+部署+回滚）；「spawn 避开 food」划归批14；批15 bonus 用 `min(dist)` 目标选取；批17 补「折返遇岩石照死」第4用例；批19 补回滚预案；批16 color-scheme 限定作用域。
+**已知限制（记录不修）**：1296/1469 增量帧丢失靠重连全量自愈；persist 的 owner-sid 既有缺陷；磁铁1151 可拉入不可达口袋。
+**修正断言**：portal「恒东」真因是 900-905 `o>bo` 严格大于+方向序首项+cap=24 平局（非 561 恒0）→ 批14⑤ 先写复现用例再改。
+
+## 批次划分与排序（理由）
+
+| # | 批 | 覆盖 | 排序理由 |
+|---|---|---|---|
+| 12.5 | A2 本地 CI 脚本 | local_ci.ps1（前置，oracle 建议） | 批13-18 共 6 轮回归全靠它，先建工具 |
+| 13 | D 方向失控 | 客户端 dirQ 校准 + 回合复位 + 服务端 ghost 订阅清理 | 最高频痛点；解锁「方向输入可靠」这一基础，后面批次的 E2E 手动验证都依赖它 |
+| 14 | F 碰撞卡叠 | spawn 兜底检查 + protected 进入拦截 + 同格死锁解 + portal 出口修正 + off_at 障碍语义 | 与 D 同属核心手感；根因已全部定位，服务端集中改 step/spawn |
+| 15 | C AI 吃水果 | place_food 可达性 + bot 简单绕行 + spawn 不压 food + bonus 优先级调权 | 依赖 14 的 spawn 修正（同一函数），故排其后 |
+| 16 | B + G 小前端 | select 下拉暗色 + 死亡屏观战按钮 | 两项都小且互不相干，合一批省一轮回归 |
+| 17 | H 外墙偏转选项 | Room walldeflect 参数 + 判死分支 + 建房控件 + 单测 | 新功能，依赖批14 的碰撞语义稳定 |
+| 18 | E 房间参数编辑 | roomcfg 消息 + 房主鉴权 + 面板复用 | 最大新功能，放功能批最后 |
+| 19 | A2 + A3 + 上线 | local_ci.ps1 + 服务器清理 + 全量回归 + git archive 部署 8090 + 生产验证 | 收尾批；上线必须在全部功能回归后 |
+
+## 各批技术方案（要点）
+
+- **批12.5（A2 前移）**：`scripts/local_ci.ps1`——停服清库→起双服(28000/8090)→8 E2E→单测→停服清库→静态检查→起 8123→Playwright 3/3→汇总 Exit code。批13-18 每批跑它。
+- **批13**：① dirQ 精确重同步——players 快照加 `q=len(p['queue'])`，客户端 applyPlayers 对账：队头===myEnt.dir 或反向则 shift（保留现有规则），然后 `if (dirQ.length > q) dirQ = dirQ.slice(0, max(q,0))`... （**按必改1 修订**：以服务端 q 为权威长度校正本地镜像，覆盖 955-959 清队/723 clash 清队/1761 队满丢新项——队满丢的是队尾新项，故截尾；955-959 整队清空 → q=0 全清；clash 同理）；② `handleRound`/`'round'`/onWin else 分支强制 `dirQ=[]`；③ serve.py:1312-1314 send 失败改调 `leave_room(sess, hard=False)`（**必改2**：保留 off_at/resumable 语义，禁手写 pid 清理）；④ setDir 前置门控 wsOpen（send 返回 void 无法回滚，改为不 push 未发出的项）。
+  - 验证（必改8）：服务端单测 monkeypatch ws.send 抛异常 → 断言 sess 进 off_at → 重连 resume 命中同 id；客户端 dirQ 收敛用单测级断言（test_game.py 无法覆盖 JS → 用 Playwright 或静态审查 + E2E 实玩）。
+- **批14**：① spawn 兜底分支改 free_cells 安全点（**含避开 food**，划归本批）；② protected 进入拦截 = 本帧 skip_move（复刻 1024 模式，**必改3**：禁裸 force_right）；③ head_on 跳过已 head_on 的蛇（防双重右转）；④ **破僵局（必改4）**：同格同向 ≥2 tick → 确定性 tie-break 判死（按 pid 序留一死一，或强制方改向）；⑤ off_at 排除精确限定 970-978 咬 + 926-929 顶头，_solid/free_cells/check_win 不动，**resume 549-554 加位置复核冲突则 fresh spawn**（必改5）；⑥ portal 出口：**先写复现用例**再改（真因候选 = 900-905 `o>bo` + cap=24 平局偏东，非 561）；出口格 occupied → skip_move 一帧（须防 1027 重复插格）；⑦ 尸体已全面过滤 → 不改。
+  - 验证（必改8）：≥7 例先红后绿 + 小图 6-8 bot 30s 活性压力（断言无同格 ≥3 tick）。
+- **批15**：① place_food 可达性 = **静态地形可达集 + 失效缓存**（必改6：失效点 build_terrain/maybe_rocks/1196 岩石摧毁；从活蛇头 flood-fill 到 food 格，MAP_MAX=96 → 9216 格 BFS，加 <5ms 计时断言；删除「重掷 N 次」）；② _bot_think 绕行：直路被挡选「与被挡方向最接近的开放方向」；③ bonus 优先改 `min(dist)` 目标选取（food/bonus 统一按 dist 排序）；④ spawn 避 food 不在本批（已划归批14）。TDD：围死格不放、BFS 计时、bot 绕障用例。
+- **批16**：B=`select{color-scheme:dark}` **限定作用域**（仅建房/房间设置面板内 select）+ option 暗色兜底；G=overScreen 加「观战」→ spectate()，wantPlay=false 衔接。
+- **批17**：`Room.walldeflect`（建房 `walldeflect:bool`，info/snapshot 下发）；947 wall 判死前若 walldeflect → 复用 _deflect_dir（无路照死）；岩石/自己/咬<2 不变；建房 checkbox「撞墙反弹」；单测 4 例：墙不死反弹/岩石照死/咬<2 照死/**折返遇岩石照死**（oracle 补充）。INFO：walldeflect 房 deflect 道具冗余（接受）；_deflect_dir 1082-1084 未排除他人身体（观察，坏则下批修）。
+- **批18**：新消息 `roomcfg`，**live 生效（必改7）**——win_mode/limit/respawn/bots/walldeflect 即时生效（check_win/快照 1260-1261 现读现发零协议改动）；bots 变更用 `set_bots()` 显式增减（add_bots 仅构造时调用）；鉴权 `sess.user`（禁 owner==sid，重连失效）；**不 new_round**（避免重掷地形/清比分坑）；theme 不 live 改（记入已知限制：改主题下局生效）。边界拍板：limit 改小→到点即时结算（夹取 ≥1s）；score 模式改 win_mode 后按新规则结算。client 房间内「房间设置」复用建房控件。
+- **批19**：A3 清 /tmp/*.py + 部署目录 .bak（保留 predeploy tar）；`git archive dev` 部署 + restart + 生产验证（200/delta 探针/journal 无 error）；**回滚预案（必补）**：生产验证失败 → `tar xzf snake-3d-predeploy-*.tar.gz -C /home/ubuntu/snake-3d` + restart。
+
+## 回归与验收（每批）
+
+每批跑 `scripts/local_ci.ps1`（批12.5 建）：单测 test_game.py 全绿（批17/18 先红后绿）+ 8 套 E2E Exit 0（停服清 persist_rooms.json）+ 静态检查 ALL PASSED + Playwright 3/3（8123）。批19 收尾 → 部署生产 8090 → curl/journal/delta 探针 → 失败走回滚预案。
+
+## 不做
+
+- 不 push（部署用本地 git archive，与前两轮一致——用户指令是"上线"即部署生产，push 未被要求）。
+- 不重构渲染/协议大结构；不做 ESM 改造（已拍板维持 r160 UMD）。
+- 方向失控的「服务端 dir 回执协议」（dir-rej 消息）不做——用快照 q 对账 + 客户端校准替代（改动面小，且 q 字段仅 1 字节不算消息协议）。
+- 已知限制（记录不修）：增量帧 1296/1469 丢失靠重连全量自愈；persist owner-sid 既有缺陷；磁铁 1151 可拉入不可达口袋；theme live 修改（下局生效）。
+
+
 用户指令：原 11 项 + 新提 12 项「一次性都开发完，最后统一验收；歧义按推荐拍板」。
 每批 TDD（先红后绿）+ 批后回归：test_game.py 全绿 + 4 套 E2E Exit 0 + 前端静态检查。
 协议字段变更的批次排在 C1 之前；C4 依赖 C2 冒烟；C1 快照增量压轴。
