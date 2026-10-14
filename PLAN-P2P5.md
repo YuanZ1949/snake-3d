@@ -28,7 +28,7 @@
 | # | 批 | 覆盖项 | 状态 | 批后验证 |
 |---|---|---|---|---|
 | 1 | 战场自定义 | A3 + 新#12 | ✅ | 单测 31/31 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；create 解析端到端 OK；起服 / 200 |
-| 2 | 大招+偏转+护盾 | A6 + 新#1 + 新#7 | ⬜ | |
+| 2 | 大招+偏转+护盾 | A6 + 新#1 + 新#7 | ✅ | 单测 40/40 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；ult 冒烟 OK |
 | 3 | 传送门+资源有效期 | 新#2 + 新#6 | ⬜ | |
 | 4 | AI蛇+单人模式 | A4 + 新#5 | ⬜ | |
 | 5 | 重连+聊天 | B2 + B3 | ⬜ | |
@@ -47,4 +47,13 @@
 - **index.html**：HUD `timeChip` 倒计时；建房面板 3 控件（#cWin/#cLimit/#cRespawn）；`roomCfg`/`roomMeta()` 显示积分赛/无限复活/限时；`fmtDur`；死亡提示按 respawn 分支；applyEvent `case 'respawn'`。
 - **test_game.py**：+7 用例（battle_mode_config / time_limit×2 / score_mode / last_mode / respawn×2），先红（TypeError: unexpected keyword 'win_mode'）后绿，31/31。
 - **验证**：静态检查 ALL STATIC CHECKS PASSED（JS OK / 59 id refs / div 31-31 / css 130-130）；test_ws / test_ws2 / verify_rooms / test_p1 全 Exit 0；HTTP / 与 three.min.js 200；create 端到端（8090）respawn→('last',120,True)、score→('score',300,False)、非法值→('last',0,False)。
+- **暴露的新工作**：无；**顺序调整**：无。
+
+### 批2 大招+偏转+护盾（A6 + 新#1 + 新#7）✅
+- **A6 拍板（原 backlog 无细节，按推荐实现）**：蓄力大招——吃果 +10 / 星星 +15 / 咬杀 +30 封顶 100；`ult` 消息释放 8 方向环形弹幕（对角归一化、spd 1.5、命中截断不变），冷却 `ULT_COOL=3000`；死亡/重生清零；客户端 HUD 蓄力条 + 键 K + 点击按钮。
+- **serve.py**：`ITEM_TYPES` + `deflect`；新常量 `ULT_MAX/ULT_FRUIT/ULT_STAR/ULT_KILL/ULT_COOL`；`make_player`/`spawn_player` 增 `ult`；`_deflect_dir()`（垂直两方向取空间最大可走格，界内/非阻挡/非传送门/非己身）；step 第 4 节分级——shield 全地形折返、deflect 仅边界墙折返、折返时清转向队列并重算 tent、无路可走照死（cause 按 wall/rock/self 原序）；`try_ult()`；snapshot players 加 `ult`；消息 `ult`。
+- **index.html**：`ITEMS.deflect`（↩️ #74c0fc）+ `.eff.deflect` CSS；HUD `ultBtn`（蓄力 %、满 100 脉冲 `ultPulse`、点按释放）；键 `K`；`fireUlt()`（客户端预校验 100）；eff 显示列表 + deflect；applyEvent `case 'ult'`（爆裂+floater+beep）。
+- **test_game.py**：+10 用例（deflect×2、shield 折返×3、ult 充能/击杀/蓄力门槛/弹幕冷却/重生清零×5）。先红（deflect 撞墙仍死）后绿，**40/40**。
+- **test_p1.py**：P1 期望 `ITEM_TYPES` 6→7 同步（批2 预期变更，非删测）。
+- **验证**：静态检查 ALL PASSED（61 ids / div 31 / css 135）；test_ws / test_ws2 / verify_rooms / test_p1 全 Exit 0；HTTP /、three.min.js、leaderboard 全 200；`ult` 未蓄满消息冒烟被静默忽略、服务端快照正常（ULT SMOKE OK）。
 - **暴露的新工作**：无；**顺序调整**：无。

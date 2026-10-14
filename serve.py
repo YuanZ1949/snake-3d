@@ -28,7 +28,12 @@ RESPAWN_MS = 3000       # 复活模式：死亡后延迟复活 ms
 LIMIT_MAX = 3600        # 战场限时上限（秒）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
-ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage')
+ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
+ULT_MAX = 100          # 大招蓄力上限（攒满才可释放）
+ULT_FRUIT = 10         # 吃水果充能
+ULT_STAR = 15          # 吃星星充能
+ULT_KILL = 30          # 咬蛇淘汰充能
+ULT_COOL = 3000        # 大招释放冷却 ms
 COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击重置
 COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
 
@@ -482,6 +487,7 @@ class Room:
         p['grow'] = 0
         p['combo'] = 0
         p['combo_at'] = 0
+        p['ult'] = 0
         p.pop('died_at', None)
         if not fresh_cells and p.get('cells'):
             return
@@ -765,7 +771,9 @@ class Room:
                     self.ev('clash', ids=[a['id'], q['id']])
                     break
 
-        # 4) 普通碰撞：墙 / 岩石 / 墙块 / 自己（护盾与幽灵可免疫部分）
+        # 4) 普通碰撞：墙 / 岩石 / 墙块 / 自己
+        #    护盾(shield) = 任何地形碰撞都折返不死；偏转道具(deflect) = 仅边界墙折返；
+        #    偏转方向取垂直方向中空间最大的一格（仍无路可走则照死）
         dead = set()
         blockset = set(self.rocks) | set(self.walls)
         for p in due:
@@ -773,15 +781,22 @@ class Room:
                 continue
             hx, hy = tent[id(p)]
             ghost = self.effect_active(p, 'ghost', now)
-            if not ghost and (hx < 0 or hy < 0 or hx >= self.cols or hy >= self.rows):
-                dead.add(id(p))
-                p['cause'] = 'wall'
-            elif (hx, hy) in blockset and not ghost:
-                dead.add(id(p))
-                p['cause'] = 'rock'
-            elif (hx, hy) in p['cells'][1:]:
-                dead.add(id(p))
-                p['cause'] = 'self'
+            wall = not ghost and (hx < 0 or hy < 0 or hx >= self.cols or hy >= self.rows)
+            rock = not ghost and (hx, hy) in blockset
+            own = (hx, hy) in p['cells'][1:]
+            if not (wall or rock or own):
+                continue
+            shielded = self.effect_active(p, 'shield', now)
+            guard = shielded or (self.effect_active(p, 'deflect', now) and wall)
+            if guard:
+                nd = self._deflect_dir(p, blockset)
+                if nd is not None:
+                    p['dir'] = nd
+                    p['queue'] = []
+                    tent[id(p)] = (p['cells'][0][0] + nd[0], p['cells'][0][1] + nd[1])
+                    continue
+            dead.add(id(p))
+            p['cause'] = 'wall' if wall else ('rock' if rock else 'self')
 
         # 5) 咬到其他蛇身体 → 截断对方（对方至少保留 MIN_LEN 格，被截下的部分并入攻击者长度）
         bites = {}   # victim_id -> (eater_id, index)
@@ -811,6 +826,7 @@ class Room:
                 q['by'] = eid
                 q['died_at'] = now
                 ep['grow'] = ep.get('grow', 0) + cut
+                ep['ult'] = min(ULT_MAX, ep.get('ult', 0) + ULT_KILL)
                 gained = self.score_gain(ep, BITE_SCORE_PER_CELL * cut, now)
                 if ep.get('user'):
                     store.inc(ep['user'], 'kills')
@@ -861,6 +877,7 @@ class Room:
                 self.ev('eat', id=p['id'], x=hx, y=hy, score=gained,
                         combo=p['combo'], mult=mult)
                 self.fruits_eaten += 1
+                p['ult'] = min(ULT_MAX, p.get('ult', 0) + ULT_FRUIT)
                 if p.get('user'):
                     store.inc(p['user'], 'food')
                 self.maybe_rocks()
@@ -870,6 +887,7 @@ class Room:
             if self.bonus and (hx, hy) == (self.bonus['x'], self.bonus['y']):
                 ate = True
                 gained = self.score_gain(p, self.bonus['score'], now)
+                p['ult'] = min(ULT_MAX, p.get('ult', 0) + ULT_STAR)
                 self.ev('star', id=p['id'], x=hx, y=hy, score=gained)
                 self.bonus = None
             for it in self.items:
@@ -887,6 +905,44 @@ class Room:
         if eaten_items:
             self.items = [it for it in self.items if it['id'] not in eaten_items]
         self.check_win(now)
+
+    def _deflect_dir(self, p, blockset):
+        """折返方向：取蛇头垂直两方向中可走（界内、无岩石墙块、无传送门、
+        不压自己身体）且前方空间最大的那格；都走不了返回 None（照死）。"""
+        hx, hy = p['cells'][0]
+        dx, dy = p['dir']
+        best, best_open = None, -1
+        for nd in ((-dy, dx), (dy, -dx)):
+            nx, ny = hx + nd[0], hy + nd[1]
+            if not (0 <= nx < self.cols and 0 <= ny < self.rows):
+                continue
+            if (nx, ny) in blockset or (nx, ny) in self.portals:
+                continue
+            if (nx, ny) in p['cells'][1:]:
+                continue
+            o = self._open_ahead(hx, hy, nd, p.get('id'))
+            if o > best_open:
+                best_open, best = o, nd
+        return best
+
+    def try_ult(self, p, now):
+        """大招：蓄力满 100 后释放 8 方向环形弹幕（对角线方向做归一化）。"""
+        if self.win_pending or not p['alive'] or not p['cells']:
+            return False
+        if p.get('ult', 0) < ULT_MAX:
+            return False
+        if now - p.get('last_ult', 0) < ULT_COOL:
+            return False
+        p['last_ult'] = now
+        p['ult'] = 0
+        hx, hy = p['cells'][0]
+        k = 0.7071
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            f = k if dx and dy else 1.0
+            self.projectiles.append({'owner': p['id'], 'x': hx, 'y': hy,
+                                     'dx': dx * f, 'dy': dy * f, 'spd': 1.5})
+        self.ev('ult', id=p['id'], x=hx, y=hy)
+        return True
 
     def _protected(self, p, now):
         """被咬免疫：重生保护或护盾道具。"""
@@ -1016,6 +1072,7 @@ class Room:
                 'eff': {k: max(0, v - now) for k, v in p.get('eff', {}).items() if v > now},
                 'acct': p.get('user'),
                 'combo': p.get('combo', 0),
+                'ult': p.get('ult', 0),
             })
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,
@@ -1149,6 +1206,7 @@ def make_player(pid, sess, name, skin):
         'tick': 150, 'base_tick': 150, 'last_move': 0, 'last_atk': 0,
         'inv': 0, 'eff': {}, 'grow': 0, 'user': sess.user, 'cause': None, 'by': None,
         'combo': 0, 'combo_at': 0,
+        'ult': 0, 'last_ult': 0,
     }
 
 
@@ -1373,6 +1431,8 @@ async def handle_msg(sess, m):
                                  'dx': p['dir'][0], 'dy': p['dir'][1],
                                  'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0})
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
+    elif t == 'ult':
+        room.try_ult(p, now)
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
     elif t == 'skin':

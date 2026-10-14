@@ -358,7 +358,11 @@
   .eff.magnet { color: #ff7bd1; border-color: rgba(255,123,209,.5); }
   .eff.double { color: #ffe066; border-color: rgba(255,224,102,.5); }
   .eff.rage   { color: #ff8a5c; border-color: rgba(255,106,74,.55); }
+  .eff.deflect{ color: #74c0fc; border-color: rgba(116,192,252,.55); }
   .eff.inv    { color: #7ee787; border-color: rgba(126,231,135,.5); }
+  #ultBtn { cursor: pointer; }
+  #ultBtn.ready { color: #ffd166; border-color: rgba(255,209,102,.75); animation: ultPulse 1s infinite; }
+  @keyframes ultPulse { 50% { box-shadow: 0 0 16px rgba(255,209,102,.9); } }
   .eff .track { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
   .eff .bar { height: 100%; background: currentColor; width: 100%; }
   .chip.combo { color: #ffd166; border-color: rgba(255,209,102,.55); animation: comboPulse .7s ease-in-out infinite; }
@@ -388,6 +392,7 @@
     <span class="chip">得分 <b id="score">0</b></span>
     <span class="chip combo hidden" id="comboChip">🔥 <b id="comboN">0</b></span>
     <span class="chip hidden" id="timeChip">⏱ <b id="timeN">0:00</b></span>
+    <button class="chip hidden" id="ultBtn" title="大招：蓄力满 100 释放（键 K）">💥 <b id="ultN">0%</b></button>
     <span class="chip">最高 <b id="best">0</b></span>
     <button class="chip" id="btnSpeed" aria-label="速度">速度 <b id="speed">中</b></button>
     <button class="chip" id="btnMute" aria-label="静音">🔊</button>
@@ -624,6 +629,7 @@
     magnet: {emoji: '🧲', color: 0xff7bd1, label: '磁铁'},
     double: {emoji: '✨', color: 0xffe066, label: '双倍'},
     rage:   {emoji: '🔥', color: 0xff6b4a, label: '狂暴'},
+    deflect:{emoji: '↩️', color: 0x74c0fc, label: '偏转'},
   };
   const ITEM_LIFE = 12000;
   const THEMES = {
@@ -1371,6 +1377,15 @@
       $('comboN').textContent = '×' + c;
       chip.classList.toggle('hot', c >= 10);
     }
+    const ub = $('ultBtn');
+    if (joined && myEnt) {
+      ub.classList.remove('hidden');
+      const u = Math.min(100, myEnt.ult | 0);
+      $('ultN').textContent = u + '%';
+      ub.classList.toggle('ready', u >= 100);
+    } else {
+      ub.classList.add('hidden');
+    }
   }
 
   // ================= 网络层 =================
@@ -1449,6 +1464,13 @@
     lastAtk = now;
     send({t: 'atk'});
     sAtk();
+  }
+
+  function fireUlt() {
+    if (state !== 'playing' || !joined || !myEnt) return;
+    if ((myEnt.ult | 0) < 100) return;          // 未蓄满不发（服务端还会再校验）
+    send({t: 'ult'});
+    beep(140, .25, 'sawtooth', .14, 600);
   }
 
   // 返回主页：结束当前对局/观战、恢复演示世界（服务端 leave 会把玩家移出房间）
@@ -1869,7 +1891,7 @@
     const parts = [];
     if (myEnt) {
       const eff = myEnt.eff || {};
-      for (const k of ['shield', 'speed', 'ghost', 'magnet', 'double', 'rage']) {
+      for (const k of ['shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect']) {
         const left = eff[k] | 0;
         if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, left: left, total: 6000});
       }
@@ -2087,6 +2109,14 @@
       }
       case 'fire': {
         if (ev.id !== myId) sAtk();
+        break;
+      }
+      case 'ult': {
+        if (w) {
+          burst(w.x, .7, w.z, 0xffb84d, 30);
+          if (ev.id === myId) floater(w.x, 1.4, w.z, '大招爆发！');
+        }
+        beep(220, .3, 'sawtooth', .12, -600);
         break;
       }
       case 'rock': {
@@ -2626,6 +2656,7 @@
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();
     if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
     else if (k === 'j') { if (!e.repeat) fire(); }
+    else if (k === 'k') { if (!e.repeat) fireUlt(); }
     else if (k === ' ') {
       if (joined) fire();
       else if (demoPaused) togglePause();
@@ -2635,6 +2666,8 @@
       else if (state === 'over') respawn();
     }
   });
+
+  $('ultBtn').addEventListener('click', fireUlt);
 
   document.querySelectorAll('.dpad [data-dir]').forEach(btn => {
     const dirs = {up:[0,-1], down:[0,1], left:[-1,0], right:[1,0]};

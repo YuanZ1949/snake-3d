@@ -137,6 +137,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `ready` | — | 回合结束后的下一局确认 |
 | `dir` | `x, y` | 转向（服务端做反向与队列校验） |
 | `atk` | — | 发射子弹（冷却 `ATK_COOL=800ms`） |
+| `ult` | — | **批2 新增**：释放大招（蓄力满 `ULT_MAX=100`、冷却 `ULT_COOL=3s`，否则服务端静默忽略）；8 方向环形弹幕 |
 | `speed` | `ms` | 速度档，服务端夹到 80–300，**立即生效** |
 | `skin` | `i` | 换皮肤（0–4） |
 | `respawn` | — | 死亡后重生 |
@@ -157,12 +158,13 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 **`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[], proj[], ev[], round, win, over, winMode, limit, respawn, remain`
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 
-**`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost}, user, cause, by`
+**`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult`
+> `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
 
 **房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn`
 > `players` 是**已连接人数**（含旁观），`alive` 是存活蛇数。
 
-**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn`
+**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn / ult`
 > 顶层消息由 `onMsg` 的 switch 处理，`snap` 在 switch 之外单独分支；事件只随快照下发，不单独成帧。
 > `bite{eater,victim,cut,score}`、`hit{x,y,by,victim,cut,score}` 是截断类事件。
 
@@ -199,6 +201,9 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `MAP_MIN / MAP_MAX` | 12 / **96** | 地图尺寸上下限 |
 | `RESPAWN_MS` | 3000 | 无限复活模式下死亡到重生的等待 ms |
 | `LIMIT_MAX` | 3600 | 限时模式上限（秒） |
+| `ULT_MAX` | 100 | 大招蓄力上限（攒满才可释放） |
+| `ULT_FRUIT / ULT_STAR / ULT_KILL` | 10 / 15 / 30 | 大招充能：吃水果 / 吃星星 / 咬蛇淘汰 |
+| `ULT_COOL` | 3000 | 大招释放冷却 ms |
 | `FRUITS` | 10/15/20/15/15 | 5 种水果分值 |
 | `USAGE_MAX` | 8 MB | 用量日志轮转阈值 |
 
@@ -206,7 +211,9 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 
 - **咬蛇 = 截断并入；压到 2 格再被咬 → 淘汰**：接触点之后的对方身体被切走并接到自己身上；对方保留 `MIN_LEN=2` 格；**已是 2 格再被咬 → 整条淘汰**（`cause='bite'`，残躯归攻击者，事件 `bite` 带 `kill:true`）。
 - **连击 Combo**：`COMBO_MS=3s` 窗口内连续吃果 `combo+1`，超时/死亡/新回合重置；只有**水果**计数（星星/道具/咬蛇不打断也不加）。倍率 `combo_mult()`：1-4→x1、5-9→x1.5、10-14→x2、15+→x2.5 封顶；`snap.players[]` 带 `combo`，`eat` 事件带 `combo/mult`。
-- **道具 6 种**（`ITEM_TYPES`）：`shield 护盾 / speed 加速 / ghost 穿墙` + 新增 `magnet 磁铁`（食物/星星每 tick 朝自己拉 1 格、绕障碍、停在蛇头旁不落格）、`double 双倍`（一切得分 ×2，走 `score_gain()` 统一入口）、`rage 狂暴`（攻击 CD 减半 + 子弹速度 ×1.5，`proj[]` 带 `spd` 字段）。
+- **道具 7 种**（`ITEM_TYPES`）：`shield 护盾 / speed 加速 / ghost 穿墙` + `magnet 磁铁`（食物/星星每 tick 朝自己拉 1 格、绕障碍、停在蛇头旁不落格）、`double 双倍`（一切得分 ×2，走 `score_gain()` 统一入口）、`rage 狂暴`（攻击 CD 减半 + 子弹速度 ×1.5，`proj[]` 带 `spd` 字段）、**`deflect 偏转`（批2：仅撞边界墙时折返不死；场内岩石照死、咬到 <2 照样淘汰）**。
+- **护盾强化（批2）**：`shield` 除原被咬免疫外，**任何地形碰撞（边界墙/岩石墙块/自己身体）都折返不死**——折返方向取蛇头垂直两方向中空间最大的可走格（无路可走仍照死），折返时清空转向队列。
+- **大招（批2，A6）**：`p.ult` 蓄力 0–100，吃水果 +10、吃星星 +15、咬蛇淘汰 +30（封顶 100）；满 100 发 `ult` 消息 → 从蛇头向 **8 方向**发射环形弹幕（对角线方向归一化、`spd=1.5`、命中仍只截断 `BULLET_CUT=1` 格），冷却 `ULT_COOL=3s`，死亡/重生清零。客户端 HUD 蓄力条（满时脉冲高亮），键 `K` 或点按钮释放。
 - **子弹**：命中截断 `BULLET_CUT=1` 格，对无敌/护盾无效，不打自己。
 - **死亡**：由撞墙、撞岩石、撞自己、**被咬淘汰（2 格规则）**、断线导致 → 回合结束；普通咬与射击不致死。
 - **速度**：客户端三档 `慢260 / 中150 / 快85`（比例约 3 倍），服务端 `apply_speed()` 立即生效，实际 tick 保持在 `[base-45, base]`（吃水果会累积加速），下限 60ms；加速道具再 ×0.6（下限 60）。

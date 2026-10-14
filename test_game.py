@@ -569,6 +569,130 @@ def test_respawn_after_delay():
     print("respawn delay OK")
 
 
+# ================= 批2：偏转道具 / 护盾地形偏转 / 大招 =================
+
+def test_deflect_item_wall_bends():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(0, 5), (1, 5), (2, 5)], (-1, 0))
+    now = serve.now_ms()
+    p["eff"] = {"deflect": now + 9999}
+    r.step(0.05, now)
+    assert p["alive"], "deflect 撞边界应折返不死"
+    hx, hy = p["cells"][0]
+    assert hx == 0 and hy in (4, 6), p["cells"]
+    assert p["dir"] in ((0, -1), (0, 1)), p["dir"]
+    print("deflect wall bend OK ->", p["cells"][0], p["dir"])
+
+
+def test_deflect_item_rock_still_kills():
+    r = fresh(10)
+    r.rocks = [(0, 5)]
+    p = mk(r, 1, "A", [(1, 5), (2, 5), (3, 5)], (-1, 0))
+    now = serve.now_ms()
+    p["eff"] = {"deflect": now + 9999}
+    r.step(0.05, now)
+    assert not p["alive"] and p["cause"] == "rock", p.get("cause")
+    print("deflect rock still dies OK")
+
+
+def test_shield_bends_wall():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(0, 5), (1, 5), (2, 5)], (-1, 0))
+    now = serve.now_ms()
+    p["eff"] = {"shield": now + 9999}
+    r.step(0.05, now)
+    assert p["alive"], "护盾撞边界应折返不死"
+    hx, hy = p["cells"][0]
+    assert hx == 0 and hy in (4, 6), p["cells"]
+    print("shield wall bend OK ->", p["cells"][0])
+
+
+def test_shield_bends_rock():
+    r = fresh(10)
+    r.rocks = [(0, 5)]
+    p = mk(r, 1, "A", [(1, 5), (2, 5), (3, 5)], (-1, 0))
+    now = serve.now_ms()
+    p["eff"] = {"shield": now + 9999}
+    r.step(0.05, now)
+    assert p["alive"], "护盾撞岩石应折返不死"
+    hx, hy = p["cells"][0]
+    assert (hx, hy) in ((1, 4), (1, 6)), p["cells"]
+    print("shield rock bend OK ->", p["cells"][0])
+
+
+def test_shield_bends_self():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(1, 5), (1, 6), (2, 6), (2, 5), (3, 5), (3, 6)], (0, 1))
+    now = serve.now_ms()
+    p["eff"] = {"shield": now + 9999}
+    r.step(0.05, now)
+    assert p["alive"], "护盾撞自己应折返不死"
+    assert p["cells"][0] == (0, 5), p["cells"]
+    print("shield self bend OK ->", p["cells"][0])
+
+
+def test_ult_fruit_and_star_charge():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(2, 5), (1, 5), (0, 5)], (1, 0))
+    now = serve.now_ms()
+    r.food = {"id": 1, "x": 3, "y": 5, "score": 10, "color": "#fff"}
+    r.step(0.05, now)
+    assert p["ult"] == serve.ULT_FRUIT, p.get("ult")
+    r.bonus = {"id": 9, "x": 4, "y": 5, "score": 50, "born": now}
+    r.step(0.05, now + 200)
+    assert p["ult"] == serve.ULT_FRUIT + serve.ULT_STAR, p.get("ult")
+    print("ult fruit/star charge OK")
+
+
+def test_ult_kill_charge():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(3, 5), (2, 5), (1, 5)], (1, 0))
+    q = mk(r, 2, "B", [(6, 5), (4, 5)], (1, 0))
+    now = serve.now_ms()
+    r.step(0.05, now)
+    assert not q["alive"] and q["cause"] == "bite", q.get("cause")
+    assert p["ult"] == serve.ULT_KILL, p.get("ult")
+    print("ult kill charge OK")
+
+
+def test_ult_requires_full_charge():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    now = serve.now_ms()
+    p["ult"] = 99
+    assert not r.try_ult(p, now)
+    assert not r.projectiles
+    assert p["ult"] == 99, p["ult"]
+    print("ult needs 100 OK")
+
+
+def test_ult_fires_barrage_and_resets():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    now = serve.now_ms()
+    p["ult"] = serve.ULT_MAX
+    assert r.try_ult(p, now)
+    assert p["ult"] == 0, p["ult"]
+    assert len(r.projectiles) == 8, len(r.projectiles)
+    dirs = {(pr["dx"], pr["dy"]) for pr in r.projectiles}
+    assert len(dirs) == 8, dirs
+    p["ult"] = serve.ULT_MAX
+    assert not r.try_ult(p, now + 1000), "冷却内不应连发"
+    assert len(r.projectiles) == 8
+    assert r.try_ult(p, now + serve.ULT_COOL + 1), "冷却过后应可再发"
+    print("ult barrage + cooldown OK")
+
+
+def test_ult_reset_on_spawn():
+    r = fresh(10)
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    p["ult"] = 60
+    p["alive"] = False
+    r.spawn_player(p)
+    assert p["ult"] == 0, p["ult"]
+    print("ult reset on spawn OK")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -583,6 +707,11 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_battle_mode_config, test_time_limit_ends_by_score,
            test_time_limit_tie_is_draw, test_score_mode_ends_only_when_all_dead,
            test_last_mode_survival_win_still_works,
-           test_respawn_never_ends_by_elimination, test_respawn_after_delay]:
+           test_respawn_never_ends_by_elimination, test_respawn_after_delay,
+           test_deflect_item_wall_bends, test_deflect_item_rock_still_kills,
+           test_shield_bends_wall, test_shield_bends_rock, test_shield_bends_self,
+           test_ult_fruit_and_star_charge, test_ult_kill_charge,
+           test_ult_requires_full_charge, test_ult_fires_barrage_and_resets,
+           test_ult_reset_on_spawn]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

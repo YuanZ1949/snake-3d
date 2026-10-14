@@ -30,10 +30,10 @@ async def main():
                 for pr in m["proj"]:
                     assert "spd" in pr and pr["spd"] in (1.0, 1.5)
         print("P1 PROTOCOL OK: combo field present on all players, proj spd present")
-        # 打印新道具枚举（服务端 ITEM_TYPES 6 种）
+        # 打印道具枚举（批2 新增 deflect 后为 7 种）
         import serve
-        assert len(serve.ITEM_TYPES) == 6, serve.ITEM_TYPES
-        assert set(serve.ITEM_TYPES) == {"shield", "speed", "ghost", "magnet", "double", "rage"}
+        assert len(serve.ITEM_TYPES) == 7, serve.ITEM_TYPES
+        assert set(serve.ITEM_TYPES) == {"shield", "speed", "ghost", "magnet", "double", "rage", "deflect"}
         print("ITEM_TYPES:", serve.ITEM_TYPES)
 
 
