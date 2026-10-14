@@ -58,7 +58,7 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 12.5 A2 本地 CI | ✅ | db83653 | local_ci.ps1 基线全绿 |
 | 13 D 方向失控 | ✅ | b5e9759 | 单测 69 + 8 E2E + 静态 + Playwright 全绿 |
 | 14 F 碰撞卡叠 | ✅ | 本 commit | 单测 79（+10 新例，旧码 9 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3） |
-| 15 C AI 吃水果 | ⬜ 下一批 | | |
+| 15 C AI 吃水果 | ✅ | 本 commit | 单测 83（+4 新例，旧码 4 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3）；96×96 BFS 实测 11.1ms（断言 50ms，命中缓存 ~0） |
 | 16 B+G 下拉暗色+死亡观战 | ⬜ | | |
 | 17 H 外墙偏转选项 | ⬜ | | |
 | 18 E 房间参数编辑 | ⬜ | | |

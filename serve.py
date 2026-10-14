@@ -5,6 +5,7 @@
 # 或旁观。账户与战绩持久化到 data/store.json。协议对旧客户端保持向后兼容：
 # 旧客户端不带 room / 账户也能正常游戏（默认进入 "a" 房间、以游客身份游玩）。
 import asyncio, json, os, time, random, http, zipfile, io, hashlib, secrets, traceback
+from collections import deque
 from pathlib import Path
 import websockets
 
@@ -376,6 +377,7 @@ class Room:
         self.food = None
         self.bonus = None
         self.rocks = []            # [(x,y)] 可被子弹击碎
+        self._reach = None         # 批15①：静态地形可达集缓存（失效点见 reach_set）
         self.walls = []            # [(x,y)] 不可摧毁
         self.portals = []          # [(x,y),(x,y)] 成对传送门
         self.theme = 'default'
@@ -457,6 +459,7 @@ class Room:
         self.rocks = []
         self.walls = []
         self.portals = []
+        self._reach = None          # 批15①：静态地形重建 → 可达集缓存失效
         if self.eff_portal():
             used = set()
             for _ in range(self.portal_pairs()):
@@ -614,6 +617,7 @@ class Room:
         return best
 
     def spawn_player(self, p, fresh_cells=True):
+        self._reach = None          # 批15①：出生点可能跨静态连通区 → 可达集失效
         base = p.get('base_tick', 150)
         p['tick'] = base
         p['alive'] = True
@@ -707,12 +711,59 @@ class Room:
         return [(x, y) for x in range(self.cols) for y in range(self.rows)
                 if (x, y) not in occ]
 
+    def reach_set(self):
+        """批15①：静态地形可达集——从所有活蛇头 flood-fill（无活蛇则取首个非地形格）。
+        只看边界/岩石/墙块（蛇身是动态障碍不计入）；传送门当可走格且与配对口互连。
+        缓存 self._reach：失效点 build_terrain / maybe_rocks / 子弹碎岩 / spawn / drop，
+        另每次调用校验所有蛇头仍在缓存内（防幽灵穿墙跨区后缓存跨区漏算）。
+        96×96（9216 格）单次 BFS 计时见 test_place_food_reach_time_budget。"""
+        if self._reach is not None and all(
+                p['cells'][0] in self._reach
+                for p in self.players.values() if p['alive'] and p['cells']):
+            return self._reach
+        block = set(self.rocks) | set(self.walls)
+        pm = self.portal_map()
+        seen = set()
+        dq = deque()
+        for p in self.players.values():
+            if p['alive'] and p['cells']:
+                h = p['cells'][0]
+                if h not in block and h not in seen:
+                    seen.add(h)
+                    dq.append(h)
+        if not dq:                                  # 无活蛇：取首个非地形格兜底
+            for x in range(self.cols):
+                for y in range(self.rows):
+                    if (x, y) not in block:
+                        seen.add((x, y))
+                        dq.append((x, y))
+                        break
+                if dq:
+                    break
+        while dq:
+            x, y = dq.popleft()
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < self.cols and 0 <= ny < self.rows \
+                        and (nx, ny) not in block and (nx, ny) not in seen:
+                    seen.add((nx, ny))
+                    dq.append((nx, ny))
+            pr = pm.get((x, y))                     # 传送门：跳到配对口
+            if pr is not None and pr not in seen:
+                seen.add(pr)
+                dq.append(pr)
+        self._reach = seen
+        return seen
+
     def place_food(self):
         free = self.free_list()
         if not free:
             self.food = None
             return
-        x, y = random.choice(free)
+        # 批15①：只放静态可达区（避免落在蛇圈/岩石口袋里永远吃不到）；
+        # 可达区无空格时退化回旧行为（总比没有水果好）
+        reach = self.reach_set()
+        cand = [c for c in free if c in reach] or free
+        x, y = random.choice(cand)
         s, c = random.choice(FRUITS)
         # 唯一 id：即使水果恰好刷在相同坐标/颜色，客户端也能识别为"新水果"并重建，
         # 避免出现"吃了不消失"的观感问题
@@ -734,6 +785,7 @@ class Room:
             if any(abs(x - hx) + abs(y - hy) < 4 for hx, hy in self._heads()):
                 continue
             self.rocks.append((x, y))
+            self._reach = None      # 批15①：新增岩石 → 可达集失效
 
     # -------- 道具 --------
     def spawn_item(self, now):
@@ -863,6 +915,7 @@ class Room:
 
     def drop_player(self, pid):
         p = self.players.pop(pid, None)
+        self._reach = None          # 批15①：离场可能空出整个连通区 → 可达集失效
         self.round_ids.discard(pid)
         self.ready.discard(pid)
         if p and p.get('user'):
@@ -883,18 +936,31 @@ class Room:
 
     # -------- 世界推进 --------
     def _bot_think(self, p):
-        """AI 蛇转向：目标优先级 星星 > 水果；候选方向要求界内可走且不走回头路。
-        打分 (是否绝路, 离目标距离, -前方空间)——无目标时以开阔空间为准。"""
+        """AI 蛇转向：目标取 food/bonus 中距离更近者（等距优先星星，批15③）；
+        打分 (是否绝路, 离目标距离, -目标方向对齐度, -前方空间)——直达被挡时
+        按对齐度绕行而非 DIRS4 定序偏航（批15②）；无目标时以开阔空间为准。"""
         if not p['cells']:
             return
         hx, hy = p['cells'][0]
         cur = p['dir']
         opp = (-cur[0], -cur[1])
         tgt = None
+        cands = []
         if self.bonus:
-            tgt = (self.bonus['x'], self.bonus['y'])
-        elif self.food:
-            tgt = (self.food['x'], self.food['y'])
+            cands.append((abs(self.bonus['x'] - hx) + abs(self.bonus['y'] - hy),
+                          0, (self.bonus['x'], self.bonus['y'])))
+        if self.food:
+            cands.append((abs(self.food['x'] - hx) + abs(self.food['y'] - hy),
+                          1, (self.food['x'], self.food['y'])))
+        if cands:
+            tgt = min(cands)[2]
+        pref = (0, 0)                           # 首选方向：朝目标的轴对齐步（大差值轴优先）
+        if tgt:
+            dx, dy = tgt[0] - hx, tgt[1] - hy
+            if abs(dx) >= abs(dy) and dx:
+                pref = (1 if dx > 0 else -1, 0)
+            elif dy:
+                pref = (0, 1 if dy > 0 else -1)
         opts = []
         for nd in DIRS4:
             if nd == opp:
@@ -904,7 +970,8 @@ class Room:
                 continue
             openv = self._open_ahead(nx, ny, nd, skip_pid=p['id'])
             dist = (abs(nx - tgt[0]) + abs(ny - tgt[1])) if tgt else 0
-            opts.append(((0 if openv > 0 else 1, dist, -openv), nd))
+            align = nd[0] * pref[0] + nd[1] * pref[1]   # 1 同向 / 0 垂直 / -1 反向
+            opts.append(((0 if openv > 0 else 1, dist, -align, -openv), nd))
         if not opts:
             return                      # 被围死：保持当前方向
         opts.sort(key=lambda o: o[0])
@@ -1300,6 +1367,7 @@ class Room:
             if 0 <= gx < self.cols and 0 <= gy < self.rows and (gx, gy) in rockset:
                 rockset.discard((gx, gy))
                 self.rocks = [r for r in self.rocks if r != (gx, gy)]
+                self._reach = None  # 批15①：子弹碎岩 → 可达集失效
                 p = self.players.get(pr['owner'])
                 if p:
                     self.score_gain(p, 5, now)

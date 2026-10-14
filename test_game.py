@@ -42,6 +42,7 @@ def fresh(size=10, **kw):
     r.items = []
     r.bonus = None
     r.food = None
+    r._reach = None      # 直接改地形绕过失效点 → 手动失效（批15①）
     return r
 
 
@@ -1275,6 +1276,63 @@ def test_bot_liveness_no_permanent_head_clash():
     print("bot liveness OK: eaten_seen=%d" % eaten_seen)
 
 
+def test_place_food_avoids_sealed_pocket():
+    """批15①：封死的角落口袋不放水果（静态可达性过滤 + reach_set）"""
+    from unittest import mock
+    r = fresh(12)
+    r.rocks = [(10, 11), (11, 10)]          # 封死角落 (11,11)：另两侧是出界
+    mk(r, 'p1', 'P', [(6, 6), (5, 6), (4, 6)], (1, 0))
+    # choice 恒取末位：free_list 按 x 主序，末位自由格正是口袋 (11,11) → 旧码必落口袋
+    with mock.patch.object(serve.random, "choice", side_effect=lambda seq: seq[-1]):
+        r.place_food()
+    assert r.food is not None
+    assert (r.food['x'], r.food['y']) != (11, 11), (
+        "水果放进封死口袋", r.food)
+    reach = r.reach_set()
+    assert (11, 11) not in reach and (6, 6) in reach, reach
+
+
+def test_place_food_reach_time_budget():
+    """批15①：96×96 大图可达集 BFS 计时 + 缓存命中 + build_terrain 失效"""
+    import time as _time
+    r = fresh(96)
+    r.walls = [(x, 48) for x in range(0, 96, 2)]                 # 虚线墙（留缝仍连通）
+    r.rocks = [(x, y) for x in range(0, 96, 4) for y in range(0, 96, 8)]
+    mk(r, 'p1', 'P', [(1, 1), (1, 2), (1, 3)], (0, -1))
+    t0 = _time.perf_counter()
+    reach = r.reach_set()
+    ms = (_time.perf_counter() - t0) * 1000.0
+    assert ms < 50, "可达集 BFS 超时: %.2fms" % ms
+    assert (1, 1) in reach
+    assert r.reach_set() is reach, "缓存未命中（应返回同一对象）"
+    r.build_terrain()
+    assert r._reach is None, "build_terrain 未使可达集缓存失效"
+    print("reach budget OK: %.2fms" % ms)
+
+
+def test_bot_turns_toward_target_when_blocked():
+    """批15②：直达方向被挡，选与目标方向最接近的开放方向（不再按 DIRS4 定序反向偏航）"""
+    r = fresh(24)
+    r.rocks = [(11, y) for y in range(5, 16)]    # 东面石列挡直达
+    r.food = {'id': 1, 'x': 20, 'y': 10, 'score': 15, 'color': '#fff'}
+    p = mk(r, 'b1', 'AI', [(10, 10), (10, 11), (10, 12)], (0, -1))
+    r._bot_think(p)
+    # 目标在东（首选方向 E）：E 被石列挡、S 是反向 → 候选只剩 W/N，dist 与 openv 打平(11/9)。
+    # 新码按对齐度选 N（=当前方向，不写队列）；旧码 DIRS4 稳定序 W 先 → 反向偏航写 [(-1,0)]
+    assert p['queue'] == [], p['queue']
+
+
+def test_bot_picks_nearest_target():
+    """批15③：food/bonus 按 min(dist) 选目标（不再星星无条件压过近处水果）"""
+    r = fresh(24)
+    r.food = {'id': 1, 'x': 10, 'y': 13, 'score': 15, 'color': '#fff'}   # 距 3（南）
+    r.bonus = {'id': 1, 'x': 19, 'y': 10, 'score': 50, 'born': 0}         # 距 9（东）
+    p = mk(r, 'b1', 'AI', [(10, 10), (9, 10), (8, 10)], (1, 0))
+    r._bot_think(p)
+    # 新码就近选水果 → 转南 [(0,1)]；旧码 bonus 无条件优先 → 直行不写队列
+    assert p['queue'] == [(0, 1)], p['queue']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1324,6 +1382,10 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_resume_position_conflict_fresh_spawn,
             test_portal_exit_blocked_skip_move,
             test_portal_exit_prefers_arrival_dir_on_tie,
-            test_bot_liveness_no_permanent_head_clash]:
+            test_bot_liveness_no_permanent_head_clash,
+            test_place_food_avoids_sealed_pocket,
+            test_place_food_reach_time_budget,
+            test_bot_turns_toward_target_when_blocked,
+            test_bot_picks_nearest_target]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
