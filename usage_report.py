@@ -77,6 +77,66 @@ def main():
               + R(d.get('logins', 0), 6) + R(d.get('registers', 0), 6)
               + R(d.get('wins', 0), 6) + R(len(d.get('users', [])), 9))
 
+    # ---- 明细聚合：每小时在线曲线 + 房间热度（批12 增强） ----
+    evs = []
+    for f in (DATA / 'usage.log.1', LOG):
+        if f.exists():
+            for ln in f.read_text('utf-8', errors='replace').splitlines():
+                try:
+                    evs.append(json.loads(ln))
+                except Exception:
+                    pass
+    if evs:
+        now_ts = int(time.time())
+        last_ts = max(int(o.get('at') or 0) for o in evs)
+        # 在线曲线：conn/session(sid 配对) 重建并发连接数，按小时桶取峰值
+        open_conn, events = set(), []
+        for o in evs:
+            t, sid = int(o.get('at') or 0), o.get('sid')
+            if o.get('e') == 'conn' and sid is not None:
+                open_conn.add(sid)
+                events.append((t, 1))
+            elif o.get('e') == 'session' and sid is not None:
+                if sid in open_conn:
+                    open_conn.discard(sid)
+                    events.append((t, -1))
+        if open_conn:  # 未闭合连接（服务仍在跑）延续到现在
+            events.append((now_ts, -len(open_conn)))
+        events.sort()
+        hour_max, cur, i = {}, 0, 0
+        end_h = (max(last_ts, now_ts) // 3600) * 3600
+        start_h = end_h - 23 * 3600
+        while i < len(events):
+            t = events[i][0]
+            h = (t // 3600) * 3600
+            while i < len(events) and (events[i][0] // 3600) * 3600 == h:
+                cur = max(0, cur + events[i][1])
+                i += 1
+            if h >= start_h:
+                hour_max[h] = max(hour_max.get(h, 0), cur)
+        peak = max(hour_max.values(), default=0)
+        print('\n每小时在线峰值（最近 24h，conn 并发重建）')
+        for h in range(start_h, end_h + 1, 3600):
+            v = hour_max.get(h, 0)
+            bar = '█' * (v * 30 // max(1, peak)) if peak else ''
+            print(L(time.strftime('%m-%d %H:00', time.localtime(h)), 14) + R(v, 4) + '  ' + bar)
+        # 房间热度：join 事件聚合
+        rj, rs, rw = {}, {}, {}
+        for o in evs:
+            if o.get('e') == 'join' and o.get('room'):
+                rj[o['room']] = rj.get(o['room'], 0) + 1
+                rs.setdefault(o['room'], set()).add(o.get('sid'))
+            elif o.get('e') == 'win' and o.get('room'):
+                rw[o['room']] = rw.get(o['room'], 0) + 1
+        if rj:
+            print('\n房间热度（明细全量聚合）')
+            print(L('房间', 10) + R('进房', 8) + R('会话', 8) + R('胜局', 8))
+            print('-' * 42)
+            for room in sorted(rj, key=rj.get, reverse=True)[:15]:
+                print(L(room, 10) + R(rj[room], 8) + R(len(rs.get(room, ())), 8) + R(rw.get(room, 0), 8))
+    else:
+        print('\n（还没有明细，无法聚合在线曲线/房间热度）')
+
     top = sorted(users.items(), key=lambda kv: kv[1].get('play_s', 0), reverse=True)[:15]
     if top:
         print('\n账号维度 TOP %d（按玩局时长）' % len(top))

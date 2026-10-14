@@ -1009,6 +1009,13 @@
     e.bodyMat.metalness = s.metal;
     e.bodyMat.needsUpdate = true;
     e.skull.material.color.setHex(s.head);
+    applyOffTint(e);   // 挂起灰化在皮肤色之上再乘（paintEnt 会覆盖 skull 色，需重应用）
+  }
+
+  function applyOffTint(e) {
+    // 断线挂起蛇（批12）：整体压暗灰化，名字加 💤——bodyMat.color 默认白色乘贴图，置灰即全身上色罩
+    e.bodyMat.color.setHex(e.off ? 0x5a5a5a : 0xffffff);
+    e.skull.material.color.setHex(e.off ? 0x777777 : SKINS[e.skin % SKINS.length].head);
   }
 
   function applySkin() {
@@ -1755,7 +1762,7 @@
       id, name: '', skin: 0, alive: true, score: 0,
       cells: [], lastCells: [], spine: [], rotT: [], dir: {x: 1, y: 0},
       moveAt: 0, moveDt: 150,   // #3 插值起点时刻与位移节奏（按观测间隔自适应）
-      deathAt: 0, flashAt: 0, inv: 0, eff: {},
+      deathAt: 0, flashAt: 0, inv: 0, eff: {}, off: false,  // off=断线挂起（批12 灰化）
       bodyMat: new THREE.MeshStandardMaterial({roughness: .55, metalness: .05}),
       bodyMesh: null, head: null, tongue: null, skull: null, nameSp: null, nameText: '',
     };
@@ -1827,8 +1834,9 @@
         e.skin = p.skin;
         e.inv = p.inv || 0;
         e.combo = p.combo | 0;
+        e.off = !!p.off;
         e.eff = p.eff || {};
-        paintEnt(e);
+        paintEnt(e);   // 末尾的 applyOffTint 会按 e.off 应用挂起灰化
       } else {
         const wasAlive = e.alive;
         const nc = p.cells.map(c => ({x: c[0], y: c[1]}));
@@ -1846,6 +1854,7 @@
         e.inv = p.inv || 0;
         e.combo = p.combo | 0;
         e.eff = p.eff || {};
+        if (!!p.off !== e.off) { e.off = !!p.off; applyOffTint(e); }
         if (e.name !== p.name) e.name = p.name || '';
         if (e.skin !== p.skin) { e.skin = p.skin; paintEnt(e); }
         if (wasAlive && !p.alive) { e.deathAt = now; e.flashAt = now; }
@@ -2437,7 +2446,7 @@
       from: e.lastCells, phase: ph,
     }, dt);
     if (e.name) {
-      nameSprite(e, e.name);
+      nameSprite(e, e.off ? e.name + ' 💤' : e.name);
       e.nameSp.position.copy(e.spine[0]);
       e.nameSp.position.y += 1.0;
       e.nameSp.visible = true;

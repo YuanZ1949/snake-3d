@@ -39,6 +39,7 @@
 | 9 | CI/Playwright | C2 | ✅ | Playwright 3/3 passed（7.3s，首页/单人入局/观战；BASE=8123 外部起服）；单测 67/67 全绿；静态 ALL PASSED (71ids/dup0/div33/css159/js528)；7 套 E2E 全 Exit 0；YAML 校验 15 steps。附带修复 720p 底部 ⚔ 裁切 |
 | 10 | three.min.js 升级 | C4 | ✅ | r128→r160（最后带 UMD 版本）；Playwright 3/3 passed (7.0s)；单测 67/67；静态 ALL PASSED (71ids/div33/css159/js528)；7 E2E ALL PASSED；同主题 A/B observer 对比无破损，观感按用户拍板采用 r160 新默认 |
 | 11 | 快照增量协议 | C1（压轴） | ✅ | 新 test_delta_p1.py 一次通过：首帧 full(620B)/增量帧均 428B（−31%）/walls、portals 稳态 30/30 缺席/中途 watch 者首帧仍全量；单测 67/67；静态 ALL PASSED (71ids/dup0/div33/css159/js531)；8 套 E2E ALL PASSED（新增 delta 套件）；Playwright 3/3 passed (7.5s) |
+| 12 | 计划外：灰化+报表+评估+文档 | 用户追加 4 项 | ✅ | 灰化 applyOffTint/off+💤；报表每小时峰值曲线+房间热度实测出数；ESM 评估=维持 r160；DEPLOY.md 补功能版本节。回归：单测+8 E2E+Playwright 3/3 (7.8s)+静态 (js533) |
 
 ## 批次日志
 （每批回写：验证证据、暴露的新工作、顺序调整）
@@ -136,3 +137,10 @@
 - **新测试 test_delta_p1.py（第 8 套 E2E）**：join 'a' 首帧断言 6 字段齐全+full==1；连收 30 帧断言 walls/portals 缺席 ≥25/30（稳态 30/30）且 players/proj 每帧恒在；第二个 ws watch 后其首帧仍全量。CI round 2 步骤追加 `python test_delta_p1.py`（8 套）。
 - **验证**：`PY_COMPILE OK`；test_delta 一次通过（first=full 620B / avg_delta=428B，−31%）；单测 67/67 ALL PASSED；8 套 E2E 全 Exit 0（含重连/口令/bots 关键路径在增量协议下正常）；静态 ALL STATIC CHECKS PASSED (ids=71 dup=0 div=33/33 css=159/159 js=531/531，js +3 系 applyWorld 新增 3 个字段守卫块)；Playwright 3/3 passed (7.5s)。
 - **暴露的新工作**：无；**顺序调整**：无。**注意**：`broadcast()` 无订阅者时仍调增量 snapshot 以清 events/刷签名（与旧行为一致），新订阅者靠 full_sent 补全量，语义闭环。
+
+### 批12 计划外追加（灰化 + 报表 + ESM 评估 + 文档）✅
+- **① 挂起蛇灰化（批5 砍项回收）**：makeEnt 加 `off:false`；新 `applyOffTint(e)`——`bodyMat.color` 0x5a5a5a（贴图乘灰罩）+ skull 压灰，恢复白色；paintEnt 末尾统一重应用（皮肤切换不丢灰化）；applyPlayers 首建/更新两分支同步 `e.off = !!p.off`，变化才重涂；名字标签加 ` 💤` 后缀（syncEnt nameSprite 处）。验证：test_reconnect_p5 E2E（断线挂起→恢复）全绿。
+- **② 用量报表增强（纯 report 端，serve.py 零改动）**：usage_report.py 从 usage.log(+.1) 明细聚合——conn/session(sid 配对) 重建并发连接数，按小时桶取峰值输出「每小时在线峰值」24 行柱状图（未闭合连接延续到现在）；join/win 聚合「房间热度」（进房/会话/胜局 TOP15）。本地实测出数（20:00 峰值 4、22:00-00:00 峰值 6；r3 进房 9）。
+- **③ three r161+ ESM 评估（结论：维持 r160）**：已核实 index.html 无 inline onclick → ESM 改造技术可行（主脚本包 boot + module import THREE 后触发）；但新版本特性（WebGPU 等）本项目用不到，改造需 2130 行作用域包裹 + 全量视觉回归重做——收益低风险中。已写入 HANDOVER 技术债 #9。
+- **④ DEPLOY.md 刷新**：文件位置树更新（data/、vendor r160 说明）+ 新增「当前功能版本」节（11 批功能清单 + 协议/CI/报表一段，指向 HANDOVER）。
+- **验证**：单测 67/67 ALL PASSED；8 套 E2E 全 Exit 0（delta: first=full 680B/avg_delta 424B）；Playwright 3/3 passed (7.8s)；静态 ALL PASSED (71ids/dup0/div33/css159/**js533**，+2 系 applyOffTint)。

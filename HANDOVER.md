@@ -163,7 +163,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 > 批11 增量协议：服务端对 6 个静态字段做签名对比（`Room._field_sig`），变了才带；新订阅者（join/watch/resume）首帧为**全量帧**（6 字段齐全 + `full:1`，由 `Session.full_sent` 控制，`broadcast` 内补组）。稳态实测增量帧较全量帧省 ~31% 字节。协议级验收见 `test_delta_p1.py`（第 8 套 E2E）。
 
-**`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5）
+**`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5；**批12 起客户端灰化渲染 + 名字 💤**）
 > `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
 
 **房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots, hasPass, persist`
@@ -447,7 +447,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 6 | `DEPLOY.md` 未随功能更新 | 部署章节仍准确，功能描述偏旧 | 以本文档为准 |
 | 7 | 用量数据仅两天左右积累 | 趋势分析样本少 | 可加"每小时在线曲线/房间热度"（**已提过，未被要求**） |
 | 8 | 本机（Termux）在运营商 CGNAT 后 | 无法从外网回调本机 | 需要对外暴露本机时走隧道/内网穿透 |
-| 9 | `three.min.js` 为本地 vendor r160 | **批10 已升级 r128→r160**（冒烟+同主题 A/B 截图验收，用户拍板采用 r160 新 sRGB 默认观感） | r161+ 移除 UMD，未来再升级需转 ES module（`<script type="module">` 改造） |
+| 9 | `three.min.js` 为本地 vendor r160 | **批10 已升级 r128→r160**（冒烟+同主题 A/B 截图验收，用户拍板采用 r160 新 sRGB 默认观感） | **批12 评估结论：维持 r160 不改**。升级 r161+ 需 ESM 改造（主脚本包 boot 函数 + module 脚本 `import * as THREE` 后触发，已核实 index.html 无 inline onclick、方案可行），但新版本特性（WebGPU 等）本项目全用不到，改造需 2130 行主脚本作用域包裹 + 全量视觉回归重做——收益低风险中。除非出现安全公告或需要新 API，否则不动 |
 
 ---
 

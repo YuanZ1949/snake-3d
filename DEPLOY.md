@@ -17,12 +17,25 @@
 
 ```
 /home/ubuntu/snake-3d/
-├── index.html      前端页面
+├── index.html      前端页面（CSS + HTML + JS 单文件）
 ├── serve.py        服务端（HTTP + WebSocket，端口由环境变量 PORT 控制）
-├── three.min.js    Three.js 渲染库
-├── README.txt
+├── three.min.js    Three.js 渲染库（本地 vendor r160）
+├── data/           运行数据（账户 store.json、用量 usage.json/usage.log，永不入库）
+├── README.txt      最简运行说明
 └── .venv/          独立虚拟环境（websockets==13.1）
 ```
+
+## 当前功能版本（2026-10，P2P5 计划 11 批已全部交付）
+
+玩法与模式：死斗/积分两种胜利模式（限时/无限复活可配）、大招蓄力弹幕、
+偏转/护盾道具（共 7 种道具）、成对传送门、AI 蛇（0-7 条，单人练习快捷入口）、
+白天主题、连击倍率、房间口令（6-20 位混合）、房间 24h 保留与「保存」常驻、
+断线 10s 恢复原蛇（挂起蛇灰化显示）、房间聊天、小地图、观战左右键切换、
+客户端渲染插值、移动端/720p 短屏适配。
+
+协议与工程：快照增量协议（静态字段变化才下发，首帧全量）、GitHub Actions CI
+（单测 + 8 套 python E2E + Playwright 冒烟）、后台用量报表（每小时在线曲线/
+房间热度，`python usage_report.py`）。详见 HANDOVER.md。
 
 ## systemd 服务
 
