@@ -165,6 +165,8 @@ class Room:
         self.created = time.time()
         self.last_step = None
         self._pick_theme()
+        self.build_terrain()
+        self.place_food()
 
     def ev(self, t, **kw):
         self.events.append(dict(t=t, **kw))

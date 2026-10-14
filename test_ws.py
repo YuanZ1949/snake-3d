@@ -44,7 +44,7 @@ async def main():
         rok = await recv_until(ws, "room-ok")
         print("8 room-ok:", rok)
         snap = await recv_until(ws, "snap")
-        me = [p for p in snap["players"] if p["id"] == 1][0]
+        me = [p for p in snap["players"] if p["id"] == rok["id"]][0]
         print("9 snap room=%s theme=%s cols=%s walls=%s portals=%s inv=%s eff=%s acct=%s" % (
             snap["room"], snap["theme"], snap["cols"], snap["walls"], snap["portals"], me["inv"], me["eff"], me["acct"]))
         print("   keys:", sorted(snap.keys()))
