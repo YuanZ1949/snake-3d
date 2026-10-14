@@ -1302,7 +1302,9 @@ class Room:
         if any(not s.full_sent for s in self.subs):
             msg_full = json.dumps(self.snapshot(now, full=True), ensure_ascii=False)
         dead = []
-        for sess in self.subs:
+        # 副本遍历：循环体 await 期间，join/watch 会 subs.add、断连会 subs.discard，
+        # 直接遍历集合会抛 "Set changed size during iteration"（生产 journal 实际发生过）
+        for sess in list(self.subs):
             try:
                 await sess.ws.send(msg_full if (msg_full is not None and not sess.full_sent) else msg)
                 sess.full_sent = True
