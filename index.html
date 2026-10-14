@@ -383,6 +383,13 @@
     .tips { display: none; }
     h1 { font-size: 20px; }
   }
+  /* ---- 房间聊天（批5）：左下角消息流 + 输入框 ---- */
+  .chatLog { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: 64%; z-index: 5; transition: bottom .15s; }
+  .chatLog.up { bottom: 42px; }
+  .chatLog .msg { font-size: 12px; line-height: 1.35; color: #e8ebff; background: rgba(10,12,26,.62); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; padding: 2px 7px; word-break: break-all; text-shadow: 0 1px 2px #000; opacity: 1; transition: opacity .6s; }
+  .chatLog .msg.fade { opacity: 0; }
+  .chatIn { position: absolute; left: 10px; bottom: 10px; width: 46%; max-width: 320px; z-index: 8; background: rgba(10,12,26,.85); border: 1px solid rgba(255,255,255,.22); border-radius: 7px; color: #e8ebff; font-size: 12px; padding: 5px 8px; outline: none; }
+  .chatIn.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -407,6 +414,8 @@
     <div id="foodEdge" class="edgeHint hidden">🍎</div>
     <div id="bonusEdge" class="edgeHint hidden">⭐</div>
     <div id="effects" class="effects"></div>
+    <div id="chatLog" class="chatLog" aria-live="polite"></div>
+    <input id="chatIn" class="chatIn hidden" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
     <button id="btnJoinIn" class="hidden">入局</button>
 
     <div class="overlay" id="startScreen">
@@ -1440,6 +1449,7 @@
     setConn('● 连接断开', 'bad');
     clearEnts();
     reset(); // 恢复本地演示世界
+    $('chatLog').textContent = '';   // 换世界不带旧聊天
     joined = false; myEnt = null; myId = null;
     dirQ = [];
     winRound = false;
@@ -1958,6 +1968,7 @@
         curRoom = m.room;
         localStorage.setItem(ROOM_KEY, curRoom);
         if (m.id != null) myId = m.id;
+        if (m.resumed) $('connTip').textContent = '已恢复原蛇，继续对战';
         if (m.user) { loggedUser = m.user; updateAcctUI(); }
         return;
       case 'auth':
@@ -2158,6 +2169,10 @@
       }
       case 'join': {
         if (ev.id !== myId) beep(660, .08, 'triangle', .06);
+        break;
+      }
+      case 'chat': {
+        appendChat(ev);
         break;
       }
     }
@@ -2671,14 +2686,54 @@
     send({t: 'create', name: '单人练习', size: 24, bots: 3});
   }
 
+  // ================= 房间聊天（批5） =================
+  function focusChat() {
+    if (!joined && !spectating) return;
+    const el = $('chatIn');
+    el.classList.remove('hidden');
+    $('chatLog').classList.add('up');
+    el.focus();
+  }
+  function blurChat() {
+    const el = $('chatIn');
+    el.classList.add('hidden');
+    el.blur();
+    $('chatLog').classList.remove('up');
+  }
+  $('chatIn').addEventListener('keydown', e => {
+    e.stopPropagation();                     // 输入时不触发全局游戏按键
+    if (e.key === 'Enter') {
+      const t = ($('chatIn').value || '').trim();
+      if (t) send({t: 'chat', text: t});
+      $('chatIn').value = '';
+      blurChat();
+    } else if (e.key === 'Escape') {
+      $('chatIn').value = '';
+      blurChat();
+    }
+  });
+  $('chatIn').addEventListener('blur', blurChat);
+  function appendChat(ev) {
+    const box = $('chatLog');
+    const d = document.createElement('div');
+    d.className = 'msg';
+    d.textContent = (ev.name || '…') + '：' + (ev.text || '');
+    box.appendChild(d);
+    while (box.children.length > 30) box.removeChild(box.firstChild);
+    setTimeout(() => { d.classList.add('fade'); setTimeout(() => d.remove(), 700); }, 7000);
+  }
+
   // ================= 输入 =================
   const KEYS = {arrowup:[0,-1], w:[0,-1], arrowdown:[0,1], s:[0,1], arrowleft:[-1,0], a:[-1,0], arrowright:[1,0], d:[1,0]};
   document.addEventListener('keydown', e => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;   // 输入中不抢游戏按键
     const k = e.key.toLowerCase();
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();
     if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
     else if (k === 'j') { if (!e.repeat) fire(); }
     else if (k === 'k') { if (!e.repeat) fireUlt(); }
+    else if (k === '/') { e.preventDefault(); if (!e.repeat) focusChat(); }
     else if (k === ' ') {
       if (joined) fire();
       else if (demoPaused) togglePause();

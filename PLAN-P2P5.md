@@ -31,7 +31,7 @@
 | 2 | 大招+偏转+护盾 | A6 + 新#1 + 新#7 | ✅ | 单测 40/40 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；ult 冒烟 OK |
 | 3 | 传送门+资源有效期 | 新#2 + 新#6 | ✅ | 单测 44/44 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0（40×40 房 3 对传送门） |
 | 4 | AI蛇+单人模式 | A4 + 新#5 | ✅ | 单测 51/51 先红后绿；静态检查 ALL PASSED；4+1 E2E Exit 0（BOTS E2E：info/快照/AI 自主移动） |
-| 5 | 重连+聊天 | B2 + B3 | ⬜ | |
+| 5 | 重连+聊天 | B2 + B3 | ✅ | 单测 61/61 先红后绿（含挂起蛇冻结）；静态检查 ALL PASSED (65ids/div32/css141)；6 E2E Exit 0（RECONNECT+CHAT：resumed 同 id/漂移1.0格/聊天送达+限速） |
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ⬜ | |
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ⬜ | |
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ⬜ | |
@@ -75,3 +75,12 @@
 - **test_game.py**：+7 用例（配置夹取/创建即生成/追食物转向/避墙不死/单人击杀 AI 获胜/AI ready 开局/最后真人离开清 AI），先红（TypeError: unexpected keyword 'bots'）后绿，**51/51**。新增 **test_bots_p4.py** E2E（连 28000：create bots=3 → info.bots=3 且 players=3 → 快照 3 bot+1 人、负 id/AI- 名/存活 → 3 秒内 AI 蛇头位移）。
 - **验证**：静态检查 ALL PASSED（**63** ids / div 31 / css 135）；test_ws / test_ws2 / verify_rooms / test_p1 / **test_bots_p4** 全 Exit 0（BOTS E2E OK）。
 - **暴露的新工作**：新增 test_bots_p4.py 为第 5 套常驻 E2E（计划外新增测试文件，属加非改）；**顺序调整**：无。
+
+### 批5 重连+聊天（B2 + B3）✅
+- **B2 拍板**：`RESUME_MS=10s` 宽限。断线 finally → `leave_room(hard=False)`：**仅当房内还有其他真人玩家**（非 bot、非已挂起）→ 原蛇 `off_at=now` 挂起、`session=None`；否则照旧 `drop_player` 立即清（此修正因 verify_rooms 断言「creator 断开后房间立即回收」失败而加，TDD 先红后绿）。挂起蛇在 `step` 的 `due` 过滤中排除（**原地冻结**——否则宽限期内无人控制必然撞死，恢复失去意义；E2E 曾断言 cells 完全相等失败，诊断为采样时点在断线前+逐段求和度量过严，改为「长度不变 + 每段平均漂移≤2 格」）。`step_wrapper` 扫 `off_at` 超 10s → drop（含清 AI）。重连：`join` 先 `leave_room` 再 `room.resumable(user)`——有账户精确匹配挂起者，匿名仅当恰一个无账户挂起者；命中 `room.resume()` → `room-ok` 带 `resumed:true` 原 id，身体/分数全保留不重生；`maybe_start_round` 挂起者视为 ready；snapshot players 加 `off`（客户端暂未消费，灰化渲染砍为建议项）。客户端既有自动重连链路（onDisconnect→2s→join）自动走恢复路径。
+- **B3 拍板**：`CHAT_COOL=1000ms`、`CHAT_MAX=80`；`chat_throttle(src,now)` + `Room.chat(name,text)`（截断去空白，空不发）→ `ev('chat',name,text)` 走快照 ev 通道；`chat` 消息在「需已在房间中」校验**之前**处理（观战者可发），限速超限静默丢弃；发件人=房内玩家名，否则账户名/'观众'。
+- **index.html**：chatLog（左下消息流，7s 淡出、上限 30 条、textContent 防注入）+ chatIn 输入框（`/` 或点击进入，Enter 发送、Esc 关闭，输入态早退方向键——顺带修主页输入框误触发 setDir）；onDisconnect 清消息流；room-ok resumed 提示「已恢复原蛇」。
+- **serve.py**：`step` due 过滤加 `not p.get('off_at')`（挂起冻结）；`leave_room` hard 分支；`RESUME_MS`；step_wrapper 挂起超时清理；`resumable/resume`；chat 常量+模块函数+`Room.chat`+消息处理；`Session.chat_at`。
+- **test_game.py**：+10 用例（聊天发送与截断/限速、挂起宽限内存活、超时移除、最后真人离开清AI、resumable 匹配规则、resume 保留状态、单人房断线立即清、多人房挂起、**挂起蛇冻结不动**），先红后绿 **61/61**。新增 **test_reconnect_p5.py** 第 6 套 E2E（双真人房断线→恢复同 id/漂移 1.0 格、聊天首条送达+1s 内第二条被限速）。
+- **验证**：静态检查 ALL PASSED（**65** ids / div 32 / css 141）；test_ws / test_ws2 / test_reconnect_p5 / verify_rooms / test_p1 / test_bots_p4 全 **Exit 0**（6/6）。
+- **暴露的新工作**：off 灰化渲染（砍为建议项）；**顺序调整**：无（E2E 期间两次踩 background 120s 杀服 + 端口 10048 残留，处置=先清理端口再起双服在 120s 窗口跑完）。

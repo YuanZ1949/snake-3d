@@ -10,6 +10,12 @@ class S:
         self.ws = None
         self.user = None
         self.pid = None
+        self.play_from = None
+        self.play_ms = 0
+        self.last_room = None
+        self.last_name = None
+        self.last_score = 0
+        self.chat_at = 0
 
 
 def mk(room, pid, name, cells, d):
@@ -120,6 +126,120 @@ def test_bots_removed_when_last_human_leaves():
     r.drop_player(1)
     assert r.players == {}                            # 最后一个人离开 → AI 一并清掉
     assert not r.round_ids
+
+
+# ================= 批5 断线重连 + 房间聊天 =================
+def test_disconnect_single_room_drops_immediately():
+    r = fresh(12)
+    mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    sess = S(); sess.pid = 1; sess.room = r
+    r.subs.add(sess)
+    serve.leave_room(sess, hard=False)
+    assert 1 not in r.players          # 单人房断线：无人可等 → 立即清（保空房回收语义）
+
+
+def test_disconnect_multi_room_suspends():
+    r = fresh(12)
+    p1 = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    mk(r, 2, "Other", [(6, 4), (6, 5)], (1, 0))     # 另一个真人还在场
+    sess = S(); sess.pid = 1; sess.room = r
+    r.subs.add(sess)
+    serve.leave_room(sess, hard=False)
+    assert 1 in r.players and p1.get("off_at")      # 有别人 → 挂起等重连
+    assert 2 in r.players
+
+
+def test_offline_snake_frozen_until_resume():
+    r = fresh(12)
+    p1 = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    p2 = mk(r, 2, "Other", [(6, 4), (6, 5)], (1, 0))
+    p1["off_at"] = serve.now_ms()                   # 挂起等重连
+    cells1 = [tuple(c) for c in p1["cells"]]
+    now = serve.now_ms()
+    for _ in range(5):
+        now += 200                                  # 超过 tick，真蛇该走
+        r.step(0.05, now)
+    assert [tuple(c) for c in p1["cells"]] == cells1   # 挂起蛇原地冻结
+    assert p2["cells"][0] != (6, 4)                 # 在场蛇正常移动
+    p1.pop("off_at")                                # 恢复 → 立刻回到场上
+    r.step(0.05, now + 200)
+    assert p1["cells"][0] != cells1[0]
+
+
+def test_chat_appends_and_limits():
+    r = fresh(12)
+    assert r.chat("A", "  hello  ") is True
+    assert r.chat("A", "   ") is False            # 空白不发
+    assert r.chat("A", "x" * 200) is True
+    evs = r.events
+    assert evs[0]["t"] == "chat" and evs[0]["name"] == "A" and evs[0]["text"] == "hello"
+    assert len(evs[1]["text"]) == 80              # 截断到 CHAT_MAX
+    assert serve.CHAT_MAX == 80
+
+
+def test_chat_throttle():
+    s = S()
+    now = serve.now_ms()
+    assert serve.chat_throttle(s, now) is True
+    assert serve.chat_throttle(s, now) is False   # 1 秒内第二条被限
+    assert serve.chat_throttle(s, now + serve.CHAT_COOL) is True
+
+
+def test_offline_kept_within_grace():
+    r = fresh(12, bots=1)
+    p = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    p["off_at"] = serve.now_ms() - 100            # 刚掉线 100ms
+    r.step_wrapper(0.05, serve.now_ms())
+    assert 1 in r.players                         # 宽限期内保留原蛇
+    assert 1 in r.round_ids
+
+
+def test_offline_dropped_after_grace():
+    r = fresh(12, bots=1)
+    p = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    p["off_at"] = serve.now_ms() - serve.RESUME_MS - 50
+    r.step_wrapper(0.05, serve.now_ms())
+    assert 1 not in r.players                     # 超时移除
+    assert 1 not in r.round_ids
+
+
+def test_offline_clears_bots_when_last_human_gone():
+    r = fresh(12, bots=2)
+    p = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    p["off_at"] = serve.now_ms() - serve.RESUME_MS - 50
+    r.step_wrapper(0.05, serve.now_ms())
+    assert r.players == {}                        # 最后真人超时 → AI 一并清掉
+
+
+def test_resumable_matching():
+    r = fresh(12)
+    a = mk(r, 1, "A", [(4, 4)], (1, 0)); a["user"] = "u1"
+    b = mk(r, 2, "B", [(5, 4)], (1, 0)); b["user"] = None
+    a["off_at"] = b["off_at"] = serve.now_ms()
+    assert r.resumable("u1") is a                 # 账户精确匹配
+    assert r.resumable("u2") is None              # 账户不匹配不乱捡
+    assert r.resumable(None) is None              # 匿名请求遇多个挂起者不恢复
+    b.pop("off_at")
+    assert r.resumable(None) is None              # 还有别人挂着（有账户）也不恢复
+    a.pop("off_at")
+    a["off_at"] = serve.now_ms()
+    assert r.resumable(None) is None              # 唯一挂起者有账户 → 匿名不恢复
+    a["user"] = None
+    assert r.resumable(None) is a                 # 唯一挂起者无账户 → 匿名恢复
+
+
+def test_resume_keeps_snake_state():
+    s = S()
+    r = fresh(12)
+    p = mk(r, 1, "Me", [(4, 4), (4, 5), (4, 6)], (1, 0))
+    p["score"] = 77
+    p["off_at"] = serve.now_ms()
+    r.resume(s, p)
+    assert p.get("off_at") is None
+    assert p["session"] is s
+    assert s in r.subs
+    assert r.players[1] is p and r.players[1]["score"] == 77   # 原蛇原分恢复
+    assert r.players[1]["alive"]
 
 
 def test_ghost_wrap():
@@ -858,6 +978,13 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_bots_config_and_info, test_bots_spawned_on_create,
            test_bot_turns_toward_food, test_bot_avoids_wall_death,
            test_single_player_wins_vs_bots, test_bots_ready_for_round_start,
-           test_bots_removed_when_last_human_leaves]:
+           test_bots_removed_when_last_human_leaves,
+           test_chat_appends_and_limits, test_chat_throttle,
+           test_offline_kept_within_grace, test_offline_dropped_after_grace,
+           test_offline_clears_bots_when_last_human_gone,
+           test_resumable_matching, test_resume_keeps_snake_state,
+           test_disconnect_single_room_drops_immediately,
+           test_disconnect_multi_room_suspends,
+            test_offline_snake_frozen_until_resume]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

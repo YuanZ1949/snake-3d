@@ -26,6 +26,9 @@ EFFECT_MS = 6000        # 道具效果持续时间
 MIN_LEN = 2             # 蛇被截断后保留的最少格数
 RESPAWN_MS = 3000       # 复活模式：死亡后延迟复活 ms
 LIMIT_MAX = 3600        # 战场限时上限（秒）
+RESUME_MS = 10000       # 断线宽限：原蛇原地保留等待重连 ms
+CHAT_COOL = 1000        # 聊天发送冷却 ms
+CHAT_MAX = 80           # 聊天内容长度上限（字符）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
@@ -38,6 +41,15 @@ COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击�
 COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
 BOTS_MAX = 7              # 单房间 AI 蛇数量上限
 DIRS4 = ((1, 0), (0, 1), (-1, 0), (0, -1))       # AI 决策候选方向（不回头）
+
+
+def chat_throttle(src, now):
+    """聊天限速：同一发送源 CHAT_COOL 内只放行一条（src 为 Session 等任意对象）"""
+    last = getattr(src, 'chat_at', 0) or 0
+    if now - last < CHAT_COOL:
+        return False
+    src.chat_at = now
+    return True
 
 
 def combo_mult(combo):
@@ -485,6 +497,33 @@ class Room:
             'bots': self.bots,                         # AI 蛇数量（0=无）
         }
 
+    # -------- 房间聊天 / 断线恢复 --------
+    def chat(self, name, text):
+        """房间聊天：截断/去空白，内容随快照 ev 通道下发给房间内所有人"""
+        text = str(text or '')[:CHAT_MAX].strip()
+        if not text:
+            return False
+        self.ev('chat', name=str(name)[:12], text=text)
+        return True
+
+    def resumable(self, user):
+        """找可恢复的挂起原蛇：登录账户精确匹配；匿名仅在恰好一个且无账户时恢复"""
+        cands = [q for q in self.players.values() if q.get('off_at')]
+        if user:
+            for q in cands:
+                if q.get('user') == user:
+                    return q
+            return None
+        if len(cands) == 1 and not cands[0].get('user'):
+            return cands[0]
+        return None
+
+    def resume(self, sess, p):
+        """断线恢复：原蛇原分重新绑定会话（不重新出生）"""
+        p.pop('off_at', None)
+        p['session'] = sess
+        self.subs.add(sess)
+
     # -------- 玩家生命周期 --------
     def _solid(self, x, y, skip_pid=None):
         """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）"""
@@ -718,8 +757,9 @@ class Room:
         if not self.win_pending:
             return
         connected = [pid for pid in self.round_ids if pid in self.players]
-        # AI 不发 ready 消息：视为永远 ready，只等真人
-        if connected and all(pid in self.ready or self.players[pid].get('bot') for pid in connected):
+        # AI 不发 ready 消息、挂起掉线者不在场：都视为 ready，只等在场真人
+        if connected and all(pid in self.ready or self.players[pid].get('bot')
+                             or self.players[pid].get('off_at') for pid in connected):
             self.new_round()
 
     def new_round(self):
@@ -797,7 +837,8 @@ class Room:
         if self.win_pending:
             return
         due = [p for p in self.players.values()
-               if p['alive'] and now - p['last_move'] >= self.tick_of(p, now)]
+               if p['alive'] and not p.get('off_at')
+               and now - p['last_move'] >= self.tick_of(p, now)]
         if not due:
             return
         for p in due:
@@ -1086,6 +1127,11 @@ class Room:
         return ATK_COOL // 2 if self.effect_active(p, 'rage', now) else ATK_COOL
 
     def step_wrapper(self, dt, now):
+        # 断线宽限超时：挂起的原蛇到点移出（drop 内含"最后真人离开清 AI"）
+        for pid in list(self.players):
+            p = self.players.get(pid)
+            if p and p.get('off_at') and now - p['off_at'] >= RESUME_MS:
+                self.drop_player(pid)
         # 复活模式：死亡延迟到点后原地重建（限时内不结算淘汰）
         if self.respawn and not self.win_pending:
             for p in list(self.players.values()):
@@ -1167,6 +1213,7 @@ class Room:
                 'combo': p.get('combo', 0),
                 'ult': p.get('ult', 0),
                 'bot': bool(p.get('bot')),
+                'off': bool(p.get('off_at')),
             })
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,
@@ -1260,6 +1307,7 @@ class Session:
         self.room = None          # 当前房间
         self.pid = None           # 房间内玩家 id
         self.want_play = False
+        self.chat_at = 0             # 聊天限速时间戳
         # ---- 使用情况统计（仅后台记录，不上页面） ----
         self.t0 = time.time()     # 连接时刻
         self.msgs = 0             # 收到的消息条数
@@ -1450,6 +1498,23 @@ async def handle_msg(sess, m):
             await send(sess, {'t': 'rooms', 'list': room_list()})
             return
         leave_room(sess)
+        # ---- 断线恢复：宽限期内找回原蛇（原分数/身体/位置） ----
+        prev = room.resumable(sess.user)
+        if prev is not None:
+            room.resume(sess, prev)
+            sess.room = room
+            sess.want_play = True
+            sess.pid = prev['id']
+            sess.joins += 1
+            sess.play_from = time.time()
+            sess.last_room = room.id
+            sess.last_name = prev['name']
+            usage.note('resume', sid=sess.sid, room=room.id, name=prev['name'],
+                       user=sess.user, ip=sess.ip)
+            await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
+                              'user': sess.user, 'id': prev['id'], 'resumed': True})
+            await broadcast_rooms()
+            return
         sess.room = room
         sess.want_play = True
         if m.get('name'):
@@ -1503,6 +1568,21 @@ async def handle_msg(sess, m):
         await send(sess, {'t': 'left', 'room': left})
         return
 
+    # -------- 房间聊天（观战者/玩家都可发） --------
+    if t == 'chat':
+        room = sess.room
+        if room is None:
+            return
+        now = now_ms()
+        if not chat_throttle(sess, now):
+            return
+        if sess.pid is not None and sess.pid in room.players:
+            who = room.players[sess.pid]['name']
+        else:
+            who = sess.user or '观众'
+        room.chat(who, m.get('text'))
+        return
+
     # 其余消息需要已在房间中
     room = sess.room
     if room is None or sess.pid is None or sess.pid not in room.players:
@@ -1547,7 +1627,10 @@ async def handle_msg(sess, m):
             room.ev('join', id=sess.pid, name=p['name'])
 
 
-def leave_room(sess):
+def leave_room(sess, hard=True):
+    """hard=True：明确退出（leave/换房/测试），直接移出玩家；
+    hard=False：断线 —— 房里还有其他真人时原蛇挂起 off_at 等重连恢复，
+    单人房（或没别的真人可等）则照旧立即移出，保住空房及时回收。"""
     room = sess.room
     if not room:
         return
@@ -1563,7 +1646,15 @@ def leave_room(sess):
             sess.last_score = max(sess.last_score, int(p.get('score') or 0))
     room.subs.discard(sess)
     if sess.pid is not None:
-        room.drop_player(sess.pid)
+        p = room.players.get(sess.pid)
+        others = [q for q in room.players.values()
+                  if q is not p and not q.get('bot') and not q.get('off_at')]
+        if not hard and p and others:
+            # 断线且房里还有其他真人 → 挂起原蛇等 RESUME_MS 内重连恢复
+            p['off_at'] = now_ms()
+            p['session'] = None
+        else:
+            room.drop_player(sess.pid)
     sess.pid = None
     sess.room = None
 
@@ -1606,7 +1697,7 @@ async def handler(ws):
         pass
     finally:
         all_sessions.discard(sess)   # 先下线，自己的自定义房间才能被回收
-        leave_room(sess)
+        leave_room(sess, hard=False)  # 断线挂起原蛇，RESUME_MS 内重连可恢复
         try:                        # 记录这次连接的使用情况（仅后台落盘）
             usage.session({'sid': sess.sid, 'ip': sess.ip, 'ua': sess.ua,
                            'user': sess.user, 'name': sess.last_name,
