@@ -431,6 +431,7 @@
           <span class="label">房间</span>
           <button class="chip" id="btnRoomRefresh" title="刷新房间" aria-label="刷新房间">↻ 刷新</button>
           <button class="chip" id="btnRoomCreate" title="创建房间" aria-label="创建房间">＋ 创建房间</button>
+          <button class="chip" id="btnSolo" title="单人练习：24×24 + 3 条 AI，建好自动开局">🐍 单人练习</button>
         </div>
         <div class="roomList" id="roomList" aria-label="房间列表"></div>
 
@@ -501,6 +502,16 @@
               <select class="nameIn sm" id="cRespawn" aria-label="复活模式">
                 <option value="">关闭·阵亡观战</option>
                 <option value="1">无限复活</option>
+              </select>
+            </label>
+            <label><span>AI蛇</span>
+              <select class="nameIn sm" id="cBots" aria-label="AI蛇数量">
+                <option value="">无（多人）</option>
+                <option value="1">1 条</option>
+                <option value="2">2 条</option>
+                <option value="3">3 条</option>
+                <option value="5">5 条</option>
+                <option value="7">7 条</option>
               </select>
             </label>
           </div>
@@ -619,6 +630,7 @@
   let myStats = null;
   let authReq = '';            // 最近一次 auth 请求类型：authtoken / login / register
   let roomList = [];
+  let soloPending = false;    // 「单人练习」：建房成功后自动开局
   let roomCfg = {winMode: 'last', limit: 0, respawn: false, remain: 0};  // 当前房间战场配置（来自快照）
   let curRoom = localStorage.getItem(ROOM_KEY) || 'a';
   let myInv = 0, myEff = {};
@@ -1410,6 +1422,7 @@
       send({t: 'rooms'});
       if (wantPlay) doJoin();
       else if (spectating) send({t: 'watch', room: curRoom});
+      else if (soloPending) soloCreate();   // 单人练习：连接后补建房
     };
     ws.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch (_) {} };
     ws.onclose = () => { ws = null; wsOpen = false; onDisconnect(); };
@@ -1939,6 +1952,7 @@
         $('btnRoomCreate').textContent = '＋ 创建房间';
         renderRooms(roomList);
         acctTip('已创建「' + (m.name || m.room) + '」，已为你选中', 'ok');
+        if (soloPending) { soloPending = false; start(); }   // 单人练习：建好直接进局
         return;
       case 'room-ok':
         curRoom = m.room;
@@ -2528,6 +2542,7 @@
     if (r.winMode === 'score') bits.push('积分赛');
     if (r.respawn) bits.push('无限复活');
     if (r.limit > 0) bits.push(`限时${fmtDur(r.limit)}`);
+    if (r.bots > 0) bits.push(`🤖AI×${r.bots}`);
     if (r.round > 1) bits.push(`第${r.round}局`);
     if (r.over) bits.push('结算中');
     if (r.alive > 0 && r.alive !== r.players) bits.push(`存活${r.alive}`);
@@ -2644,9 +2659,16 @@
     const lim = $('cLimit').value;
     if (lim !== '') msg.limit = parseInt(lim, 10) || 0;
     if ($('cRespawn').value) msg.respawn = true;
+    const bots = $('cBots').value;
+    if (bots !== '') msg.bots = parseInt(bots, 10) || 0;
     send(msg);
     localStorage.setItem('snake-map', msg.size);
     $('cName').value = '';
+  }
+
+  // 单人练习：24×24 固定图 + 3 条 AI，创建成功后自动进入（见 'created' 分支）
+  function soloCreate() {
+    send({t: 'create', name: '单人练习', size: 24, bots: 3});
   }
 
   // ================= 输入 =================
@@ -2718,6 +2740,13 @@
   $('btnRoomRefresh').onclick = () => send({t: 'rooms'});
   $('btnRoomCreate').onclick = toggleCreatePanel;
   $('btnCreateGo').onclick = createRoom;
+  $('btnSolo').onclick = () => {
+    if (state === 'joining' || soloPending) return;
+    ac(); bgmStart();                 // 用户手势里解锁音频
+    soloPending = true;
+    acctTip('正在开一局单人练习（3 条 AI）…');
+    if (wsOpen) soloCreate(); else connect();
+  };
   $('cName').addEventListener('keydown', e => { if (e.key === 'Enter') createRoom(); });
   $('btnLeaderboard').onclick = () => send({t: 'leaderboard'});
   $('btnLbClose').onclick = () => {
@@ -2739,7 +2768,7 @@
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
    'btnHome', 'btnPauseHome', 'btnOverHome',
-   'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
+   'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {
     muted = !muted;

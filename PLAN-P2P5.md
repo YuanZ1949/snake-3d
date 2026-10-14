@@ -30,7 +30,7 @@
 | 1 | 战场自定义 | A3 + 新#12 | ✅ | 单测 31/31 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；create 解析端到端 OK；起服 / 200 |
 | 2 | 大招+偏转+护盾 | A6 + 新#1 + 新#7 | ✅ | 单测 40/40 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；ult 冒烟 OK |
 | 3 | 传送门+资源有效期 | 新#2 + 新#6 | ✅ | 单测 44/44 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0（40×40 房 3 对传送门） |
-| 4 | AI蛇+单人模式 | A4 + 新#5 | ⬜ | |
+| 4 | AI蛇+单人模式 | A4 + 新#5 | ✅ | 单测 51/51 先红后绿；静态检查 ALL PASSED；4+1 E2E Exit 0（BOTS E2E：info/快照/AI 自主移动） |
 | 5 | 重连+聊天 | B2 + B3 | ⬜ | |
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ⬜ | |
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ⬜ | |
@@ -65,3 +65,13 @@
 - **test_game.py**：+4 用例（传送门对数随地图 / 32×32 多对互逆 / 出口朝开阔方向 / 资源有效期随地图），先红（24×24 仅 1 对）后绿，**44/44**。
 - **验证**：静态检查 ALL PASSED（61 ids / div 31 / css 135）；4 E2E Exit 0（test_ws + test_ws2 / verify_rooms + test_p1 两串），verify_rooms 创建 40×40 房快照 `portals` 6 格 = 3 对，符合预期。
 - **暴露的新工作**：无；**顺序调整**：无。
+
+### 批4 AI蛇+单人模式（A4 + 新#5）✅
+- **A4 拍板（原 backlog 无细节，按推荐实现）**：AI 蛇 = 服务端驱动的普通玩家条目（`bot: true`、负数 pid 与真人不冲突、名字 `AI-N`）；**决策时机**：step 中移动到期且转向队列为空时 `_bot_think()` 一次；**打分**（优先级键）：`是否绝路(0/1) → 离目标(星星>水果)曼哈顿距离 → -前方开阔格数`，候选不走回头路、须界内可走；无目标时以开阔空间为准。AI 视为**永远 ready**（maybe_start_round 特判），只等真人 ready 开局；常驻 round_ids 参与胜负计数（joined 含 AI）。`bots` 建房参数夹 0–7（`BOTS_MAX`），非法回退 0；`info()`/`create`/快照 players 均带 bot 信息。
+- **单人模式（#5）**：主页「🐍 单人练习」按钮 → create `{size:24, bots:3}` → `created` 后自动 start() 入局（`soloPending` 标志，断线重连时 onopen 补建房）；建房面板新增「AI蛇」下拉（0/1/2/3/5/7）。房间列表默认即展开（原实现无折叠，#5 的"直接展开"天然满足），房间 meta 显示 `🤖AI×N`。
+- **关键防泄漏**：`drop_player` 里最后一个真人离开 → 清掉全部 AI（否则 AI 占位导致空房永不回收，`players` 非空让 gc 跳过）；断线 finally → leave_room → drop_player 链路复用同一清理。
+- **serve.py**：常量 `BOTS_MAX=7`、`DIRS4`；`make_player(..., bot=False)`（`sess` 可为 None）；`Room.__init__(..., bots=0)` + `add_bots()`；`_bot_think()`；step 第 0 节 bot 决策 hook；`maybe_start_round` AI 视为 ready；`drop_player` 清 AI；`info()` 加 `bots`；snapshot players 加 `bot`；create 解析 `bots`。
+- **index.html**：#cBots 下拉 + createRoom 发送；btnSolo 按钮 + soloCreate() + soloPending 流程；roomMeta `🤖AI×N`；blur 列表加 btnSolo。
+- **test_game.py**：+7 用例（配置夹取/创建即生成/追食物转向/避墙不死/单人击杀 AI 获胜/AI ready 开局/最后真人离开清 AI），先红（TypeError: unexpected keyword 'bots'）后绿，**51/51**。新增 **test_bots_p4.py** E2E（连 28000：create bots=3 → info.bots=3 且 players=3 → 快照 3 bot+1 人、负 id/AI- 名/存活 → 3 秒内 AI 蛇头位移）。
+- **验证**：静态检查 ALL PASSED（**63** ids / div 31 / css 135）；test_ws / test_ws2 / verify_rooms / test_p1 / **test_bots_p4** 全 Exit 0（BOTS E2E OK）。
+- **暴露的新工作**：新增 test_bots_p4.py 为第 5 套常驻 E2E（计划外新增测试文件，属加非改）；**顺序调整**：无。

@@ -13,8 +13,8 @@
 
 | 类别 | 内容 |
 |---|---|
-| 对战玩法 | 多人同房间实时对战、咬蛇截断并入（非致死）、子弹射击缩短对方、岩石/墙块/传送门、星星奖励、道具（护盾/加速/穿墙）、重生无敌、回合胜负判定 |
-| 房间系统 | 3 个默认房间 + 自定义房间（尺寸/主题/岩石/传送门 任意组合）、房间卡片列表（人数、属性）、空房自动回收、观战 |
+| 对战玩法 | 多人同房间实时对战、咬蛇截断并入（非致死）、子弹射击缩短对方、岩石/墙块/传送门、星星奖励、道具（护盾/加速/穿墙）、重生无敌、回合胜负判定、**AI 蛇（单人练习/多人加 AI）** |
+| 房间系统 | 3 个默认房间 + 自定义房间（尺寸/主题/岩石/传送门/AI 数量 任意组合）、房间卡片列表（人数、属性、🤖AI 标识）、空房自动回收、观战、**主页「单人练习」快捷开局（24×24 + 3 AI 自动进局）** |
 | 账户 | 昵称与账号合并（一个输入框）、6 位数字密码、token 恢复登录、可游客游玩 |
 | 排行榜/战绩 | 全服排行榜、个人战绩（胜场/击杀/死亡/场次/最高分/吃果数） |
 | 界面 | 统一 `.chip` 按钮风格、开始页布局、房间列表、创建面板、排行榜屏、暂停屏、结束屏、**三处 🏠 返回主页**、移动端触屏方向盘 |
@@ -130,7 +130,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
 | `rooms` | — | 主动请求房间列表 |
-| `create` | `name, size, theme, rock, portal, winMode, limit, respawn` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生） |
+| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready） |
 | `watch` | `room` | 进入旁观（会先 `leave_room`） |
 | `join` | `room, name, skin` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效 |
 | `leave` | — | **新增**：返回主页，把自己移出房间（旧客户端不发，行为不变） |
@@ -155,13 +155,13 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
 | `snap` | 见下 | **50ms 一次的全量快照** |
 
-**`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[], proj[], ev[], round, win, over, winMode, limit, respawn, remain`
+**`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 
 **`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult`
 > `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
 
-**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn`
+**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots`
 > `players` 是**已连接人数**（含旁观），`alive` 是存活蛇数。
 
 **事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn / ult`
@@ -227,6 +227,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
   3. **积分赛**（`win_mode='score'`）：**全员死亡**才按比分结算（`reason:'score'`）；
   4. **死斗**（默认 `last`）：只剩一条存活 → 胜；全死 → 平局。
   丢人（drop_player）同样走 `check_win`。参数校验：`winMode` 非 last/score 回退 last；`limit` 夹 0–3600；`respawn` 必须布尔；limit=0 时 score→300s、respawn→120s 兜底（score 优先）。
+- **AI 蛇（批4，A4）**：`create` 带 `bots`(0–7) 建房即生成；条目与普通玩家同结构但 `bot:true`、pid 为负数、名字 `AI-N`、`session=None`。**决策**：step 中该 AI 移动到期且转向队列空时 `_bot_think()`——候选不回头且界内可走，打分 `(是否绝路, 离目标距离, -前方开阔)`，目标优先级 星星 > 水果，无目标时以最开阔方向为准。AI **视为永远 ready**（只等真人 ready 触发新局）、常驻 `round_ids` 参与胜负计数、死亡/复活/新局逻辑与真人共用。**最后一个真人离开房间时 AI 全部清掉**（否则 AI 占位导致空房永不回收）。
+- **单人练习（批4，新#5）**：主页「🐍 单人练习」→ 建房 `{size:24, bots:3}` → `created` 自动入局（断线重连 onopen 补建房）；建房面板「AI蛇」下拉 0/1/2/3/5/7；房间卡片 meta 显示 `🤖AI×N`。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -282,12 +284,13 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×44 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图） |
+| `test_game.py` | 单元 ×51 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |
 | `test_ws4.py` | E2E | 96×96 与 9999 夹紧、快照尺寸、速度 215/85 即时生效、`leave` 清房与回收、离开后可重新入局 |
 | `test_p1.py` | 协议 | 连本地服：`snap.players[]` 带 `combo`、`proj[]` 带 `spd`、`ITEM_TYPES` 7 种（批2 同步：+deflect）（需先起 28000 测试服） |
+| `test_bots_p4.py` | E2E | 批4 AI：create `bots=3` → 房间列表 `bots/players` 计数 → 快照 3 bot（负 id、AI- 名、存活有 cells）+ 1 人 → 3 秒内 AI 蛇头自主位移（连 28000） |
 | `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房/断线回收 |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 

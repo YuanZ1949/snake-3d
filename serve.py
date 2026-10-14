@@ -36,6 +36,8 @@ ULT_KILL = 30          # 咬蛇淘汰充能
 ULT_COOL = 3000        # 大招释放冷却 ms
 COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击重置
 COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
+BOTS_MAX = 7              # 单房间 AI 蛇数量上限
+DIRS4 = ((1, 0), (0, 1), (-1, 0), (0, -1))       # AI 决策候选方向（不回头）
 
 
 def combo_mult(combo):
@@ -298,7 +300,7 @@ usage = Usage()
 # ============================================================ 房间
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
-                 win_mode='last', limit=0, respawn=False):
+                 win_mode='last', limit=0, respawn=False, bots=0):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
@@ -320,6 +322,13 @@ class Room:
             elif self.respawn:
                 self.limit = 120
         self.round_started = now_ms()        # 本局开始时间（限时结算的时钟）
+        # ---- 单人/练习：AI 蛇数量（0=无 AI；非法值回退 0）----
+        try:
+            bots = int(bots)
+        except (TypeError, ValueError):
+            bots = 0
+        self.bots = max(0, min(BOTS_MAX, bots))
+        self.next_bot_pid = -1               # AI 用负 id，与真人 pid(≥1) 不冲突
         self.owner = None                   # 创建者会话 id，断开后空房间才回收
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
         self.players = {}          # pid -> player dict
@@ -346,6 +355,19 @@ class Room:
         self._pick_theme()
         self.build_terrain()
         self.place_food()
+        if self.bots:
+            self.add_bots()
+
+    def add_bots(self):
+        """创建 AI 蛇（单人练习/多人加 AI）：常驻 round_ids，视为永远 ready"""
+        for i in range(self.bots):
+            pid = self.next_bot_pid
+            self.next_bot_pid -= 1
+            p = make_player(pid, None, f'AI-{i + 1}', i % 5, bot=True)
+            self.players[pid] = p
+            self.round_ids.add(pid)
+            self.spawn_player(p)
+            self.ev('join', id=pid, name=p['name'], bot=True)
 
     def ev(self, t, **kw):
         self.events.append(dict(t=t, **kw))
@@ -460,6 +482,7 @@ class Room:
             'winMode': self.win_mode,                  # 获胜模式（last=死斗 / score=积分）
             'limit': self.limit,                       # 限时秒（0=不限）
             'respawn': self.respawn,                   # 是否无限复活
+            'bots': self.bots,                         # AI 蛇数量（0=无）
         }
 
     # -------- 玩家生命周期 --------
@@ -695,7 +718,8 @@ class Room:
         if not self.win_pending:
             return
         connected = [pid for pid in self.round_ids if pid in self.players]
-        if connected and all(pid in self.ready for pid in connected):
+        # AI 不发 ready 消息：视为永远 ready，只等真人
+        if connected and all(pid in self.ready or self.players[pid].get('bot') for pid in connected):
             self.new_round()
 
     def new_round(self):
@@ -724,6 +748,12 @@ class Room:
         self.ready.discard(pid)
         if p and p.get('user'):
             store.record_best(p['user'], p['score'])
+        # 最后一个真人离开 → 清掉全部 AI（否则 AI 占位导致空房永远不回收）
+        if not any(not q.get('bot') for q in self.players.values()):
+            for bid in [bid for bid, q in self.players.items() if q.get('bot')]:
+                self.players.pop(bid, None)
+                self.round_ids.discard(bid)
+                self.ready.discard(bid)
         # 退房也走统一结算（含限时/获胜模式判定），不再内联"剩一人即胜"
         self.check_win(now_ms())
         if self.win_pending and not any(i in self.players for i in self.round_ids):
@@ -733,6 +763,36 @@ class Room:
             self.maybe_start_round()
 
     # -------- 世界推进 --------
+    def _bot_think(self, p):
+        """AI 蛇转向：目标优先级 星星 > 水果；候选方向要求界内可走且不走回头路。
+        打分 (是否绝路, 离目标距离, -前方空间)——无目标时以开阔空间为准。"""
+        if not p['cells']:
+            return
+        hx, hy = p['cells'][0]
+        cur = p['dir']
+        opp = (-cur[0], -cur[1])
+        tgt = None
+        if self.bonus:
+            tgt = (self.bonus['x'], self.bonus['y'])
+        elif self.food:
+            tgt = (self.food['x'], self.food['y'])
+        opts = []
+        for nd in DIRS4:
+            if nd == opp:
+                continue
+            nx, ny = hx + nd[0], hy + nd[1]
+            if self._solid(nx, ny, skip_pid=p['id']):
+                continue
+            openv = self._open_ahead(nx, ny, nd, skip_pid=p['id'])
+            dist = (abs(nx - tgt[0]) + abs(ny - tgt[1])) if tgt else 0
+            opts.append(((0 if openv > 0 else 1, dist, -openv), nd))
+        if not opts:
+            return                      # 被围死：保持当前方向
+        opts.sort(key=lambda o: o[0])
+        nd = opts[0][1]
+        if nd != cur:
+            p['queue'] = [nd]
+
     def step(self, dt, now):
         if self.win_pending:
             return
@@ -742,6 +802,11 @@ class Room:
             return
         for p in due:
             p['last_move'] = now
+
+        # 0) AI 决策：队列空时选下一方向（贪心追食物 + 避障避墙）
+        for p in due:
+            if p.get('bot') and not p['queue']:
+                self._bot_think(p)
 
         # 1) 应用方向队列
         for p in due:
@@ -1101,6 +1166,7 @@ class Room:
                 'acct': p.get('user'),
                 'combo': p.get('combo', 0),
                 'ult': p.get('ult', 0),
+                'bot': bool(p.get('bot')),
             })
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,
@@ -1227,12 +1293,13 @@ async def game_loop():
                 traceback.print_exc()
 
 
-def make_player(pid, sess, name, skin):
+def make_player(pid, sess, name, skin, bot=False):
     return {
         'session': sess, 'id': pid, 'name': name or f'玩家{pid}', 'skin': skin,
+        'bot': bot, 'user': (sess.user if sess else None),
         'cells': [], 'dir': (1, 0), 'queue': [], 'score': 0, 'alive': False,
         'tick': 150, 'base_tick': 150, 'last_move': 0, 'last_atk': 0,
-        'inv': 0, 'eff': {}, 'grow': 0, 'user': sess.user, 'cause': None, 'by': None,
+        'inv': 0, 'eff': {}, 'grow': 0, 'cause': None, 'by': None,
         'combo': 0, 'combo_at': 0,
         'ult': 0, 'last_ult': 0,
     }
@@ -1349,8 +1416,14 @@ async def handle_msg(sess, m):
             limit = 0
         limit = max(0, min(LIMIT_MAX, limit))
         respawn = m.get('respawn') is True
+        # ---- 单人/练习：AI 蛇数量（非法值回退 0） ----
+        try:
+            bots = int(m.get('bots', 0))
+        except (TypeError, ValueError):
+            bots = 0
+        bots = max(0, min(BOTS_MAX, bots))
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
-                          win_mode=win_mode, limit=limit, respawn=respawn)
+                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})

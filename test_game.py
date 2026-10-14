@@ -39,6 +39,89 @@ def fresh(size=10, **kw):
     return r
 
 
+# ================= 批4 AI蛇 + 单人模式 =================
+def test_bots_config_and_info():
+    r = fresh(12, bots=99)
+    assert r.bots == 7                      # 夹取上限
+    r2 = fresh(12, bots="x")
+    assert r2.bots == 0                     # 非法值回退 0
+    r3 = fresh(12, bots=3)
+    assert r3.info()["bots"] == 3
+
+
+def test_bots_spawned_on_create():
+    r = fresh(12, bots=3)
+    bots = [p for p in r.players.values() if p.get("bot")]
+    assert len(bots) == 3
+    for p in bots:
+        assert p["alive"] and p["cells"]
+        assert p["id"] < 0                  # bot 用负 id，与真人 pid 不冲突
+        assert p["id"] in r.round_ids
+        assert str(p["name"]).startswith("AI-")
+
+
+def test_bot_turns_toward_food():
+    r = fresh(12, bots=1)
+    p = [q for q in r.players.values() if q.get("bot")][0]
+    hx, hy = 6, 6
+    p["cells"] = [(hx, hy), (hx - 1, hy)]
+    p["dir"] = (0, 1)                       # 初始朝下，食物在正右方
+    p["queue"] = []
+    p["inv"] = 0
+    r.food = {"id": 999, "x": hx + 4, "y": hy, "score": 10, "color": "#fff"}
+    p["last_move"] = serve.now_ms() - 99999
+    r.step(0.05, serve.now_ms())
+    assert p["dir"] == (1, 0)               # 应转向食物方向
+    assert p["alive"]
+
+
+def test_bot_avoids_wall_death():
+    r = fresh(12, bots=1)
+    p = [q for q in r.players.values() if q.get("bot")][0]
+    p["cells"] = [(r.cols - 1, 5), (r.cols - 2, 5)]   # 头贴右墙
+    p["dir"] = (1, 0)
+    p["queue"] = []
+    p["inv"] = 0
+    r.food = None                           # 无目标：以空间为准
+    p["last_move"] = serve.now_ms() - 99999
+    r.step(0.05, serve.now_ms())
+    assert p["alive"]                       # 没撞出界
+    assert p["dir"] != (1, 0)               # 转离墙壁
+
+
+def test_single_player_wins_vs_bots():
+    r = fresh(12, bots=2)
+    mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))          # 真人玩家
+    for q in [x for x in r.players.values() if x.get("bot")]:
+        q["alive"] = False                            # AI 全灭
+    r.check_win(serve.now_ms())
+    assert r.win_pending is not None
+    assert r.win_pending["winner"] == 1               # 单人击杀全部 AI → 获胜
+
+
+def test_bots_ready_for_round_start():
+    r = fresh(12, bots=2)
+    mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    r.win_pending = {"winner": None}
+    r.ready.clear()
+    r.maybe_start_round()
+    assert r.win_pending is not None                  # 真人未 ready，不能开局
+    r.ready.add(1)
+    r.maybe_start_round()
+    assert r.win_pending is None                      # 真人 ready 即开局（AI 视为永远 ready）
+    assert r.round_no == 1
+    for q in [x for x in r.players.values() if x.get("bot")]:
+        assert q["alive"] and q["cells"]              # AI 新一局已重生
+
+
+def test_bots_removed_when_last_human_leaves():
+    r = fresh(12, bots=2)
+    mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    r.drop_player(1)
+    assert r.players == {}                            # 最后一个人离开 → AI 一并清掉
+    assert not r.round_ids
+
+
 def test_ghost_wrap():
     r = fresh(10)
     p = mk(r, 1, "A", [(0, 5), (1, 5), (2, 5)], (-1, 0))
@@ -771,6 +854,10 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_ult_reset_on_spawn,
            test_portal_pairs_scale_with_map, test_portal_map_multi_pairs,
            test_portal_exit_faces_open_direction,
-           test_resource_life_scales_with_map]:
+           test_resource_life_scales_with_map,
+           test_bots_config_and_info, test_bots_spawned_on_create,
+           test_bot_turns_toward_food, test_bot_avoids_wall_death,
+           test_single_player_wins_vs_bots, test_bots_ready_for_round_start,
+           test_bots_removed_when_last_human_leaves]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
