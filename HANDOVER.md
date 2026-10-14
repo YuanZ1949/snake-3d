@@ -130,9 +130,9 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
 | `rooms` | — | 主动请求房间列表 |
-| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready） |
-| `watch` | `room` | 进入旁观（会先 `leave_room`） |
-| `join` | `room, name, skin` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效 |
+| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots, pass` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready）。**批6 口令（C3）**：`pass` 可选，给了就必须合法（6-20 位字母+数字混合、非弱口令黑名单，`valid_room_pass()` 前后端同步），非法直接 `error` 拒绝创建（不静默回退） |
+| `watch` | `room, pass` | 进入旁观（会先 `leave_room`）；口令房必须带对口令（批6） |
+| `join` | `room, name, skin, pass` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效；口令房必须带对口令（批6，断线自动重连也带记忆的口令） |
 | `leave` | — | **新增**：返回主页，把自己移出房间（旧客户端不发，行为不变） |
 | `ready` | — | 回合结束后的下一局确认 |
 | `dir` | `x, y` | 转向（服务端做反向与队列校验） |
@@ -140,6 +140,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `ult` | — | **批2 新增**：释放大招（蓄力满 `ULT_MAX=100`、冷却 `ULT_COOL=3s`，否则服务端静默忽略）；8 方向环形弹幕 |
 | `speed` | `ms` | 速度档，服务端夹到 80–300，**立即生效** |
 | `skin` | `i` | 换皮肤（0–4） |
+| `persist` | `room` | **批6 新增（新#11）**：把房间标记为常驻（仅创建者可标，成功后广播刷新列表；写盘 `data/persist_rooms.json`，重启重建、永不回收） |
 | `chat` | `text` | **批5 新增**：房间聊天（≤80 字，空白不发，1s 限速超限静默丢弃）；观战者也可发，走快照 `ev` 通道 |
 | `respawn` | — | 死亡后重生 |
 
@@ -152,6 +153,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `created` | `room, name` | 创建成功 |
 | `room-ok` | `room, spectate, user, id` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生） |
 | `left` | `room` | 离开房间回执 |
+| `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
 | `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
 | `snap` | 见下 | **50ms 一次的全量快照** |
@@ -162,7 +164,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 **`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5）
 > `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
 
-**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots`
+**房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots, hasPass, persist`
 > `players` 是**已连接人数**（含旁观），`alive` 是存活蛇数。
 
 **事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn / ult`
@@ -232,6 +234,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **单人练习（批4，新#5）**：主页「🐍 单人练习」→ 建房 `{size:24, bots:3}` → `created` 自动入局（断线重连 onopen 补建房）；建房面板「AI蛇」下拉 0/1/2/3/5/7；房间卡片 meta 显示 `🤖AI×N`。
 - **断线恢复（批5，B2）**：断线时若房内**还有其他真人** → 原蛇置 `off_at` 挂起（原地冻结、不移动不参与转向）等待 `RESUME_MS=10s`；单人房/无其他真人则立即清房（保空房回收语义）。重连（同账号精确匹配；匿名仅当恰一个无账户挂起者）走原 `join` → `room-ok` 带 `resumed:true`，**原 id/身体/分数全保留不重新出生**；超 10s 未归 → drop（含清 AI）。客户端本有的自动重连（onDisconnect→2s→join）自动命中新路径。挂起者对 `maybe_start_round` 视为 ready。
 - **房间聊天（批5，B3）**：`chat` 消息（≤80 字、空白不发、每连接 1s 限速超限静默丢弃）→ 快照 `ev` 通道广播 `{t:'chat',name,text}`；观战者可发（发件人=房内玩家名，否则账户名/'观众'）。客户端按 `/` 或点击输入框进入聊天（输入框早退方向键），左下角消息流 7s 淡出、上限 30 条、textContent 防注入，断线清空。
+- **房间口令（批6，C3）**：建房可设口令 `pass`（6-20 位字母+数字混合、`WEAK_PASSES` 黑名单前后端同步校验），非法 `error` 拒绝创建；口令房 `join`/`watch` 必须带对口令（先校验再动状态，避免把自己踢出原房）。`info` 带 `hasPass`（口令本身不下发）。客户端：建房面板「口令」输入框（可选）、进房 `prompt` 要一次口令后内存记忆（页面生命周期免重输，含断线自动重连）、创建者免重输、口令错误清记忆并 toast 提示。
+- **空房保留/保存（批6，新#11）**：自定义房间创建后 **24h 内不回收**（`ROOM_KEEP_SECS=86400`，之后仍按"没人+没观战+创建者不在线"才删）；创建者可在房间卡片点「⭐ 保存」→ `persist` 消息 → `persist=True` 写盘 `data/persist_rooms.json`，**常驻不回收 + 重启后重建**（`load_persist_rooms()` 于 `main()` 启动时调用）。`info` 带 `persist`，meta 显示「🔒口令」「⭐常驻」。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -287,7 +291,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×61 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结） |
+| `test_game.py` | 单元 ×66 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |
@@ -295,7 +299,8 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `test_p1.py` | 协议 | 连本地服：`snap.players[]` 带 `combo`、`proj[]` 带 `spd`、`ITEM_TYPES` 7 种（批2 同步：+deflect）（需先起 28000 测试服） |
 | `test_bots_p4.py` | E2E | 批4 AI：create `bots=3` → 房间列表 `bots/players` 计数 → 快照 3 bot（负 id、AI- 名、存活有 cells）+ 1 人 → 3 秒内 AI 蛇头自主位移（连 28000） |
 | `test_reconnect_p5.py` | E2E | 批5：双真人房断线 → 重连 `resumed:true` 同 id、身体长度不变且漂移≤2 格 → chat 首条随快照 ev 送达、1s 内第二条被限速（连 28000） |
-| `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房/断线回收 |
+| `test_pass_p6.py` | E2E | 批6：弱口令/黑名单口令建房被拒 → 合法口令建房 `hasPass` → 无口令/错口令 join 与 watch 被 `error` → 对口令进房 → persist 非创建者拒、创建者成且列表 `persist=true`（连 28000） |
+| `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房 + **批6 后：creator 断开后新房间 24h 内保留**（info 带 hasPass/persist） |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
@@ -406,7 +411,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 1. 改 `serve.py` / `index.html`。
 2. 本机静态检查：`node --check`、id 引用比对、括号配对（见 §10）。
-3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；批5 后为 61 单测 + 6 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
+3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；批6 后为 66 单测 + 7 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
 4. 通过后按 §11.2 发布生产，跑 `verify_rooms.py`。
 5. `git add -A && git commit`（中文 feat/fix/style 提交说明）。
 6. 通知使用者**强刷页面**（Ctrl/Cmd+Shift+R）确认新前端。
@@ -431,7 +436,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 ## 14. 常见坑（务必阅读）
 
-1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 6 套 E2E 可直接本地跑（见 §10）。
+1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 7 套 E2E 可直接本地跑（见 §10）。
 2. **`pkill -f <pattern>` 通过 SSH 执行会把自己杀掉**（pattern 匹配到 SSH 命令行本身，exit 255）。用 `fuser -k 28000/tcp`，或写成 `pkill -f 'serve[.]py'`。**Windows 本机没有 `fuser`**，本地停测试服用 `Get-NetTCPConnection -LocalPort 28000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`。
 3. **后台起测试服时 SSH 调用必然超时**，但进程其实已经起来了 —— 用 `ss -ltn | grep 28000` 确认，不要重复起（此坑仅限服务器端；Windows 本地后台起服无此问题）。
 4. **Termux 没有 `/tmp`** —— 临时文件放 `$PREFIX/tmp/opencode`（即 `/data/data/com.termux/files/usr/tmp/opencode`）。Windows 本机用 `$env:TEMP`。

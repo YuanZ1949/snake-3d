@@ -32,7 +32,7 @@
 | 3 | 传送门+资源有效期 | 新#2 + 新#6 | ✅ | 单测 44/44 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0（40×40 房 3 对传送门） |
 | 4 | AI蛇+单人模式 | A4 + 新#5 | ✅ | 单测 51/51 先红后绿；静态检查 ALL PASSED；4+1 E2E Exit 0（BOTS E2E：info/快照/AI 自主移动） |
 | 5 | 重连+聊天 | B2 + B3 | ✅ | 单测 61/61 先红后绿（含挂起蛇冻结）；静态检查 ALL PASSED (65ids/div32/css141)；6 E2E Exit 0（RECONNECT+CHAT：resumed 同 id/漂移1.0格/聊天送达+限速） |
-| 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ⬜ | |
+| 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ✅ | 单测 66/66 先红后绿；静态检查 ALL PASSED (70ids/div33/css145)；7 E2E Exit 0（PASS+PERSIST 全 9 步；verify_rooms 证实断开后 r1 保留） |
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ⬜ | |
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ⬜ | |
 | 9 | CI/Playwright | C2 | ⬜ | |
@@ -84,3 +84,13 @@
 - **test_game.py**：+10 用例（聊天发送与截断/限速、挂起宽限内存活、超时移除、最后真人离开清AI、resumable 匹配规则、resume 保留状态、单人房断线立即清、多人房挂起、**挂起蛇冻结不动**），先红后绿 **61/61**。新增 **test_reconnect_p5.py** 第 6 套 E2E（双真人房断线→恢复同 id/漂移 1.0 格、聊天首条送达+1s 内第二条被限速）。
 - **验证**：静态检查 ALL PASSED（**65** ids / div 32 / css 141）；test_ws / test_ws2 / test_reconnect_p5 / verify_rooms / test_p1 / test_bots_p4 全 **Exit 0**（6/6）。
 - **暴露的新工作**：off 灰化渲染（砍为建议项）；**顺序调整**：无（E2E 期间两次踩 background 120s 杀服 + 端口 10048 残留，处置=先清理端口再起双服在 120s 窗口跑完）。
+
+### 批6 弱口令+房间保留/保存（C3 + 新#11）✅
+- **C3 拍板**：`valid_room_pass(p)` = 6-20 位、`isalnum` 且非纯数字非纯字母（必须混合）、`WEAK_PASSES` 黑名单（32 个常见弱口令，lower 比较）——**前后端同步**（前端仅输入 maxlength，服务端为准）。create 给了 `pass` 但非法 → `{'t':'error'}` 直接拒绝创建（**不静默回退**，口令静默失效是安全坑）。口令房 `join`/`watch` 校验放在 `leave_room` **之前**（避免口令错把自己踢出当前房）；断线自动重连也带记忆口令（恢复路径同样校验，语义统一）。`info` 只带 `hasPass` 不泄露口令。
+- **新#11 拍板**：`ROOM_KEEP_SECS=86400`——自定义房间创建 24h 内 gc 不回收（之后仍按原条件：没人+没观战+创建者不在线）；`persist` 消息（仅 `owner==sess.sid` 可标）→ `r.persist=True` 写盘 `data/persist_rooms.json` → **常驻不回收 + `load_persist_rooms()` 启动重建**（`main()` 中 `init_rooms()` 后调用；单测不走 main 不受污染）。字段容错反序列化（size/rock/portal/winMode/limit/respawn/bots/pass 全部防御）。
+- **serve.py**：常量 PASS_MIN/MAX、ROOM_KEEP_SECS、PERSIST_FILE、WEAK_PASSES；`valid_room_pass()`；`Room(..., passw=None)` + `self.persist`；`info()` 加 hasPass/persist；create 解析 pass；join/watch 校验；`persist` 消息；`gc_empty_rooms` 加 persist 常驻 + 24h 保留；`persist_rooms_dump/save/load`。
+- **index.html**：建房面板 `#cPass` 输入框；`roomPasss{}` 内存口令表 + `askPassIfNeeded()`（start/spectate 前 prompt 一次）；doJoin/watch×2 带 `pass`；`pendingPass` 让创建者免重输；`myCreated` Set → 卡片「⭐ 保存」span（stopPropagation）→ `send persist`；roomMeta 加 🔒口令/⭐常驻；`.saveBtn` CSS；**新 `error` 消息通道**：`showToast()` 浮层 + 口令错清记忆 + state==='joining' 时退回主页（否则卡"入局中…"）；`#toast` DOM+CSS。
+- **test_game.py**：+5（口令校验/口令不泄露/24h保留/persist不回收/save-load 往返 tmp 文件），先红（AttributeError valid_room_pass）后绿 **66/66**（中途修一处自相矛盾断言：abc123 既 True 又黑名单 False → 改 Game2024/room77x）。
+- **E2E**：新 **test_pass_p6.py** 第 7 套（9 步：弱口令拒/黑名单拒/合法建房 hasPass/无口令 join 拒/错口令拒/对口令进/watch 拒/persist 非创建者拒/创建者成 persist=true；首跑踩 `broadcast rooms 先于 created 到达被 recv吞` → 改收集双消息后过）；**verify_rooms.py 同步**（计划内需求变化）：`rid not in ids` 立即回收断言 → `rid in ids` 24h 保留断言 + info 字段加 hasPass/persist。
+- **验证**：静态 ALL PASSED（**70** ids / div 33 / css 145）；7 套 E2E 全 **Exit 0**；E2E 残留 `data/persist_rooms.json` 已清理（避免污染后续批次）。
+- **暴露的新工作**：无；**顺序调整**：无。

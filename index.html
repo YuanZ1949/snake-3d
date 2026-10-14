@@ -322,6 +322,8 @@
   }
   .roomItem.idle .cnt { color: #8b91b5; background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.14); }
   .roomItem .meta { font-size: 11px; color: #8b91b5; line-height: 1.5; }
+  .roomItem .saveBtn { margin-left: auto; font-size: 10px; color: #f5d97a; border: 1px solid rgba(245,217,122,.45); border-radius: 8px; padding: 1px 7px; cursor: pointer; flex: none; }
+  .roomItem .saveBtn:hover { background: rgba(245,217,122,.16); }
   .roomEmpty { font-size: 12px; color: #6b7194; text-align: center; padding: 10px; }
 
   /* ---- 创建房间（地图组合自定义） ---- */
@@ -389,6 +391,8 @@
   .chatLog .msg { font-size: 12px; line-height: 1.35; color: #e8ebff; background: rgba(10,12,26,.62); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; padding: 2px 7px; word-break: break-all; text-shadow: 0 1px 2px #000; opacity: 1; transition: opacity .6s; }
   .chatLog .msg.fade { opacity: 0; }
   .chatIn { position: absolute; left: 10px; bottom: 10px; width: 46%; max-width: 320px; z-index: 8; background: rgba(10,12,26,.85); border: 1px solid rgba(255,255,255,.22); border-radius: 7px; color: #e8ebff; font-size: 12px; padding: 5px 8px; outline: none; }
+  .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(24,20,34,.96); color: #ffb3b3; border: 1px solid rgba(255,120,120,.45); padding: 8px 18px; border-radius: 10px; font-size: 13px; z-index: 999; max-width: 80%; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .toast.hidden { display: none; }
   .chatIn.hidden { display: none; }
 </style>
 </head>
@@ -416,6 +420,7 @@
     <div id="effects" class="effects"></div>
     <div id="chatLog" class="chatLog" aria-live="polite"></div>
     <input id="chatIn" class="chatIn hidden" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
+    <div id="toast" class="toast hidden" role="alert"></div>
     <button id="btnJoinIn" class="hidden">入局</button>
 
     <div class="overlay" id="startScreen">
@@ -522,6 +527,9 @@
                 <option value="5">5 条</option>
                 <option value="7">7 条</option>
               </select>
+            </label>
+            <label><span>口令</span>
+              <input class="nameIn sm" id="cPass" maxlength="20" placeholder="可选·6-20位字母数字">
             </label>
           </div>
           <div class="actRow">
@@ -641,6 +649,10 @@
   let roomList = [];
   let soloPending = false;    // 「单人练习」：建房成功后自动开局
   let roomCfg = {winMode: 'last', limit: 0, respawn: false, remain: 0};  // 当前房间战场配置（来自快照）
+  const roomPasss = {};    // rid -> 口令（内存记忆，页面生命周期内免重输；C3）
+  const myCreated = new Set();  // 本会话创建过的房间（显示「保存」按钮；新#11）
+  let pendingPass = '';    // 创建时填的口令，created 回来时入表
+  let toastTimer = 0;
   let curRoom = localStorage.getItem(ROOM_KEY) || 'a';
   let myInv = 0, myEff = {};
   const ITEMS = {
@@ -1430,7 +1442,7 @@
       if (authToken) { authReq = 'authtoken'; send({t: 'authtoken', token: authToken}); }
       send({t: 'rooms'});
       if (wantPlay) doJoin();
-      else if (spectating) send({t: 'watch', room: curRoom});
+      else if (spectating) send({t: 'watch', room: curRoom, pass: roomPasss[curRoom] || ''});
       else if (soloPending) soloCreate();   // 单人练习：连接后补建房
     };
     ws.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch (_) {} };
@@ -1440,7 +1452,7 @@
 
   function doJoin() {
     // 尺寸由房间自身决定（默认房间固定，自定义房间创建时确定），不再由客户端覆盖
-    send({t: 'join', room: curRoom, name: playerName, skin: skinIdx});
+    send({t: 'join', room: curRoom, name: playerName, skin: skinIdx, pass: roomPasss[curRoom] || ''});
     send({t: 'speed', ms: SPEEDS[speedIdx].ms});
     if (state === 'idle' || state === 'over') state = 'joining';
   }
@@ -1524,6 +1536,7 @@
   function start() {
     ac();
     bgmStart();
+    askPassIfNeeded(curRoom);   // 口令房先补口令（C3）
     // 昵称与账号已合并为一个输入：未登录时填的内容当昵称，登录后就是账号
     playerName = ($('userIn').value || '').trim().slice(0, 12);
     localStorage.setItem(NAME_KEY, playerName);
@@ -1548,6 +1561,7 @@
   function spectate() {
     ac();
     bgmStart();
+    askPassIfNeeded(curRoom);   // 口令房观战也要口令（C3）
     spectating = true;
     wantPlay = false;
     myId = null;
@@ -1558,7 +1572,7 @@
     demoBodyShow(false);
     $('btnJoinIn').classList.remove('hidden');
     setConn('● 观战中', 'ok');
-    if (!wsOpen) connect(); else send({t: 'watch', room: curRoom});
+    if (!wsOpen) connect(); else send({t: 'watch', room: curRoom, pass: roomPasss[curRoom] || ''});
   }
 
   function joinIn() {
@@ -1958,11 +1972,24 @@
       case 'created':
         curRoom = m.room;
         localStorage.setItem(ROOM_KEY, curRoom);
+        myCreated.add(m.room);                 // 自己建的房 → 卡片显示「保存」（新#11）
+        if (pendingPass) { roomPasss[m.room] = pendingPass; pendingPass = ''; }  // 创建者免重输口令
         $('createPanel').classList.add('hidden');
         $('btnRoomCreate').textContent = '＋ 创建房间';
         renderRooms(roomList);
         acctTip('已创建「' + (m.name || m.room) + '」，已为你选中', 'ok');
         if (soloPending) { soloPending = false; start(); }   // 单人练习：建好直接进局
+        return;
+      case 'error':
+        // 服务端拒绝（口令错误/非法口令/非创建者保存等）：浮层提示 + 入局失败退回主页
+        showToast(m.err || '操作失败');
+        if (m.err && m.err.indexOf('口令') >= 0) delete roomPasss[curRoom];
+        if (state === 'joining') {
+          state = 'idle';
+          wantPlay = false;
+          startScreen.classList.remove('hidden');
+          $('connTip').textContent = m.err || '入局失败，请重试';
+        }
         return;
       case 'room-ok':
         curRoom = m.room;
@@ -2495,6 +2522,24 @@
     el.className = 'tiny' + (cls ? ' ' + cls : '');
   }
 
+  // 轻量错误浮层（服务端 error 消息统一出口，C3 口令错误等）
+  function showToast(text) {
+    const el = $('toast');
+    el.textContent = text || '';
+    el.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+  }
+
+  // 进入口令房前索要口令（C3）：内存记一次，页面生命周期内免重输
+  function askPassIfNeeded(id) {
+    const r = roomList.find(x => x.id === id);
+    if (r && r.hasPass && !roomPasss[id]) {
+      const p = prompt('房间「' + (r.name || id) + '」需要口令');
+      if (p && p.trim()) roomPasss[id] = p.trim();
+    }
+  }
+
   function updateAcctUI() {
     $('acctBadge').textContent = loggedUser ? ('👤 ' + loggedUser) : '';
     $('btnLogout').style.display = loggedUser ? '' : 'none';
@@ -2558,6 +2603,8 @@
     if (r.respawn) bits.push('无限复活');
     if (r.limit > 0) bits.push(`限时${fmtDur(r.limit)}`);
     if (r.bots > 0) bits.push(`🤖AI×${r.bots}`);
+    if (r.hasPass) bits.push('🔒口令');
+    if (r.persist) bits.push('⭐常驻');
     if (r.round > 1) bits.push(`第${r.round}局`);
     if (r.over) bits.push('结算中');
     if (r.alive > 0 && r.alive !== r.players) bits.push(`存活${r.alive}`);
@@ -2614,6 +2661,15 @@
       meta.className = 'meta';
       meta.textContent = roomMeta(r);
       top.append(nm, cnt);
+      if (myCreated.has(r.id) && !r.persist) {
+        // 创建者可「保存」房间：persist → 常驻不回收、重启后重建（新#11）
+        const sv = document.createElement('span');
+        sv.className = 'saveBtn';
+        sv.textContent = '⭐ 保存';
+        sv.setAttribute('role', 'button');
+        sv.onclick = e => { e.stopPropagation(); send({t: 'persist', room: r.id}); };
+        top.appendChild(sv);
+      }
       btn.append(top, meta);
       btn.onclick = () => selectRoom(r.id);
       box.appendChild(btn);
@@ -2676,9 +2732,13 @@
     if ($('cRespawn').value) msg.respawn = true;
     const bots = $('cBots').value;
     if (bots !== '') msg.bots = parseInt(bots, 10) || 0;
+    const ps = ($('cPass').value || '').trim();
+    if (ps) msg.pass = ps;                 // 房间口令（C3，服务端校验合法性）
+    pendingPass = ps;                       // created 回来时记入口令表，创建者免再输
     send(msg);
     localStorage.setItem('snake-map', msg.size);
     $('cName').value = '';
+    $('cPass').value = '';
   }
 
   // 单人练习：24×24 固定图 + 3 条 AI，创建成功后自动进入（见 'created' 分支）

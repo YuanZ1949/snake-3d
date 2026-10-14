@@ -41,6 +41,27 @@ COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击�
 COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
 BOTS_MAX = 7              # 单房间 AI 蛇数量上限
 DIRS4 = ((1, 0), (0, 1), (-1, 0), (0, -1))       # AI 决策候选方向（不回头）
+PASS_MIN = 6               # 房间口令最短位数（C3）
+PASS_MAX = 20              # 房间口令最长位数（C3）
+ROOM_KEEP_SECS = 86400     # 空房保留期：创建后 24h 内不回收（新#11）
+PERSIST_FILE = str(DATA_DIR / 'persist_rooms.json')   # 持久化房间存储
+# 弱口令黑名单（C3：前后端同步校验；均为满足 6-20 位字母数字格式的常见弱口令）
+WEAK_PASSES = frozenset((
+    'abc123', 'abcd1234', 'a123456', '1234567', '12345678', '123123', '654321',
+    '000000', '111111', '666666', '888888', '147258', '159357', '1qaz2wsx',
+    'qwerty1', 'qwerty123', 'passw0rd', 'password1', 'admin123', 'iloveyou1',
+    'monkey12', 'dragon12', 'sunshine1', 'princess1', 'football1', 'baseball1',
+    'welcome1', 'letmein1', 'test123', 'login123', 'user1234', 'pass123',
+))
+
+
+def valid_room_pass(p):
+    """房间口令校验（C3）：6-20 位字母+数字混合，且不在弱口令黑名单（前后端同步）"""
+    if not isinstance(p, str) or not (PASS_MIN <= len(p) <= PASS_MAX):
+        return False
+    if not p.isalnum() or p.isdigit() or p.isalpha():
+        return False                      # 必须字母与数字混合（纯字母/纯数字都不行）
+    return p.lower() not in WEAK_PASSES
 
 
 def chat_throttle(src, now):
@@ -312,7 +333,7 @@ usage = Usage()
 # ============================================================ 房间
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
-                 win_mode='last', limit=0, respawn=False, bots=0):
+                 win_mode='last', limit=0, respawn=False, bots=0, passw=None):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
@@ -342,6 +363,9 @@ class Room:
         self.bots = max(0, min(BOTS_MAX, bots))
         self.next_bot_pid = -1               # AI 用负 id，与真人 pid(≥1) 不冲突
         self.owner = None                   # 创建者会话 id，断开后空房间才回收
+        # ---- 房间口令（C3）与持久化（新#11）----
+        self.passw = passw if (isinstance(passw, str) and passw) else None   # 进房口令（None=无口令）
+        self.persist = False                # 「保存」标记：常驻不回收、重启后重建
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
         self.players = {}          # pid -> player dict
         self.subs = set()          # 接收快照的 Session（玩家 + 旁观者）
@@ -495,6 +519,8 @@ class Room:
             'limit': self.limit,                       # 限时秒（0=不限）
             'respawn': self.respawn,                   # 是否无限复活
             'bots': self.bots,                         # AI 蛇数量（0=无）
+            'hasPass': self.passw is not None,         # 是否口令房（口令本身不下发）
+            'persist': self.persist,                   # 「保存」常驻标记（新#11）
         }
 
     # -------- 房间聊天 / 断线恢复 --------
@@ -1275,16 +1301,83 @@ def init_rooms():
         rooms[rid] = Room(rid, name, size)
 
 
+# ---- 持久化房间（新#11）：「保存」过的房间重启后重建，常驻不回收 ----
+def persist_rooms_dump():
+    out = []
+    for rid, r in rooms.items():
+        if not r.persist:
+            continue
+        out.append({'id': rid, 'name': r.name, 'size': r.cols,
+                    'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
+                    'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
+                    'bots': r.bots, 'pass': r.passw})
+    return out
+
+
+def save_persist_rooms(path=PERSIST_FILE):
+    """把全部 persist 房间写盘（标记变化时调用）；失败静默（不阻塞游戏）"""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(persist_rooms_dump(), f, ensure_ascii=False)
+        return True
+    except OSError:
+        return False
+
+
+def load_persist_rooms(path=PERSIST_FILE):
+    """启动时重建已「保存」的房间（新#11）；文件缺失/损坏返回 0"""
+    try:
+        with open(path, encoding='utf-8') as f:
+            lst = json.load(f)
+    except (OSError, ValueError):
+        return 0
+    n = 0
+    for d in (lst if isinstance(lst, list) else []):
+        if not isinstance(d, dict):
+            continue
+        rid = d.get('id')
+        if not rid or not isinstance(rid, str) or rid in rooms:
+            continue
+        try:
+            size = int(d.get('size') or 24)
+        except (TypeError, ValueError):
+            size = 24
+        rock = d.get('rock')
+        if isinstance(rock, bool) or not isinstance(rock, (int, float)):
+            rock = None
+        else:
+            rock = max(0.0, min(4.0, float(rock)))
+        portal = d.get('portal')
+        r = Room(rid, str(d.get('name') or rid)[:16], size,
+                 theme_fixed=d.get('theme'), rock_mult=rock,
+                 portal_on=portal if isinstance(portal, bool) else None,
+                 win_mode=d.get('winMode'), limit=d.get('limit') or 0,
+                 respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
+                 passw=d.get('pass'))
+        r.persist = True
+        r.created = time.time()            # 持久化房间不回收，创建时间无意义
+        rooms[rid] = r
+        n += 1
+    return n
+
+
 DEFAULT_ROOM_IDS = {rid for rid, _n, _s in DEFAULT_ROOMS}
 
 
 def gc_empty_rooms():
-    """回收自定义房间：没人、没人观战、且创建者已断线（默认房间常驻）"""
+    """回收自定义房间：默认房间常驻；persist 常驻；创建 24h 内保留（新#11）；
+    之后没人、没人观战、且创建者已断线才删"""
     live = {s.sid for s in all_sessions}
+    now = time.time()
     for rid in list(rooms):
         if rid in DEFAULT_ROOM_IDS:
             continue
         r = rooms[rid]
+        if r.persist:
+            continue                       # 「保存」过的房间永不回收
+        if now - r.created < ROOM_KEEP_SECS:
+            continue                       # 新建 24h 内先留着（用户需求 #11）
         if r.players or r.subs:
             continue
         if r.owner is not None and r.owner in live:
@@ -1470,8 +1563,15 @@ async def handle_msg(sess, m):
         except (TypeError, ValueError):
             bots = 0
         bots = max(0, min(BOTS_MAX, bots))
+        # ---- 房间口令（C3）：可选；给了就必须合法（非法直接拒绝，不静默回退） ----
+        passw = m.get('pass')
+        if passw in (None, ''):
+            passw = None
+        elif not valid_room_pass(str(passw)):
+            await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
+            return
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
-                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots)
+                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})
@@ -1483,6 +1583,9 @@ async def handle_msg(sess, m):
         room = rooms.get(rid)
         if not room:
             await send(sess, {'t': 'rooms', 'list': room_list()})
+            return
+        if room.passw and str(m.get('pass') or '') != room.passw:
+            await send(sess, {'t': 'error', 'err': '房间口令错误'})
             return
         leave_room(sess)
         sess.room = room
@@ -1496,6 +1599,10 @@ async def handle_msg(sess, m):
         room = rooms.get(rid)
         if not room:
             await send(sess, {'t': 'rooms', 'list': room_list()})
+            return
+        # 口令房：先校验再动状态（客户端重连也带记忆的口令，含断线恢复路径）
+        if room.passw and str(m.get('pass') or '') != room.passw:
+            await send(sess, {'t': 'error', 'err': '房间口令错误'})
             return
         leave_room(sess)
         # ---- 断线恢复：宽限期内找回原蛇（原分数/身体/位置） ----
@@ -1556,6 +1663,20 @@ async def handle_msg(sess, m):
         gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user, 'id': pid})
         await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
+        return
+
+    # -------- 房间保存（新#11）：创建者标记 persist → 常驻不回收、重启后重建 --------
+    if t == 'persist':
+        room = rooms.get(m.get('room') or '')
+        if not room:
+            return
+        if room.owner != sess.sid:
+            await send(sess, {'t': 'error', 'err': '仅创建者可保存房间'})
+            return
+        if not room.persist:
+            room.persist = True
+            save_persist_rooms()
+        await broadcast_rooms()
         return
 
     if t == 'leave':
@@ -1767,6 +1888,7 @@ PORT = int(os.environ.get('PORT', '20000'))
 
 async def main():
     init_rooms()
+    load_persist_rooms()   # 重建「保存」过的房间（新#11）
     usage.note('start', port=PORT, pid=os.getpid() if hasattr(os, 'getpid') else None)
     async with websockets.serve(handler, '0.0.0.0', PORT,
                                 process_request=process_request,

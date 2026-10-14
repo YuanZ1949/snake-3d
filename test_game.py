@@ -166,6 +166,74 @@ def test_offline_snake_frozen_until_resume():
     assert p1["cells"][0] != cells1[0]
 
 
+# ================= 批6 弱口令 + 房间保留/保存 =================
+def test_valid_room_pass():
+    ok = serve.valid_room_pass
+    assert ok("Game2024") is True and ok("room77x") is True
+    assert ok("abc") is False            # 短于 6
+    assert ok("a" * 21) is False         # 长于 20
+    assert ok("12345678") is False       # 纯数字
+    assert ok("abcdefg") is False        # 纯字母
+    assert ok("abc-123") is False        # 非字母数字
+    assert ok("abc123") is False         # 格式合法但弱口令黑名单
+    assert ok(None) is False and ok("") is False
+    assert serve.PASS_MIN == 6 and serve.PASS_MAX == 20
+
+
+def test_room_pass_field_not_leaked():
+    r1 = fresh(12, passw="xy1234")
+    assert r1.info()["hasPass"] is True
+    assert "passw" not in r1.info()      # 口令本身不进房间列表
+    r2 = fresh(12)
+    assert r2.info()["hasPass"] is False
+
+
+def test_gc_holds_new_rooms_24h():
+    serve.rooms["rgc"] = serve.Room("rgc", "新", 16)
+    r = serve.rooms["rgc"]
+    assert r.owner is None and not r.players and not r.subs
+    serve.gc_empty_rooms()
+    assert "rgc" in serve.rooms          # 创建不足 24h → 保留
+    r.created -= serve.ROOM_KEEP_SECS + 60
+    serve.gc_empty_rooms()
+    assert "rgc" not in serve.rooms      # 超过 24h 无人 → 回收
+
+
+def test_gc_keeps_persist_rooms():
+    serve.rooms["rps"] = serve.Room("rps", "常驻", 16)
+    r = serve.rooms["rps"]
+    r.persist = True
+    r.created -= serve.ROOM_KEEP_SECS * 3
+    serve.gc_empty_rooms()
+    assert "rps" in serve.rooms          # 持久化房间永不回收
+    del serve.rooms["rps"]
+
+
+def test_persist_roundtrip(tmpdir=None):
+    import os
+    path = os.path.join(os.environ.get("TEMP", "."), "t_persist_rooms.json")
+    try:
+        serve.rooms["rp1"] = serve.Room(
+            "rp1", "回环", 32, theme_fixed="ice", rock_mult=0.5, portal_on=True,
+            win_mode="score", limit=120, respawn=True, passw="ab12cd")
+        serve.rooms["rp1"].persist = True
+        serve.save_persist_rooms(path)
+        saved = serve.rooms.pop("rp1")
+        assert serve.load_persist_rooms(path) == 1
+        r = serve.rooms.get("rp1")
+        assert r is not None and r.persist is True
+        assert (r.name, r.cols, r.theme_fixed, r.rock_mult, r.portal_on) == (
+            "回环", 32, "ice", 0.5, True)
+        assert (r.win_mode, r.limit, r.respawn, r.passw) == (
+            "score", 120, True, "ab12cd")
+        del serve.rooms["rp1"]
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def test_chat_appends_and_limits():
     r = fresh(12)
     assert r.chat("A", "  hello  ") is True
@@ -985,6 +1053,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_resumable_matching, test_resume_keeps_snake_state,
            test_disconnect_single_room_drops_immediately,
            test_disconnect_multi_room_suspends,
-            test_offline_snake_frozen_until_resume]:
+            test_offline_snake_frozen_until_resume,
+            test_valid_room_pass, test_room_pass_field_not_leaked,
+            test_gc_holds_new_rooms_24h, test_gc_keeps_persist_rooms,
+            test_persist_roundtrip]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

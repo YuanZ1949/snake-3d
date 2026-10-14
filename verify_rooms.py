@@ -25,7 +25,7 @@ async def main():
         w = await recv_until(ws, "welcome")
         print("welcome:", [(r["id"], r["name"], r["cols"], r["theme"], r["players"]) for r in w["rooms"]])
         for r in w["rooms"]:
-            for k in ("themeFixed", "rock", "portal", "players", "round"):
+            for k in ("themeFixed", "rock", "portal", "players", "round", "hasPass", "persist"):
                 assert k in r, (k, r)
 
         await ws.send(json.dumps({"t": "create", "name": "验证局", "size": 40,
@@ -51,7 +51,8 @@ async def main():
         w2 = await recv_until(ws2, "welcome")
         ids = [r["id"] for r in w2["rooms"]]
         print("after creator disconnect:", ids)
-        assert rid not in ids, ("空的自定义房间应被回收", ids)
+        # 新#11：自定义房间创建后 24h 内保留（不再随创建者断开立即回收）
+        assert rid in ids, ("新建 24h 内的空房应保留", ids)
         assert {"a", "b", "c"} <= set(ids), ids
 
     print("PROD ROOMS VERIFY OK")
