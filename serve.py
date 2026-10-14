@@ -367,13 +367,28 @@ class Room:
             return self.portal_on
         return bool(THEME_CFG[self.theme]['portal'])
 
+    def life_mult(self):
+        """资源有效期随地图放大：base × clamp((cols*rows)/(24*24), 1, 4)（#6）"""
+        return max(1.0, min(4.0, (self.cols * self.rows) / (24.0 * 24.0)))
+
+    def item_life(self):
+        return int(ITEM_LIFE * self.life_mult())
+
+    def bonus_life(self):
+        return int(BONUS_LIFE * self.life_mult())
+
     def portal_map(self):
         m = {}
-        if len(self.portals) == 2:
-            a, b = self.portals
+        for i in range(0, len(self.portals) - 1, 2):
+            a, b = self.portals[i], self.portals[i + 1]
             m[a] = b
             m[b] = a
         return m
+
+    def portal_pairs(self):
+        """传送门对数：按地图尺寸放大 clamp(size/16 就近取整, 1, 4) 对。
+        12/16→1对、24/32→2对、40/48→3对、64+→4对。"""
+        return max(1, min(4, int(self.cols / 16.0 + 0.5)))
 
     def build_terrain(self):
         """根据主题重置静态地形（岩石 / 墙 / 传送门）。"""
@@ -382,12 +397,18 @@ class Room:
         self.walls = []
         self.portals = []
         if self.eff_portal():
-            for _ in range(300):
-                a = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
-                b = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
-                if a != b and abs(a[0] - b[0]) + abs(a[1] - b[1]) > 6 and not self.occupied(*a) and not self.occupied(*b):
-                    self.portals = [a, b]
-                    break
+            used = set()
+            for _ in range(self.portal_pairs()):
+                for _ in range(300):
+                    a = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
+                    b = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
+                    if (a != b and abs(a[0] - b[0]) + abs(a[1] - b[1]) > 6
+                            and a not in used and b not in used
+                            and not self.occupied(*a) and not self.occupied(*b)):
+                        self.portals += [a, b]
+                        used.add(a)
+                        used.add(b)
+                        break
         placed = 0
         while placed < cfg['walls']:
             x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
@@ -740,6 +761,13 @@ class Room:
                 hy %= self.rows
             if (hx, hy) in pmap:
                 hx, hy = pmap[(hx, hy)]
+                # 出口朝向取出口处最开阔方向（不贴最近的墙，#2）
+                best, bo = p['dir'], -1
+                for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    o = self._open_ahead(hx, hy, d, p['id'])
+                    if o > bo:
+                        bo, best = o, d
+                p['dir'] = best
             tent[id(p)] = (hx, hy)
 
         head_on = set()
@@ -1001,8 +1029,8 @@ class Room:
                     p.pop('died_at', None)
                     self.ev('respawn', id=p['id'], name=p['name'])
         self._magnet_pull(now)
-        # 星星与道具过期
-        if self.bonus and now - self.bonus['born'] > BONUS_LIFE:
+        # 星星与道具过期（有效期随地图放大，#6）
+        if self.bonus and now - self.bonus['born'] > self.bonus_life():
             self.ev('expire', id=self.bonus.get('id'), x=self.bonus['x'], y=self.bonus['y'])
             self.bonus = None
         if not self.bonus and not self.win_pending and random.random() < 0.004:
@@ -1011,7 +1039,7 @@ class Room:
                 x, y = random.choice(free)
                 self.bonus = {'id': self.next_bonus_id, 'x': x, 'y': y, 'score': 50, 'born': now}
                 self.next_bonus_id += 1
-        self.items = [it for it in self.items if now - it['born'] <= ITEM_LIFE]
+        self.items = [it for it in self.items if now - it['born'] <= self.item_life()]
         if not self.win_pending and len(self.items) < 3 and random.random() < 0.0025:
             self.spawn_item(now)
         self._step_projectiles(dt, now)

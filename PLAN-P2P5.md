@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | 1 | 战场自定义 | A3 + 新#12 | ✅ | 单测 31/31 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；create 解析端到端 OK；起服 / 200 |
 | 2 | 大招+偏转+护盾 | A6 + 新#1 + 新#7 | ✅ | 单测 40/40 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0；ult 冒烟 OK |
-| 3 | 传送门+资源有效期 | 新#2 + 新#6 | ⬜ | |
+| 3 | 传送门+资源有效期 | 新#2 + 新#6 | ✅ | 单测 44/44 先红后绿；静态检查 ALL PASSED；4 E2E Exit 0（40×40 房 3 对传送门） |
 | 4 | AI蛇+单人模式 | A4 + 新#5 | ⬜ | |
 | 5 | 重连+聊天 | B2 + B3 | ⬜ | |
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ⬜ | |
@@ -56,4 +56,12 @@
 - **test_game.py**：+10 用例（deflect×2、shield 折返×3、ult 充能/击杀/蓄力门槛/弹幕冷却/重生清零×5）。先红（deflect 撞墙仍死）后绿，**40/40**。
 - **test_p1.py**：P1 期望 `ITEM_TYPES` 6→7 同步（批2 预期变更，非删测）。
 - **验证**：静态检查 ALL PASSED（61 ids / div 31 / css 135）；test_ws / test_ws2 / verify_rooms / test_p1 全 Exit 0；HTTP /、three.min.js、leaderboard 全 200；`ult` 未蓄满消息冒烟被静默忽略、服务端快照正常（ULT SMOKE OK）。
+- **暴露的新工作**：无；**顺序调整**：无。
+
+### 批3 传送门+资源有效期（新#2 + 新#6）✅
+- **拍板细节**：传送门对数按**列数就近取整**（`cols/16+0.5` 夹 1..4），故 24×24 起成 2 对（原需求"按地图大小适当增加"落地口径）；资源有效期倍率 `clamp((cols*rows)/576, 1, 4)`。
+- **serve.py**：`portal_pairs()`；`portals` 改扁平 `[a,b,a2,b2,...]` 存储、`portal_map()` 两两配对互逆；`build_terrain()` 循环生成 npairs 对（两口不同、曼哈顿>6、去重不与障碍重叠）；step 传送后在出口处取 `_open_ahead` 最大方向设 `p['dir']`（不改转向队列）；新 `life_mult()/item_life()/bonus_life()`，`step_wrapper` 过期判断改用放大值。
+- **index.html**：无需改动（syncPortals 按 i%2 交替配色天然多对兼容；`ITEM_LIFE` 常量无引用）。
+- **test_game.py**：+4 用例（传送门对数随地图 / 32×32 多对互逆 / 出口朝开阔方向 / 资源有效期随地图），先红（24×24 仅 1 对）后绿，**44/44**。
+- **验证**：静态检查 ALL PASSED（61 ids / div 31 / css 135）；4 E2E Exit 0（test_ws + test_ws2 / verify_rooms + test_p1 两串），verify_rooms 创建 40×40 房快照 `portals` 6 格 = 3 对，符合预期。
 - **暴露的新工作**：无；**顺序调整**：无。

@@ -693,6 +693,62 @@ def test_ult_reset_on_spawn():
     print("ult reset on spawn OK")
 
 
+# ================= 批3：传送门按地图扩容 + 出口朝向 + 资源有效期 =================
+
+def test_portal_pairs_scale_with_map():
+    for size, cells_want in ((12, 2), (16, 2), (24, 4), (32, 4), (48, 6), (64, 8), (96, 8)):
+        r = fresh(size, theme_fixed="default")
+        r.build_terrain()
+        assert len(r.portals) == cells_want, (size, r.portals)
+    print("portal pairs scale OK: 12/16->1对 24/32->2对 48->3对 64/96->4对")
+
+
+def test_portal_map_multi_pairs():
+    r = fresh(32, theme_fixed="default")
+    r.build_terrain()
+    m = r.portal_map()
+    assert len(m) == len(r.portals) and len(m) == 4, (len(m), r.portals)
+    for i in range(0, len(r.portals), 2):
+        a, b = r.portals[i], r.portals[i + 1]
+        assert m[a] == b and m[b] == a, (a, b, m)
+    print("portal map multi-pair OK ->", m)
+
+
+def test_portal_exit_faces_open_direction():
+    r = fresh(10)                      # 实际 12x12
+    r.portals = [(3, 5), (7, 5)]
+    p = mk(r, 1, "A", [(2, 5), (1, 5), (0, 5)], (1, 0))
+    now = serve.now_ms()
+    r.step(0.05, now)
+    assert p["cells"][0] == (7, 5), p["cells"]
+    # 出口 (7,5) 处最开阔方向是向下（6 格：y6..y11），不该保留原朝向
+    assert p["dir"] == (0, 1), p["dir"]
+    print("portal exit faces open OK ->", p["dir"])
+
+
+def test_resource_life_scales_with_map():
+    r12, r24, r48 = fresh(12), fresh(24), fresh(48)
+    assert r12.life_mult() == 1.0 and r24.life_mult() == 1.0, (r12.life_mult(), r24.life_mult())
+    assert r48.life_mult() == 4.0, r48.life_mult()
+    assert r12.item_life() == serve.ITEM_LIFE
+    assert r48.item_life() == serve.ITEM_LIFE * 4
+    assert r48.bonus_life() == serve.BONUS_LIFE * 4
+    # 到期行为：48x48 道具/星星在 4 倍时长才过期
+    now = serve.now_ms()
+    r48.win_pending = "t"              # 关掉随机刷新，避免断言被新刷道具干扰
+    r48.items = [{"id": 1, "type": "shield", "x": 0, "y": 0, "born": now}]
+    r48.step_wrapper(0.05, now + serve.ITEM_LIFE + 100)
+    assert r48.items, "1 倍时长不该过期"
+    r48.step_wrapper(0.05, now + serve.ITEM_LIFE * 4 + 100)
+    assert not r48.items, "4 倍时长应过期"
+    r48.bonus = {"id": 1, "x": 1, "y": 1, "score": 50, "born": now}
+    r48.step_wrapper(0.05, now + serve.BONUS_LIFE + 100)
+    assert r48.bonus, "星星 1 倍时长不该过期"
+    r48.step_wrapper(0.05, now + serve.BONUS_LIFE * 4 + 100)
+    assert not r48.bonus, "星星 4 倍时长应过期"
+    print("resource life scale OK: 48x48 -> 4x")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -712,6 +768,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_shield_bends_wall, test_shield_bends_rock, test_shield_bends_self,
            test_ult_fruit_and_star_charge, test_ult_kill_charge,
            test_ult_requires_full_charge, test_ult_fires_barrage_and_resets,
-           test_ult_reset_on_spawn]:
+           test_ult_reset_on_spawn,
+           test_portal_pairs_scale_with_map, test_portal_map_multi_pairs,
+           test_portal_exit_faces_open_direction,
+           test_resource_life_scales_with_map]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
