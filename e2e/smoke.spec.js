@@ -76,3 +76,45 @@ test('观战进入与返回主页无报错', async ({ page }) => {
   await page.waitForFunction(() => !document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 10000 });
   expect(errors, errors.join('\n')).toEqual([]);
 });
+
+// 批16 B：建房面板 select 强制暗色下拉，且作用域不外溢到全站
+test('建房面板下拉暗色且不波及全站', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/');
+  await page.waitForFunction(() => document.querySelectorAll('#roomList .roomItem').length >= 1, null, { timeout: 10000 });
+  await page.click('#btnRoomCreate');
+  await expect(page.locator('#cSize')).toBeVisible();
+  const panelCs = await page.evaluate(() => getComputedStyle(document.getElementById('cSize')).colorScheme);
+  expect(panelCs).toBe('dark');
+  const bodyCs = await page.evaluate(() => getComputedStyle(document.body).colorScheme);
+  expect(bodyCs).not.toBe('dark');   // 限定作用域：body 不得被连带强制暗色
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+// 批16 G：死亡结算屏 →「观战」按钮衔接 spectate()（真实撞墙死亡驱动，无调试钩子）
+test('死亡后点观战进入观战态无报错', async ({ page }) => {
+  const errors = watchErrors(page);
+  const snap = watchFrames(page, /"t":\s*"snap"/);
+  await page.goto('/');
+  await page.click('#btnSolo');
+  await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
+  await expect.poll(() => snap.got, { timeout: 15000 }).toBe(true);
+  // 固定视角下方向键是绝对方向：循环按左把蛇钉死向西直到撞墙（护盾偏转也被重新钉回），任何死因都进结算屏
+  await page.click('#btnCam');
+  await expect(page.locator('#btnCam')).toHaveText('🧭固定');
+  const overShown = () => page.locator('#overScreen').evaluate(el => !el.classList.contains('hidden'));
+  for (let i = 0; i < 40 && !(await overShown()); i++) {
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(700);
+  }
+  await page.waitForFunction(() => !document.getElementById('overScreen').classList.contains('hidden'), null, { timeout: 5000 });
+  // 死亡 500ms 后结算屏弹出且含观战按钮
+  await expect(page.locator('#overScreen')).toBeVisible();
+  await expect(page.locator('#btnOverSpectate')).toBeVisible();
+  await page.click('#btnOverSpectate');
+  // 衔接判据：结算屏收起 + 出现「加入对战」（spectate 前置动作），后续快照继续到达且无报错
+  await page.waitForFunction(() => document.getElementById('overScreen').classList.contains('hidden'), null, { timeout: 5000 });
+  await expect(page.locator('#btnJoinIn')).toBeVisible();
+  await page.waitForTimeout(1200);
+  expect(errors, errors.join('\n')).toEqual([]);
+});

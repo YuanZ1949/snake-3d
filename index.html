@@ -340,6 +340,9 @@
     font-size: 11px; color: #9aa0c3;
   }
   .createPanel select.nameIn.sm { width: 100%; }
+  /* 批16 B：面板内原生下拉强制暗色（仅 createPanel 作用域，不外溢到全站控件） */
+  .createPanel select { color-scheme: dark; }
+  .createPanel select option { background: #131728; color: #dce3ff; }
   #cName { flex: 1; min-width: 0; width: auto; }
   #userIn { width: 196px; }
   .lbRows {
@@ -594,6 +597,7 @@
       <div class="big" id="finalScore">0</div>
       <div class="record" id="recordTip"></div>
       <button class="primary" id="btnRestart">重新入局</button>
+      <button class="chip hidden" id="btnOverSpectate">👀 观战</button>
       <button class="chip" id="btnOverHome">🏠 返回主页</button>
     </div>
   </div>
@@ -1641,6 +1645,7 @@
     spectating = true;
     spectTarget = null;
     wantPlay = false;
+    joined = false;   // 批16 G：从局内死亡屏切入观战，与主页观战收敛到同一条已验证路径
     myId = null;
     state = 'joining';
     overScreen.classList.add('hidden');
@@ -2343,6 +2348,7 @@
       recordTip.textContent = '最高分 ' + best;
     }
     dirQ = [];
+    $('btnOverSpectate').classList.remove('hidden');   // 批16 G：死亡结算可直接观战
     setTimeout(() => { if (state === 'over') overScreen.classList.remove('hidden'); }, 500);
   }
 
@@ -2380,6 +2386,7 @@
 
   function showReadyScreen() {
     overScreen.classList.remove('hidden');
+    $('btnOverSpectate').classList.add('hidden');   // 批16 G：准备屏不提供观战（避免掉出回合）
     btnRestart.textContent = '准备';
     btnRestart.disabled = false;
   }
@@ -3041,6 +3048,7 @@
   $('btnPauseHome').onclick = goHome;
   $('btnOverHome').onclick = goHome;
   $('btnSpectate').onclick = spectate;
+  $('btnOverSpectate').onclick = spectate;   // 批16 G：死亡结算屏观战按钮同用 spectate()（内部 wantPlay=false）
   $('btnJoinIn').onclick = joinIn;
   $('btnLogin').onclick = doLogin;
   $('btnRegister').onclick = doRegister;
@@ -3075,7 +3083,7 @@
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
-   'btnHome', 'btnPauseHome', 'btnOverHome',
+   'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate',
    'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {

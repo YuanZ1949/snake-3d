@@ -249,6 +249,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **方向输入可靠化（批13，D 方向失控）**：① 快照 `players[]` 带 `q`（服务端转向队列长度），客户端 `applyPlayers` 存入 `myEnt.q`，快照循环里超出 q 的本地 dirQ 尾部截断——以服务端为权威，覆盖 deflect/shield 清队、clash 清队、队满丢新项三类服务端清队不同步导致的**队头永久失步锁死**；② 回合切换（handleRound 变更分支）、`round` 事件、onWin else 分支强制 `dirQ=[]`（旧版新局开局携带陈旧队列整局锁死）；③ `setDir` 前置 `wsOpen` 门控（未发出的项不进本地队列）；④ `broadcast` 对订阅者发送失败改调 `leave_room(sess, hard=False)`（旧版仅置 `sess.room=None` 造成幽灵订阅+重连双蛇；新走挂起语义，`off_at`/`resumable` 全保留，10s 内重连 resume 命中同 id）。
 - **碰撞与出生加固（批14，F 碰撞卡叠）**：① **spawn** 主路径 `any(_solid(...))` → `any(occupied(...))`（额外避让食物/星星/道具；`occupied()` 顶部补**出界即占用**——旧 `_solid` 独有界检查，直接换函数会生成贴边 OOB 蛇身）；兜底分支弃「居中硬铺 3 格零检查」，改扫 `free_cells` 落四向开阔 ≥4 的安全点，仍失败才回退居中位（由破僵局保底）。② **保护期拦进入**：攻击者欲进出生无敌/护盾蛇的身体 → 本帧 `skip_move`（不插头不咬），不再穿身重叠。③ **对头破僵局**：同格对头连续 `STUCK_TICKS=2` tick → 确定性 tie-break（`str(id)` 大者判死 `cause='stuck'`，客户端文案「与对手僵持卡死」）；单帧内每蛇最多被强制右转一次（防双重右转反向自杀）；hstreak 按 tick 统一计数（不在 pair 循环内加，防三方同格误杀）、成功移动即清。④ **off_at 挂起蛇**：不再参与被咬与顶头强制右转（仍是地形/寻路障碍，`_solid`/`free_cells`/`check_win` 不变）；`resume()` 位置复核（出界/压地形/被活蛇穿入）→ 原地 `spawn_player(fresh_cells)` 重生，杜绝恢复出重叠死锁。⑤ **传送门**：出口被任意活蛇身体占 → 本帧不传送原地停留（`skip_move`）；出口选向打平时**延续进入方向**（旧版方向序首项恒偏东）。⑥ 尸体不阻挡保持不变（已按 alive 全面过滤）。回归：`test_game.py` 79 用例（本批 +10，旧码 9 红）、local_ci ALL GREEN。
 - **AI 水果可达性与寻路（批15，C AI 吃不到水果）**：① `place_food` 只放**静态地形可达集**内（`Room.reach_set()`：从活蛇头 flood-fill，只看边界/岩石/墙块，传送门当可走格且与配对口互连；无活蛇取首个非地形格兜底；可达区无空格退化回旧行为）——杜绝水果落进蛇圈/岩石口袋永不可达；缓存 `self._reach`，失效点 build_terrain / maybe_rocks / 子弹碎岩 / drop_player，另每次校验蛇头仍在缓存内（防幽灵跨区漏算），96×96 冷算 ~11ms、命中后仅 O(free) 过滤（计时断言 50ms，`test_place_food_reach_time_budget`）。② bot 直达被挡时按**目标方向对齐度**选绕行向（打分加 `-align` 键），不再按 DIRS4 定序反向偏航绕圈。③ food/bonus 目标改 `min(dist)` 就近选取（等距优先星星）。回归：+4 用例（83），旧码 4 红。
+- **死亡结算观战 + 面板下拉暗色（批16，B+G）**：① G：死亡结算屏 `overScreen` 新增「👀 观战」按钮 `btnOverSpectate`（默认 hidden；`onMyDeath` 显示、`showReadyScreen` 隐藏——准备屏不提供以免掉出回合），点击走 `spectate()`（内部 `wantPlay=false`）；`spectate()` 起补 `joined=false`，从局内死亡切入观战与主页观战收敛到同一条已验证路径（服务端 `watch` 自带 `leave_room(sess)`，死蛇正常摘除）。② B：`.createPanel select { color-scheme: dark }` + `option` 暗色兜底——仅作用于建房面板内 8 个原生下拉（cSize/cTheme/cRock/cPortal/cWin/cLimit/cRespawn/cBots），不外溢全站控件（Playwright 断言 body 非 dark）。回归：Playwright 5/5（+2 例，旧码双红）。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -317,9 +318,9 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `test_delta_p1.py` | 协议 | 批11 C1：join 首帧 6 静态字段齐全 + `full:1` → 稳态 30 帧 walls/portals 缺席 ≥25（缺失=沿用）且 players/proj 每帧恒在 → 中途 watch 者首帧仍全量（连 28000） |
 | `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房 + **批6 后：creator 断开后新房间 24h 内保留**（info 带 hasPass/persist） |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
-| `e2e/smoke.spec.js` | Playwright ×3 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
+| `e2e/smoke.spec.js` | Playwright ×5 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。批16 +2：建房面板下拉暗色（`color-scheme` computed 断言 + body 不外溢）、死亡结算屏→观战衔接（固定视角循环按左撞墙真实死亡 → `btnOverSpectate` 可见 → 点击后结算屏收起 + `btnJoinIn` 出现，无 JS 报错）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
 | `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 8 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
-| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量：停服清库→起 28000/8090→8 套 E2E→单测→停服清库→静态检查→起 8123→Playwright 3/3→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
+| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量：停服清库→起 28000/8090→8 套 E2E→单测→停服清库→静态检查→起 8123→Playwright 5/5→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
