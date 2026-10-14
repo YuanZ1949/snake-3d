@@ -340,9 +340,11 @@
     font-size: 11px; color: #9aa0c3;
   }
   .createPanel select.nameIn.sm { width: 100%; }
-  /* 批16 B：面板内原生下拉强制暗色（仅 createPanel 作用域，不外溢到全站控件） */
-  .createPanel select { color-scheme: dark; }
-  .createPanel select option { background: #131728; color: #dce3ff; }
+  /* 批16 B：面板内原生下拉强制暗色（仅建房/设置面板作用域，不外溢到全站控件） */
+  .createPanel select, #cfgScreen select { color-scheme: dark; }
+  .createPanel select option, #cfgScreen select option { background: #131728; color: #dce3ff; }
+  /* 批18 E：房间设置面板行布局 */
+  #cfgScreen .cfgRow { display: flex; gap: 8px; align-items: center; justify-content: center; width: 100%; }
   #cName { flex: 1; min-width: 0; width: auto; }
   #userIn { width: 196px; }
   .lbRows {
@@ -589,6 +591,51 @@
       <h2>🏆 排行榜</h2>
       <div class="lbRows" id="lbRows"></div>
       <button class="primary" id="btnLbClose">返回</button>
+    </div>
+
+    <!-- 批18 E：房间参数编辑（仅创建者可改，live 生效不重开局） -->
+    <div class="overlay hidden" id="cfgScreen">
+      <h2>⚙ 房间设置</h2>
+      <div class="sub" id="cfgRoomName"></div>
+      <label class="cfgRow"><span>获胜</span>
+        <select class="nameIn sm" id="c2Win" aria-label="获胜模式">
+          <option value="last">死斗·剩一人胜</option>
+          <option value="score">积分赛</option>
+        </select>
+      </label>
+      <label class="cfgRow"><span>限时</span>
+        <select class="nameIn sm" id="c2Limit" aria-label="限时">
+          <option value="">不限时</option>
+          <option value="60">1 分钟</option>
+          <option value="120">2 分钟</option>
+          <option value="300">5 分钟</option>
+          <option value="600">10 分钟</option>
+        </select>
+      </label>
+      <label class="cfgRow"><span>复活</span>
+        <select class="nameIn sm" id="c2Respawn" aria-label="复活模式">
+          <option value="">关闭·阵亡观战</option>
+          <option value="1">无限复活</option>
+        </select>
+      </label>
+      <label class="cfgRow"><span>碰墙</span>
+        <select class="nameIn sm" id="c2Wd" aria-label="碰墙模式">
+          <option value="">关闭·撞墙即死</option>
+          <option value="1">碰外墙折返</option>
+        </select>
+      </label>
+      <label class="cfgRow"><span>AI蛇</span>
+        <select class="nameIn sm" id="c2Bots" aria-label="AI蛇数量">
+          <option value="0">无</option>
+          <option value="1">1 条</option>
+          <option value="2">2 条</option>
+          <option value="3">3 条</option>
+          <option value="5">5 条</option>
+          <option value="7">7 条</option>
+        </select>
+      </label>
+      <button class="primary" id="btnCfgSave">💾 保存（live 生效）</button>
+      <button class="chip" id="btnCfgClose">取消</button>
     </div>
 
     <div class="overlay hidden" id="pauseScreen">
@@ -2089,6 +2136,10 @@
         acctTip('已创建「' + (m.name || m.room) + '」，已为你选中', 'ok');
         if (soloPending) { soloPending = false; start(); }   // 单人练习：建好直接进局
         return;
+      case 'cfgapplied':
+        // 批18 E：房间参数编辑回执（变更已随 broadcast_rooms 刷新）
+        showToast(m.changed ? '房间设置已更新' : '设置无变化');
+        return;
       case 'error':
         // 服务端拒绝（口令错误/非法口令/非创建者保存等）：浮层提示 + 入局失败退回主页
         showToast(m.err || '操作失败');
@@ -2866,6 +2917,15 @@
         sv.onclick = e => { e.stopPropagation(); send({t: 'persist', room: r.id}); };
         top.appendChild(sv);
       }
+      if (myCreated.has(r.id)) {
+        // 批18 E：本会话创建的房间可 live 编辑参数（服务端二次鉴权）
+        const gb = document.createElement('span');
+        gb.className = 'saveBtn';
+        gb.textContent = '⚙ 设置';
+        gb.setAttribute('role', 'button');
+        gb.onclick = e => { e.stopPropagation(); openCfg(r); };
+        top.appendChild(gb);
+      }
       btn.append(top, meta);
       btn.onclick = () => selectRoom(r.id);
       box.appendChild(btn);
@@ -2942,6 +3002,31 @@
   function soloCreate() {
     send({t: 'create', name: '单人练习', size: 24, bots: 3});
   }
+
+  // ================= 房间参数编辑（批18 E） =================
+  let cfgRoomId = null;
+  function openCfg(r) {
+    cfgRoomId = r.id;
+    $('cfgRoomName').textContent = r.name + '（' + r.id + '）';
+    $('c2Win').value = r.winMode === 'score' ? 'score' : 'last';
+    $('c2Limit').value = r.limit > 0 ? String(r.limit) : '';
+    $('c2Respawn').value = r.respawn ? '1' : '';
+    $('c2Wd').value = r.wd ? '1' : '';
+    $('c2Bots').value = String(r.bots | 0);
+    $('cfgScreen').classList.remove('hidden');
+  }
+  $('btnCfgSave').onclick = () => {
+    if (!cfgRoomId) return;
+    send({t: 'roomcfg', room: cfgRoomId,
+          winMode: $('c2Win').value,
+          limit: $('c2Limit').value === '' ? 0 : parseInt($('c2Limit').value, 10),
+          respawn: $('c2Respawn').value === '1',
+          wd: $('c2Wd').value === '1',
+          bots: parseInt($('c2Bots').value, 10) || 0});
+    $('cfgScreen').classList.add('hidden');
+    showToast('设置已发送…');
+  };
+  $('btnCfgClose').onclick = () => $('cfgScreen').classList.add('hidden');
 
   // ================= 房间聊天（批5） =================
   function focusChat() {
@@ -3091,7 +3176,7 @@
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
-   'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate',
+   'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate', 'btnCfgSave', 'btnCfgClose',
    'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {

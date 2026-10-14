@@ -370,6 +370,7 @@ class Room:
         self.bots = max(0, min(BOTS_MAX, bots))
         self.next_bot_pid = -1               # AI 用负 id，与真人 pid(≥1) 不冲突
         self.owner = None                   # 创建者会话 id，断开后空房间才回收
+        self.owner_user = None              # 批18：创建者账号（跨重连仍可编辑设置；None=无主）
         # ---- 房间口令（C3）与持久化（新#11）----
         self.passw = passw if (isinstance(passw, str) and passw) else None   # 进房口令（None=无口令）
         self.persist = False                # 「保存」标记：常驻不回收、重启后重建
@@ -413,6 +414,39 @@ class Room:
             self.round_ids.add(pid)
             self.spawn_player(p)
             self.ev('join', id=pid, name=p['name'], bot=True)
+
+    def set_bots(self, n):
+        """批18：live 调整 AI 数量——增=按当前占位补生成；减=摘除多余
+        （优先死/挂起者，其次低分者）。不走 drop_player 以避开
+        「最后真人离场清空全部 AI」的级联逻辑。"""
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return
+        n = max(0, min(BOTS_MAX, n))
+
+        def bots():
+            return [p for p in self.players.values() if p.get('bot')]
+        while len(bots()) < n:
+            ps = bots()
+            pid = self.next_bot_pid
+            self.next_bot_pid -= 1
+            p = make_player(pid, None, f'AI-{len(ps) + 1}', len(ps) % 5, bot=True)
+            self.players[pid] = p
+            self.round_ids.add(pid)
+            self.spawn_player(p)
+            self.ev('join', id=pid, name=p['name'], bot=True)
+        while len(bots()) > n:
+            ps = bots()
+            pick = next((p for p in ps if not p['alive'] or p.get('off_at')), None)
+            if pick is None:
+                pick = min(ps, key=lambda p: p.get('score', 0))
+            self.players.pop(pick['id'], None)
+            self.round_ids.discard(pick['id'])
+            self.ready.discard(pick['id'])
+        self.bots = n
+        self._reach = None              # 摘除可能空出连通区（批15①）
+        self.check_win(now_ms())        # 摘 AI 可能触发「只剩一人」结算
 
     def ev(self, t, **kw):
         self.events.append(dict(t=t, **kw))
@@ -1529,7 +1563,8 @@ def persist_rooms_dump():
         out.append({'id': rid, 'name': r.name, 'size': r.cols,
                     'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
-                    'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect})
+                    'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect,
+                    'ownerUser': r.owner_user})
     return out
 
 
@@ -1574,6 +1609,8 @@ def load_persist_rooms(path=PERSIST_FILE):
                  win_mode=d.get('winMode'), limit=d.get('limit') or 0,
                  respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
                  passw=d.get('pass'), walldeflect=d.get('wd') is True)
+        ou = d.get('ownerUser')
+        r.owner_user = ou if isinstance(ou, str) and ou else None   # 批18
         r.persist = True
         r.created = time.time()            # 持久化房间不回收，创建时间无意义
         rooms[rid] = r
@@ -1697,6 +1734,14 @@ def tokens_inv(name):
     return tok
 
 
+def can_edit_room(sess, room):
+    """批18 E 鉴权：账号匹配 owner_user（跨重连有效）或仍是在线创建者 sid，
+    二者其一即可；默认房间/无主房间（双 None）一律拒绝"""
+    if room.owner_user and sess.user and room.owner_user == sess.user:
+        return True
+    return room.owner is not None and room.owner == sess.sid
+
+
 async def handle_msg(sess, m):
     global next_pid
     t = m.get('t')
@@ -1796,8 +1841,65 @@ async def handle_msg(sess, m):
                           win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
                           walldeflect=walldeflect)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
+        rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})
+        return
+
+    # -------- 房间参数编辑（批18 E）：live 生效，不重开局 --------
+    # 语义（拍板）：winMode/limit/respawn/wd 现读现发即时生效（快照/check_win 本就读
+    # 房间字段，零协议改动）；limit 改小到已超时 → 下一 tick 按「时间到」结算；
+    # size/theme/rock/portal 属地形，需要重掷不在此列（theme live 改 = 下局生效）；
+    # 口令不在编辑面（独立安全面）。bots 走 set_bots 显式增减。
+    if t == 'roomcfg':
+        rid = m.get('room') or (sess.room.id if sess.room else '')
+        room = rooms.get(rid)
+        if not room:
+            await send(sess, {'t': 'error', 'err': '房间不存在'})
+            return
+        if not can_edit_room(sess, room):
+            await send(sess, {'t': 'error', 'err': '仅房间创建者可修改设置'})
+            return
+        changed = False
+        wm = m.get('winMode')
+        if wm in ('last', 'score') and wm != room.win_mode:
+            room.win_mode = wm
+            changed = True
+        if 'limit' in m:
+            try:
+                lim = int(m.get('limit', 0))
+            except (TypeError, ValueError):
+                lim = room.limit
+            lim = max(0, min(LIMIT_MAX, lim))
+            if lim != room.limit:
+                room.limit = lim
+                changed = True
+        if 'respawn' in m and (m.get('respawn') is True) != room.respawn:
+            room.respawn = m.get('respawn') is True
+            changed = True
+        if 'wd' in m and (m.get('wd') is True) != room.walldeflect:
+            room.walldeflect = m.get('wd') is True
+            changed = True
+        if 'bots' in m:
+            try:
+                nb = int(m.get('bots', 0))
+            except (TypeError, ValueError):
+                nb = room.bots
+            nb = max(0, min(BOTS_MAX, nb))
+            if nb != room.bots:
+                room.set_bots(nb)
+                changed = True
+        # 与 __init__ 同款兜底：score/respawn 房必须有限时（live 改动保持同一不变量）
+        if room.limit == 0:
+            if room.win_mode == 'score':
+                room.limit = 300
+                changed = True
+            elif room.respawn:
+                room.limit = 120
+                changed = True
+        if changed:
+            await broadcast_rooms()
+        await send(sess, {'t': 'cfgapplied', 'room': rid, 'changed': changed})
         return
 
     # -------- 房间进出 --------

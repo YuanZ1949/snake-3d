@@ -219,11 +219,13 @@ def test_persist_roundtrip(tmpdir=None):
             win_mode="score", limit=120, respawn=True, passw="ab12cd",
             walldeflect=True)   # 批17：碰墙折返随持久化往返
         serve.rooms["rp1"].persist = True
+        serve.rooms["rp1"].owner_user = "creator"   # 批18：账号归属随持久化往返
         serve.save_persist_rooms(path)
         saved = serve.rooms.pop("rp1")
         assert serve.load_persist_rooms(path) == 1
         r = serve.rooms.get("rp1")
         assert r is not None and r.persist is True
+        assert r.owner_user == "creator"
         assert (r.name, r.cols, r.theme_fixed, r.rock_mult, r.portal_on) == (
             "回环", 32, "ice", 0.5, True)
         assert (r.win_mode, r.limit, r.respawn, r.passw) == (
@@ -1375,6 +1377,111 @@ def test_walldeflect_bite_min_len_still_dies():
     assert p['alive']
 
 
+# ---- 批18 E：房间参数编辑（roomcfg，live 生效） ----
+def _cfg_sess(sid='s1', user=None, room=None):
+    """会话桩：捕获下发消息，带 sid/user/room"""
+    import asyncio  # noqa: F401（保持与 handle_msg 异步调用一致的导入习惯）
+
+    class CapWS:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, x):
+            import json
+            self.sent.append(json.loads(x) if isinstance(x, str) else x)
+    s = S()
+    s.ws = CapWS()
+    s.sid = sid
+    s.user = user
+    s.room = room
+    s.msgs = 0
+    return s
+
+
+def _cfg_room(sess):
+    """建一个归属 sess 的测试房"""
+    r = serve.Room('rc', 'rc', 10, bots=0)
+    r.owner = sess.sid
+    r.owner_user = sess.user
+    serve.rooms['rc'] = r
+    return r
+
+
+def test_roomcfg_stranger_denied():
+    """非创建者改设置 → error 且房间参数不变"""
+    import asyncio
+    r = _cfg_room(_cfg_sess(sid='s1', user='u1'))
+    evil = _cfg_sess(sid='s2', user='u2', room=r)
+    asyncio.run(serve.handle_msg(evil, {'t': 'roomcfg', 'room': 'rc',
+                                        'winMode': 'score', 'wd': True}))
+    assert any(x.get('t') == 'error' for x in evil.ws.sent)
+    assert r.win_mode == 'last' and r.walldeflect is False
+    del serve.rooms['rc']
+
+
+def test_roomcfg_creator_edits_live_without_restart():
+    """创建者（sid 在线）live 改参数：字段生效、不重开局（round/身体不变）"""
+    import asyncio
+    s = _cfg_sess(sid='s1')
+    r = _cfg_room(s)
+    s.room = r
+    p = mk(r, 1, 'a', [(3, 3), (4, 3), (5, 3)], (1, 0))
+    cells_before = list(p['cells'])
+    before_round = r.round_no
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'winMode': 'score', 'limit': 90,
+                                     'respawn': True, 'wd': True}))
+    assert (r.win_mode, r.limit, r.respawn, r.walldeflect) == ('score', 90, True, True)
+    assert r.round_no == before_round and p['cells'] == cells_before
+    assert any(x.get('t') == 'cfgapplied' for x in s.ws.sent)
+    del serve.rooms['rc']
+
+
+def test_roomcfg_account_owner_survives_reconnect():
+    """批18 必改7：账号归属跨会话有效（owner==sid 重连即失效的替代）"""
+    import asyncio
+    r = serve.Room('rc', 'rc', 10)
+    r.owner = 'oldsid'          # 旧会话已断开
+    r.owner_user = 'u1'
+    serve.rooms['rc'] = r
+    s2 = _cfg_sess(sid='newsid', user='u1')
+    asyncio.run(serve.handle_msg(s2, {'t': 'roomcfg', 'room': 'rc', 'bots': 2}))
+    assert r.bots == 2
+    assert any(x.get('t') == 'cfgapplied' for x in s2.ws.sent)
+    s3 = _cfg_sess(sid='x', user='u2')
+    asyncio.run(serve.handle_msg(s3, {'t': 'roomcfg', 'room': 'rc', 'bots': 5}))
+    assert r.bots == 2
+    del serve.rooms['rc']
+
+
+def test_roomcfg_bots_live_add_remove():
+    """批18 必改7：bots live 增减（set_bots 显式补生成/摘除）"""
+    import asyncio
+    s = _cfg_sess(sid='s1')
+    r = _cfg_room(s)
+    s.room = r
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'bots': 3}))
+    n = sum(1 for p in r.players.values() if p.get('bot'))
+    assert (r.bots, n) == (3, 3)
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'bots': 1}))
+    n = sum(1 for p in r.players.values() if p.get('bot'))
+    assert (r.bots, n) == (1, 1)
+    del serve.rooms['rc']
+
+
+def test_roomcfg_limit_fallback_mirror():
+    """批18：live 改动保持 __init__ 不变量——score/respawn 房 limit=0 时兜底限时"""
+    import asyncio
+    s = _cfg_sess(sid='s1')
+    r = _cfg_room(s)
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'winMode': 'score'}))
+    assert r.limit == 300
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'winMode': 'last', 'limit': 0, 'respawn': True}))
+    assert r.limit == 120
+    del serve.rooms['rc']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1432,6 +1539,11 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_walldeflect_room_bounces_at_wall,
             test_walldeflect_room_no_escape_dies,
             test_walldeflect_room_rock_front_still_dies,
-            test_walldeflect_bite_min_len_still_dies]:
+            test_walldeflect_bite_min_len_still_dies,
+            test_roomcfg_stranger_denied,
+            test_roomcfg_creator_edits_live_without_restart,
+            test_roomcfg_account_owner_survives_reconnect,
+            test_roomcfg_bots_live_add_remove,
+            test_roomcfg_limit_fallback_mirror]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
