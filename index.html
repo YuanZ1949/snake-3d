@@ -1870,75 +1870,81 @@
   }
 
   function applyWorld(s, now) {
-    // 食物
+    // 食物（C1 增量：字段缺失=未变化，沿用旧值；full/首帧必带）
     const f = s.food;
-    if (f) {
-      // 优先用服务器下发的唯一 id 作键：即使新水果恰好刷在相同坐标/颜色也能识别为“新水果”，
-      // 避免出现“吃了不消失”的观感问题（老服务器无 id 时退回坐标+颜色）
-      const key = (f.id != null) ? ('f' + f.id) : (f.x + ',' + f.y + ',' + f.color);
-      if (key !== foodKey) {
-        foodKey = key;
-        food = {x: f.x, y: f.y, score: f.score, color: f.color, born: now};
-        clearMesh(foodMesh);
-        foodMesh = makeFruit(food);
-        scene.add(foodMesh);
+    if (s.food !== undefined) {
+      if (f) {
+        // 优先用服务器下发的唯一 id 作键：即使新水果恰好刷在相同坐标/颜色也能识别为“新水果”，
+        // 避免出现“吃了不消失”的观感问题（老服务器无 id 时退回坐标+颜色）
+        const key = (f.id != null) ? ('f' + f.id) : (f.x + ',' + f.y + ',' + f.color);
+        if (key !== foodKey) {
+          foodKey = key;
+          food = {x: f.x, y: f.y, score: f.score, color: f.color, born: now};
+          clearMesh(foodMesh);
+          foodMesh = makeFruit(food);
+          scene.add(foodMesh);
+        } else if (food) {
+          food.x = f.x; food.y = f.y; food.score = f.score;
+        }
       } else if (food) {
-        food.x = f.x; food.y = f.y; food.score = f.score;
+        food = null; foodKey = '';
+        clearMesh(foodMesh); foodMesh = null;
       }
-    } else if (food) {
-      food = null; foodKey = '';
-      clearMesh(foodMesh); foodMesh = null;
     }
     // 星星（服务器 born 为单调时钟，本地记出现时间；用唯一 id 作键避免过期重刷竞态）
     const b = s.bonus;
-    if (b) {
-      const key = String(b.id);
-      if (key !== bonusKey) {
-        bonusKey = key;
-        bonus = {x: b.x, y: b.y, score: b.score, born: now};
-        clearMesh(bonusMesh); bonusMesh = makeStar();
-        scene.add(bonusMesh);
-        if (bonusLight) scene.remove(bonusLight);
-        bonusLight = new THREE.PointLight(0xffd166, .9, 5);
-        scene.add(bonusLight);
+    if (s.bonus !== undefined) {
+      if (b) {
+        const key = String(b.id);
+        if (key !== bonusKey) {
+          bonusKey = key;
+          bonus = {x: b.x, y: b.y, score: b.score, born: now};
+          clearMesh(bonusMesh); bonusMesh = makeStar();
+          scene.add(bonusMesh);
+          if (bonusLight) scene.remove(bonusLight);
+          bonusLight = new THREE.PointLight(0xffd166, .9, 5);
+          scene.add(bonusLight);
+        } else if (bonus) {
+          bonus.x = b.x; bonus.y = b.y; bonus.score = b.score;
+        }
       } else if (bonus) {
-        bonus.x = b.x; bonus.y = b.y; bonus.score = b.score;
+        bonus = null; bonusKey = '';
+        clearMesh(bonusMesh); bonusMesh = null;
+        if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
       }
-    } else if (bonus) {
-      bonus = null; bonusKey = '';
-      clearMesh(bonusMesh); bonusMesh = null;
-      if (bonusLight) { scene.remove(bonusLight); bonusLight = null; }
     }
     // 岩石
-    const rk = (s.rocks || []).map(r => r[0] + ',' + r[1]).join('|');
-    if (rk !== rockKey) {
-      rockKey = rk;
-      const want = (s.rocks || []).map(r => r[0] + ',' + r[1]);
-      const wset = new Set(want);
-      rocks.forEach(r => { if (!wset.has(r.x + ',' + r.y)) r.mesh.visible = false; });
-      const kept = new Map(rocks.filter(r => wset.has(r.x + ',' + r.y)).map(r => [r.x + ',' + r.y, r]));
-      const next = [];
-      for (const r of (s.rocks || [])) {
-        const k = r[0] + ',' + r[1];
-        let entry = kept.get(k);
-        if (!entry) {
-          const m = takeRockMesh();
-          const w = cellW(r[0], r[1]);
-          m.position.set(w.x, .3, w.z);
-          m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-          m.scale.setScalar(.85 + Math.random() * .35);
-          m.visible = true;
-          entry = {x: r[0], y: r[1], mesh: m};
+    if (s.rocks !== undefined) {
+      const rk = (s.rocks || []).map(r => r[0] + ',' + r[1]).join('|');
+      if (rk !== rockKey) {
+        rockKey = rk;
+        const want = (s.rocks || []).map(r => r[0] + ',' + r[1]);
+        const wset = new Set(want);
+        rocks.forEach(r => { if (!wset.has(r.x + ',' + r.y)) r.mesh.visible = false; });
+        const kept = new Map(rocks.filter(r => wset.has(r.x + ',' + r.y)).map(r => [r.x + ',' + r.y, r]));
+        const next = [];
+        for (const r of (s.rocks || [])) {
+          const k = r[0] + ',' + r[1];
+          let entry = kept.get(k);
+          if (!entry) {
+            const m = takeRockMesh();
+            const w = cellW(r[0], r[1]);
+            m.position.set(w.x, .3, w.z);
+            m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+            m.scale.setScalar(.85 + Math.random() * .35);
+            m.visible = true;
+            entry = {x: r[0], y: r[1], mesh: m};
+          }
+          next.push(entry);
         }
-        next.push(entry);
+        rocks = next;
       }
-      rocks = next;
     }
-    // 墙块 / 传送门 / 道具
-    syncWalls(s.walls);
-    syncPortals(s.portals);
-    syncItems(s.items);
-    // 弹药
+    // 墙块 / 传送门 / 道具（缺失=未变化）
+    if (s.walls !== undefined) syncWalls(s.walls);
+    if (s.portals !== undefined) syncPortals(s.portals);
+    if (s.items !== undefined) syncItems(s.items);
+    // 弹药（每帧必带）
     syncProjectiles(s.proj || []);
     return {round: s.round, win: s.win};
   }

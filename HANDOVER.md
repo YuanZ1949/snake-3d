@@ -37,6 +37,7 @@ snake-3d/
 ├── test_ws4.py       E2E：96 超大地图 + 速度即时生效 + leave 回主页
 ├── verify_rooms.py   生产验证（端口 8090，创建房间→进房→断线回收）
 ├── verify_prod.py    生产 WS 冒烟（进房 a、快照字段、食物唯一 id）
+├── test_delta_p1.py  协议验收（批11）：快照增量——首帧全量/稳态缺失沿用/观战者补全量
 ├── usage_report.py   离线用量报表（天/用户两个维度，支持 --log 明细）
 ├── DEPLOY.md         部署与回滚说明（部署章节仍然准确）
 ├── README.txt        最简运行说明（随 /download 打包）
@@ -156,10 +157,11 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
 | `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
-| `snap` | 见下 | **50ms 一次的全量快照** |
+| `snap` | 见下 | **50ms 一次快照（批11 起为增量协议）** |
 
-**`snap` 字段**：`t, room, theme, cols, rows, walls, portals, rocks, items, food{id,x,y,score,color}, bonus, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`
+**`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, food{id,x,y,score,color}, bonus`。
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
+> 批11 增量协议：服务端对 6 个静态字段做签名对比（`Room._field_sig`），变了才带；新订阅者（join/watch/resume）首帧为**全量帧**（6 字段齐全 + `full:1`，由 `Session.full_sent` 控制，`broadcast` 内补组）。稳态实测增量帧较全量帧省 ~31% 字节。协议级验收见 `test_delta_p1.py`（第 8 套 E2E）。
 
 **`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5）
 > `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
@@ -308,10 +310,11 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `test_bots_p4.py` | E2E | 批4 AI：create `bots=3` → 房间列表 `bots/players` 计数 → 快照 3 bot（负 id、AI- 名、存活有 cells）+ 1 人 → 3 秒内 AI 蛇头自主位移（连 28000） |
 | `test_reconnect_p5.py` | E2E | 批5：双真人房断线 → 重连 `resumed:true` 同 id、身体长度不变且漂移≤2 格 → chat 首条随快照 ev 送达、1s 内第二条被限速（连 28000） |
 | `test_pass_p6.py` | E2E | 批6：弱口令/黑名单口令建房被拒 → 合法口令建房 `hasPass` → 无口令/错口令 join 与 watch 被 `error` → 对口令进房 → persist 非创建者拒、创建者成且列表 `persist=true`（连 28000） |
+| `test_delta_p1.py` | 协议 | 批11 C1：join 首帧 6 静态字段齐全 + `full:1` → 稳态 30 帧 walls/portals 缺席 ≥25（缺失=沿用）且 players/proj 每帧恒在 → 中途 watch 者首帧仍全量（连 28000） |
 | `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房 + **批6 后：creator 断开后新房间 24h 内保留**（info 带 hasPass/persist） |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 | `e2e/smoke.spec.js` | Playwright ×3 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
-| `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 7 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
+| `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 8 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
@@ -425,7 +428,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 1. 改 `serve.py` / `index.html`。
 2. 本机静态检查：`node --check`、id 引用比对、括号配对（见 §10）。
-3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；批7 后为 67 单测 + 7 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
+3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；批11 后为 67 单测 + 8 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
 4. 通过后按 §11.2 发布生产，跑 `verify_rooms.py`。
 5. `git add -A && git commit`（中文 feat/fix/style 提交说明）。
 6. 通知使用者**强刷页面**（Ctrl/Cmd+Shift+R）确认新前端。
@@ -437,7 +440,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | # | 问题 | 影响 | 建议 |
 |---|---|---|---|
 | 1 | ~~咬到"仅剩 2 格"的蛇不会淘汰对方~~ **✅ 已实现（P1）** | — | 已加规则：已是 `MIN_LEN` 再被咬 → 该蛇淘汰，`cause='bite'` |
-| 2 | 快照每 50ms **全量**广播（含 walls/portals/rocks/food/players） | 大地图 + 多人时带宽增长 | 静态地形改为进房时一次性下发，快照只发增量 |
+| 2 | ~~快照每 50ms **全量**广播~~ | **批11 已解**：增量协议——静态字段（walls/portals/rocks/food/bonus/items）签名对比变化才下发，首帧/新订阅者全量（`full:1`）；players/proj/标量每帧恒在 | 无（实测稳态增量帧 −31% 字节） |
 | 3 | 仓库远端只有服务器本身（与本机各一份），未托管 GitHub/Gitee | 两处同时损坏才会丢历史 | 加第三方远端，或定期 `git bundle create snake.bundle --all` 归档到别处 |
 | 4 | ~~无 CI、无浏览器自动化~~ | **批9 已解**：`.github/workflows/ci.yml`（单测+7 E2E+Playwright）+ `e2e/smoke.spec.js` 3 冒烟 | 尚未 push 触发过（仓库无远端），首个 push 时观察首跑 |
 | 5 | 密码强制 6 位数字 | 弱口令 | 定位为小游戏可接受；如需加强要同步改前端校验 |
@@ -450,7 +453,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 ## 14. 常见坑（务必阅读）
 
-1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 7 套 E2E 可直接本地跑（见 §10）。
+1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 8 套 E2E 可直接本地跑（见 §10）。
 2. **`pkill -f <pattern>` 通过 SSH 执行会把自己杀掉**（pattern 匹配到 SSH 命令行本身，exit 255）。用 `fuser -k 28000/tcp`，或写成 `pkill -f 'serve[.]py'`。**Windows 本机没有 `fuser`**，本地停测试服用 `Get-NetTCPConnection -LocalPort 28000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`。
 3. **后台起测试服时 SSH 调用必然超时**，但进程其实已经起来了 —— 用 `ss -ltn | grep 28000` 确认，不要重复起（此坑仅限服务器端；Windows 本地后台起服无此问题）。
 4. **Termux 没有 `/tmp`** —— 临时文件放 `$PREFIX/tmp/opencode`（即 `/data/data/com.termux/files/usr/tmp/opencode`）。Windows 本机用 `$env:TEMP`。
@@ -468,7 +471,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 - 需求方可能追加：蛇压到 2 格再被咬即淘汰；用量报表加小时曲线/房间热度。
 - 体验优化：（小地图、观战左右键切换、移动端压缩已随批8 完成；房间内聊天、断线重连"回到原房间原蛇"已随批5 完成；720p 短屏 ⚔ 裁切已随批9 修复）
-- 工程化：git 远端 + **真实 CI 首跑验证**（workflow 与 Playwright 已随批9 落地但未 push 过）、快照增量协议、配置外置（JSON/TOML）。
+- 工程化：git 远端 + **真实 CI 首跑验证**（workflow 与 Playwright 已随批9 落地但未 push 过）、~~快照增量协议~~（批11 已落地）、配置外置（JSON/TOML）。
 
 ---
 

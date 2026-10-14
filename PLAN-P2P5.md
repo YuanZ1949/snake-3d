@@ -38,7 +38,7 @@
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ✅ | 纯前端批（无服务端改动）：单测 67/67 全绿维持；静态检查 ALL PASSED (68ids/div33/css156/js528)；7 E2E Exit 0；起服 / 200 |
 | 9 | CI/Playwright | C2 | ✅ | Playwright 3/3 passed（7.3s，首页/单人入局/观战；BASE=8123 外部起服）；单测 67/67 全绿；静态 ALL PASSED (71ids/dup0/div33/css159/js528)；7 套 E2E 全 Exit 0；YAML 校验 15 steps。附带修复 720p 底部 ⚔ 裁切 |
 | 10 | three.min.js 升级 | C4 | ✅ | r128→r160（最后带 UMD 版本）；Playwright 3/3 passed (7.0s)；单测 67/67；静态 ALL PASSED (71ids/div33/css159/js528)；7 E2E ALL PASSED；同主题 A/B observer 对比无破损，观感按用户拍板采用 r160 新默认 |
-| 11 | 快照增量协议 | C1（压轴） | ⬜ | |
+| 11 | 快照增量协议 | C1（压轴） | ✅ | 新 test_delta_p1.py 一次通过：首帧 full(620B)/增量帧均 428B（−31%）/walls、portals 稳态 30/30 缺席/中途 watch 者首帧仍全量；单测 67/67；静态 ALL PASSED (71ids/dup0/div33/css159/js531)；8 套 E2E ALL PASSED（新增 delta 套件）；Playwright 3/3 passed (7.5s) |
 
 ## 批次日志
 （每批回写：验证证据、暴露的新工作、顺序调整）
@@ -129,3 +129,10 @@
 - **拍板**：问用户三选一 → **采用 r160 新默认（零改动）**，不锁 ColorManagement 旧观感、不改 THEMES 配色。
 - **验证**：Playwright 3/3 passed (7.0s)（含 canvas 非空断言+无 console.error）；单测 67/67 ALL PASSED；静态 ALL PASSED (ids=71 dup=0 div=33/33 css=159/159 js=528/528)；7 套 E2E ALL PASSED。
 - **暴露的新工作**：r161+ 若再升级需 `<script type="module">` 改造（已记 HANDOVER 技术债 #9）；**顺序调整**：无。
+
+### 批11 快照增量协议（C1，压轴）✅
+- **方案（零插桩签名对比）**：不在每个修改点插 dirty 标志（改点多易漏），改为 `Room.snapshot(now, full=False)` 时对 6 个静态字段（food/bonus/rocks/walls/portals/items）做 `json.dumps` 签名与上次下发值对比，变了才带进增量帧并更新 `_field_sig` 缓存；players/proj/标量（round/cols/winMode/remain/ev…）每帧恒在。**per-订阅者全量**：`Session.full_sent` 标志，join/watch/resume 三处订阅点置 False，`broadcast()` 发现有未全量者时补组一份 `full=True` 帧（含 6 字段 + `full:1` 标志，且**先算增量再算全量**避免签名被提前刷新）。新加入者/重连恢复者首帧必全量 → 旧测试直接取 `snap["walls"]`/`snap["items"]` 的写法不破。
+- **客户端（index.html applyWorld）**：6 个静态字段全部改 `s.X !== undefined` 才处理——缺失=沿用旧值（原来 `else if (food)` 等清空分支只在字段明确下发时执行）；proj 每帧恒在保持 `s.proj || []`。
+- **新测试 test_delta_p1.py（第 8 套 E2E）**：join 'a' 首帧断言 6 字段齐全+full==1；连收 30 帧断言 walls/portals 缺席 ≥25/30（稳态 30/30）且 players/proj 每帧恒在；第二个 ws watch 后其首帧仍全量。CI round 2 步骤追加 `python test_delta_p1.py`（8 套）。
+- **验证**：`PY_COMPILE OK`；test_delta 一次通过（first=full 620B / avg_delta=428B，−31%）；单测 67/67 ALL PASSED；8 套 E2E 全 Exit 0（含重连/口令/bots 关键路径在增量协议下正常）；静态 ALL STATIC CHECKS PASSED (ids=71 dup=0 div=33/33 css=159/159 js=531/531，js +3 系 applyWorld 新增 3 个字段守卫块)；Playwright 3/3 passed (7.5s)。
+- **暴露的新工作**：无；**顺序调整**：无。**注意**：`broadcast()` 无订阅者时仍调增量 snapshot 以清 events/刷签名（与旧行为一致），新订阅者靠 full_sent 补全量，语义闭环。

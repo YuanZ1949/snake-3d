@@ -379,6 +379,7 @@ class Room:
         self.portals = []          # [(x,y),(x,y)] 成对传送门
         self.theme = 'default'
         self.items = []            # {id,type,x,y,born}
+        self._field_sig = {}       # 增量快照：静态字段上次下发的签名（C1）
         self.fruits_eaten = 0
         self.projectiles = []
         self.events = []
@@ -550,6 +551,7 @@ class Room:
         p.pop('off_at', None)
         p['session'] = sess
         self.subs.add(sess)
+        sess.full_sent = False     # 重连恢复 → 首帧补全量
 
     # -------- 玩家生命周期 --------
     def _solid(self, x, y, skip_pid=None):
@@ -1226,7 +1228,13 @@ class Room:
                 self.projectiles.remove(pr)
 
     # -------- 快照 / 广播 --------
-    def snapshot(self, now):
+    DELTA_FIELDS = ('food', 'bonus', 'rocks', 'walls', 'portals', 'items')  # 仅变化才下发（C1）
+
+    @staticmethod
+    def _sig(v):
+        return json.dumps(v, default=list, ensure_ascii=False)
+
+    def snapshot(self, now, full=False):
         plist = []
         for pid, p in self.players.items():
             plist.append({
@@ -1245,12 +1253,6 @@ class Room:
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,
             'players': plist,
-            'food': self.food,
-            'bonus': self.bonus,
-            'rocks': [list(r) for r in self.rocks],
-            'walls': [list(r) for r in self.walls],
-            'portals': [list(r) for r in self.portals],
-            'items': [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items],
             'proj': [{'x': round(pr['x'], 2), 'y': round(pr['y'], 2),
                       'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0)}
                      for pr in self.projectiles],
@@ -1262,18 +1264,48 @@ class Room:
             'ev': self.events[:],
         }
         self.events.clear()
+        if full:
+            # 全量帧：新订阅者首帧/显式请求，静态字段全带 + full 标志
+            out['food'] = self.food
+            out['bonus'] = self.bonus
+            out['rocks'] = [list(r) for r in self.rocks]
+            out['walls'] = [list(r) for r in self.walls]
+            out['portals'] = [list(r) for r in self.portals]
+            out['items'] = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
+            out['full'] = 1
+        else:
+            # 增量帧：静态字段与上次下发签名对比，变了才带；客户端缺失即沿用旧值（C1）
+            changed = []
+            cur = {}
+            for k in self.DELTA_FIELDS:
+                if k == 'items':
+                    v = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
+                elif k in ('rocks', 'walls', 'portals'):
+                    v = [list(r) for r in getattr(self, k)]
+                else:
+                    v = getattr(self, k)
+                cur[k] = self._sig(v)
+                if cur[k] != self._field_sig.get(k):
+                    out[k] = v
+                    changed.append(k)
+            self._field_sig = cur
         return out
 
     async def broadcast(self):
         now = now_ms()
-        snap = self.snapshot(now)      # 总是生成快照并清空事件，避免无人订阅时事件堆积
+        snap = self.snapshot(now)      # 增量帧：总是生成并清空事件，避免无人订阅时事件堆积
         if not self.subs:
             return
+        # 有新订阅者（首帧未发全量）→ 单独组一份全量帧
         msg = json.dumps(snap, ensure_ascii=False)
+        msg_full = None
+        if any(not s.full_sent for s in self.subs):
+            msg_full = json.dumps(self.snapshot(now, full=True), ensure_ascii=False)
         dead = []
         for sess in self.subs:
             try:
-                await sess.ws.send(msg)
+                await sess.ws.send(msg_full if (msg_full is not None and not sess.full_sent) else msg)
+                sess.full_sent = True
             except Exception:
                 dead.append(sess)
         for sess in dead:
@@ -1401,6 +1433,7 @@ class Session:
         self.room = None          # 当前房间
         self.pid = None           # 房间内玩家 id
         self.want_play = False
+        self.full_sent = False     # 本会话是否已收到全量快照（C1 增量协议）
         self.chat_at = 0             # 聊天限速时间戳
         # ---- 使用情况统计（仅后台记录，不上页面） ----
         self.t0 = time.time()     # 连接时刻
@@ -1591,6 +1624,7 @@ async def handle_msg(sess, m):
         leave_room(sess)
         sess.room = room
         room.subs.add(sess)
+        sess.full_sent = False     # 观战订阅 → 首帧补全量
         gc_empty_rooms()   # 换房后旧房间若已空则回收
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True, 'user': sess.user})
         return
@@ -1646,6 +1680,7 @@ async def handle_msg(sess, m):
         sess.pid = pid
         room.players[pid] = p
         room.subs.add(sess)
+        sess.full_sent = False     # 入局订阅 → 首帧补全量
         room.spawn_player(p, fresh_cells=True)
         room.round_ids.add(pid)
         room.ev('join', id=pid, name=p['name'])
