@@ -4,3 +4,6 @@ __pycache__/
 venv/
 *.log
 .DS_Store
+
+# 运行期数据（账户 store.json + 用量 usage.json/log），任何机器上都不入库
+data/
