@@ -220,11 +220,43 @@ def test_food_has_unique_id():
     print("food unique id OK:", a, b)
 
 
+def test_room_custom_config():
+    # 尺寸 / 主题 / 岩石 / 传送门 可自由组合
+    r = serve.Room("x", "自定义", 40, theme_fixed="lava", rock_mult=0.0, portal_on=True)
+    assert (r.cols, r.rows) == (40, 40), (r.cols, r.rows)
+    assert r.theme == "lava", r.theme
+    assert r.eff_rock() == 0.0, r.eff_rock()
+    # 熔岩主题默认不放传送门，但覆盖项优先
+    assert r.eff_portal() is True, r.eff_portal()
+    assert r.portals, "portal override should place portals"
+    # 固定主题换局不变
+    r.new_round()
+    assert r.theme == "lava", r.theme
+    # 岩石覆盖为 0 → 吃再多水果也不出岩石
+    r.fruits_eaten = 6
+    r.maybe_rocks()
+    assert len(r.rocks) == 0, r.rocks
+    info = r.info()
+    assert info["themeFixed"] is True
+    assert info["rock"] == 0.0
+    assert info["portal"] is True
+    assert info["players"] == 0
+    print("custom room OK:", info["cols"], "×", info["rows"], info["theme"],
+          info["rock"], info["portal"], "fixed=", info["themeFixed"])
+
+    d = serve.Room("d", "默认", 16)
+    assert d.theme_fixed is None and d.info()["themeFixed"] is False
+    assert d.eff_rock() == serve.THEME_CFG[d.theme]["rock"]
+    assert d.eff_portal() == serve.THEME_CFG[d.theme]["portal"]
+    print("default room follows theme OK:", d.theme, d.eff_rock(), d.eff_portal())
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_respects_min_len, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
-           test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id]:
+           test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
+           test_room_custom_config]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

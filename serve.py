@@ -139,9 +139,14 @@ tokens = {}             # token -> username
 
 # ============================================================ 房间
 class Room:
-    def __init__(self, rid, name, size=24):
+    def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None):
         self.id = rid
         self.name = name
+        # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
+        self.theme_fixed = theme_fixed if theme_fixed in THEMES else None  # 固定主题（None=每局随机）
+        self.rock_mult = rock_mult          # 岩石密度倍率覆盖
+        self.portal_on = portal_on          # 传送门开关覆盖
+        self.owner = None                   # 创建者会话 id，断开后空房间才回收
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
         self.players = {}          # pid -> player dict
         self.subs = set()          # 接收快照的 Session（玩家 + 旁观者）
@@ -173,8 +178,20 @@ class Room:
 
     # -------- 主题 / 静态地形 --------
     def _pick_theme(self):
-        # 首回合随机主题，之后每局更换，带来地图机制变化
-        self.theme = random.choice(THEMES)
+        # 固定主题的房间每局保持不变；否则每局随机，带来地图机制变化
+        self.theme = self.theme_fixed if self.theme_fixed else random.choice(THEMES)
+
+    def eff_rock(self):
+        """岩石密度倍率：房间自定义覆盖优先，否则按主题"""
+        if self.rock_mult is not None:
+            return self.rock_mult
+        return THEME_CFG[self.theme]['rock']
+
+    def eff_portal(self):
+        """是否生成传送门：房间自定义覆盖优先，否则按主题"""
+        if self.portal_on is not None:
+            return self.portal_on
+        return bool(THEME_CFG[self.theme]['portal'])
 
     def portal_map(self):
         m = {}
@@ -190,7 +207,7 @@ class Room:
         self.rocks = []
         self.walls = []
         self.portals = []
-        if cfg['portal']:
+        if self.eff_portal():
             for _ in range(300):
                 a = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
                 b = (random.randint(0, self.cols - 1), random.randint(0, self.rows - 1))
@@ -230,10 +247,22 @@ class Room:
         return False
 
     def info(self):
-        return {'id': self.id, 'name': self.name, 'cols': self.cols, 'rows': self.rows,
-                'theme': self.theme, 'players': sum(1 for p in self.players.values() if p['alive']),
-                'watchers': len(self.subs) - len(self.players),
-                'round': self.round_no, 'over': self.win_pending is not None}
+        """房间列表展示用的属性（id / 名称 / 尺寸 / 主题 / 人数 / 地图配置）"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'cols': self.cols,
+            'rows': self.rows,
+            'theme': self.theme,
+            'themeFixed': self.theme_fixed is not None,   # 主题固定（否则每局随机）
+            'rock': self.eff_rock(),                      # 实际岩石密度倍率
+            'portal': self.eff_portal(),                  # 是否生成传送门
+            'players': len(self.players),                 # 房间内人数（含已阵亡）
+            'alive': sum(1 for p in self.players.values() if p['alive']),
+            'watchers': max(0, len(self.subs) - len(self.players)),
+            'round': self.round_no,
+            'over': self.win_pending is not None,
+        }
 
     # -------- 玩家生命周期 --------
     def _solid(self, x, y, skip_pid=None):
@@ -329,10 +358,9 @@ class Room:
         self.next_food_id += 1
 
     def maybe_rocks(self):
-        cfg = THEME_CFG[self.theme]
         if self.fruits_eaten % 3 != 0:
             return
-        target = int(min(24, self.fruits_eaten // 3) * cfg['rock'])
+        target = int(min(24, self.fruits_eaten // 3) * self.eff_rock())
         # 岩石不会被"无限制"增加；每档位重新投放
         tries = 60
         while len(self.rocks) < target and tries > 0:
@@ -736,6 +764,23 @@ def init_rooms():
         rooms[rid] = Room(rid, name, size)
 
 
+DEFAULT_ROOM_IDS = {rid for rid, _n, _s in DEFAULT_ROOMS}
+
+
+def gc_empty_rooms():
+    """回收自定义房间：没人、没人观战、且创建者已断线（默认房间常驻）"""
+    live = {s.sid for s in all_sessions}
+    for rid in list(rooms):
+        if rid in DEFAULT_ROOM_IDS:
+            continue
+        r = rooms[rid]
+        if r.players or r.subs:
+            continue
+        if r.owner is not None and r.owner in live:
+            continue   # 创建者还挂在开始页，房间给他留着
+        del rooms[rid]
+
+
 # ============================================================ 连接
 next_pid = 1
 next_sid = 1
@@ -847,11 +892,29 @@ async def handle_msg(sess, m):
         await send(sess, {'t': 'rooms', 'list': room_list()})
         return
     if t == 'create':
-        size = max(MAP_MIN, min(MAP_MAX, int(m.get('size', 24))))
+        try:
+            size = int(m.get('size', 24))
+        except (TypeError, ValueError):
+            size = 24
+        size = max(MAP_MIN, min(MAP_MAX, size))
         rid = new_room_id()
         name = str(m.get('name') or f'房间{rid}')[:16]
-        rooms[rid] = Room(rid, name, size)
+        # ---- 地图组合配置：主题 / 岩石密度 / 传送门（非法值回退为"跟随主题"） ----
+        theme = m.get('theme')
+        if theme not in THEMES:
+            theme = None
+        rock = m.get('rock')
+        if isinstance(rock, bool) or not isinstance(rock, (int, float)):
+            rock = None
+        else:
+            rock = max(0.0, min(4.0, float(rock)))
+        portal = m.get('portal')
+        if not isinstance(portal, bool):
+            portal = None
+        rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal)
+        rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         await broadcast_rooms()
+        await send(sess, {'t': 'created', 'room': rid, 'name': name})
         return
 
     # -------- 房间进出 --------
@@ -864,6 +927,7 @@ async def handle_msg(sess, m):
         leave_room(sess)
         sess.room = room
         room.subs.add(sess)
+        gc_empty_rooms()   # 换房后旧房间若已空则回收
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True, 'user': sess.user})
         return
 
@@ -905,7 +969,9 @@ async def handle_msg(sess, m):
         if p.get('user'):
             store.inc(p['user'], 'games')
         room.check_win(now_ms())
+        gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user, 'id': pid})
+        await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
         return
 
     # 其余消息需要已在房间中
@@ -990,8 +1056,13 @@ async def handler(ws):
     except websockets.ConnectionClosed:
         pass
     finally:
+        all_sessions.discard(sess)   # 先下线，自己的自定义房间才能被回收
         leave_room(sess)
-        all_sessions.discard(sess)
+        try:
+            gc_empty_rooms()
+            await broadcast_rooms()   # 有人退出，刷新其它客户端看到的房间列表
+        except Exception:
+            pass
 
 
 # ============================================================ 静态文件
