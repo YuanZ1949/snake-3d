@@ -300,7 +300,7 @@ node --check /path/to/extracted.js        # 从 index.html 抽 <script> 后检�
 | 项 | 值 |
 |---|---|
 | 主机 | 腾讯云 Ubuntu 22.04 `193.112.172.83`（别名 `tencent`，用户 `ubuntu`，密钥 `~/1.pem`，免密 sudo） |
-| 目录 | `/home/ubuntu/snake-3d/`（生产）、`/home/ubuntu/snake-test/`（28000 测试） |
+| 目录 | `/home/ubuntu/snake-3d/`（生产）、`/home/ubuntu/snake-test/`（28000 测试）、`/home/ubuntu/snake-3d.git`（**git 裸仓库**，只读镜像） |
 | 服务 | `snake-3d.service`（开机自启、崩溃自启），`Environment=PORT=8090` |
 | 端口 | 安全组仅放行 **22、8090**；`8091` 为 1Panel 仅监听 127.0.0.1 |
 | 访问 | 游戏 `http://193.112.172.83:8090/` |
@@ -333,7 +333,10 @@ ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<时间戳> serve.py &&
 
 ### 11.4 Git
 
-- 分支 **`dev`**（全部开发提交），`main` 停在基线 `f583ce3`。**没有远端仓库，未 push。**
+- 分支 **`dev`**（全部开发提交），`main` 停在基线 `f583ce3`。
+- **远端**：服务器裸仓库 **`tencent:/home/ubuntu/snake-3d.git`**（本地别名 `server`，`dev`/`main` 已设上游跟踪，日常直接 `git push` 即可同步）。
+  服务器上查看/克隆历史：`git --git-dir=/home/ubuntu/snake-3d.git log dev` 或 `git clone /home/ubuntu/snake-3d.git ~/repo`
+- ⚠️ 生产目录 `/home/ubuntu/snake-3d/` **不是** git 仓库，它只是发布投放点（靠 `*.bak-*` 回滚），不要在里面执行 git 操作。
 - 提交历史（新→旧）：
 
 ```
@@ -366,7 +369,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 |---|---|---|---|
 | 1 | 咬到"仅剩 2 格"的蛇不会淘汰对方 | 回合可能长时间不结束 | 加规则：已是 `MIN_LEN` 再被咬 → 该蛇死亡（**已与需求方提过，未被要求实现**） |
 | 2 | 快照每 50ms **全量**广播（含 walls/portals/rocks/food/players） | 大地图 + 多人时带宽增长 | 静态地形改为进房时一次性下发，快照只发增量 |
-| 3 | 无 git 远端，提交只在本机 | 丢失风险 | `git remote add` + push |
+| 3 | 仓库远端只有服务器本身（与本机各一份），未托管 GitHub/Gitee | 两处同时损坏才会丢历史 | 加第三方远端，或定期 `git bundle create snake.bundle --all` 归档到别处 |
 | 4 | 无 CI、无浏览器自动化 | 前端只能靠静态检查 + 人工眼看 | 接入 Playwright 做冒烟 |
 | 5 | 密码强制 6 位数字 | 弱口令 | 定位为小游戏可接受；如需加强要同步改前端校验 |
 | 6 | `DEPLOY.md` 未随功能更新 | 部署章节仍准确，功能描述偏旧 | 以本文档为准 |
@@ -411,6 +414,11 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python test_game.py"
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7"
 # 发布
 scp serve.py index.html tencent:/home/ubuntu/snake-3d/ && ssh tencent "sudo systemctl restart snake-3d"
+# 同步仓库到服务器（dev/main 已跟踪 server/*，直接推）
+git push server --all
+# 服务器上查看完整历史 / 拉一份
+ssh tencent "git --git-dir=/home/ubuntu/snake-3d.git log --oneline dev | head"
+ssh tencent "git clone /home/ubuntu/snake-3d.git /home/ubuntu/repo"
 # 回滚
 ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<ts> serve.py && sudo systemctl restart snake-3d"
 # 本机地址：回环 127.0.0.1 ｜ 蜂窝 10.2.90.55 ｜ VPN 192.168.193.2 ｜ 公网出口 14.31.16.44（CGNAT，不可入站）
