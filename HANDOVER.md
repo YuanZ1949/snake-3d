@@ -29,7 +29,7 @@
 snake-3d/
 ├── serve.py          1368 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录
 ├── index.html       2654 行  前端：CSS(~370) + HTML(~150) + JS(~2130) 全在一个文件
-├── three.min.js      603 KB  Three.js 本地 vendor（未升级，避免 API 变动）
+├── three.min.js      654 KB  Three.js r160 本地 vendor（批10 从 r128 升级；r160 是最后带 UMD three.min.js 的版本，r161+ 仅 ESM）
 ├── test_game.py      24 项单元测试（纯逻辑，不起服务）
 ├── test_ws.py        E2E：入局/移动/攻击/排行榜/房间
 ├── test_ws2.py       E2E：HTTP 三接口 / 注册登录 / 入局快照 / 观战 / 排行榜 / 建房
@@ -444,7 +444,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 6 | `DEPLOY.md` 未随功能更新 | 部署章节仍准确，功能描述偏旧 | 以本文档为准 |
 | 7 | 用量数据仅两天左右积累 | 趋势分析样本少 | 可加"每小时在线曲线/房间热度"（**已提过，未被要求**） |
 | 8 | 本机（Termux）在运营商 CGNAT 后 | 无法从外网回调本机 | 需要对外暴露本机时走隧道/内网穿透 |
-| 9 | `three.min.js` 为本地 vendor | 无安全更新 | 升级需回归渲染与光照 |
+| 9 | `three.min.js` 为本地 vendor r160 | **批10 已升级 r128→r160**（冒烟+同主题 A/B 截图验收，用户拍板采用 r160 新 sRGB 默认观感） | r161+ 移除 UMD，未来再升级需转 ES module（`<script type="module">` 改造） |
 
 ---
 

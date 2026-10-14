@@ -20,6 +20,7 @@
 - #4 新增白天主题（bright/day 类，天空浅色），主题池照旧随机。
 - C3 口令：6-20 位、字母+数字混合、弱口令黑名单（前后端同步校验）。
 - C4：查当前 three.min.js 版本→升级到最新 r16x 兼容写法，渲染回归靠 C2 冒烟。
+  **（批10 实拍）**：r128→**r160**（0.160.0 是最后带 UMD `three.min.js` 的版本，0.161 起仅 cjs/module）；同主题 A/B 对比后**用户拍板采用 r160 新 sRGB 色彩管理默认观感**（棋盘亮度+24%/饱和−34%/格纹对比−40%，可交付），不锁旧观感、不改主题配色。
 - C2：Playwright 冒烟（加载/入局/snap/canvas 无报错）+ GitHub Actions workflow。
 - C1：walls/portals/rocks/food/bonus/items 改 dirty 才下发，players/proj 每帧；客户端字段缺失沿用旧值。
 
@@ -36,7 +37,7 @@
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ✅ | 单测 67/67 先红后绿（day 主题池）；静态检查 ALL PASSED (70ids/div33)；7 E2E Exit 0（顺带实证 default 房随机到 day 主题）；浏览器截图 BLOCKED（桌面浏览器未连接，视觉项以静态+单测+E2E 佐证） |
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ✅ | 纯前端批（无服务端改动）：单测 67/67 全绿维持；静态检查 ALL PASSED (68ids/div33/css156/js528)；7 E2E Exit 0；起服 / 200 |
 | 9 | CI/Playwright | C2 | ✅ | Playwright 3/3 passed（7.3s，首页/单人入局/观战；BASE=8123 外部起服）；单测 67/67 全绿；静态 ALL PASSED (71ids/dup0/div33/css159/js528)；7 套 E2E 全 Exit 0；YAML 校验 15 steps。附带修复 720p 底部 ⚔ 裁切 |
-| 10 | three.min.js 升级 | C4 | ⬜ | |
+| 10 | three.min.js 升级 | C4 | ✅ | r128→r160（最后带 UMD 版本）；Playwright 3/3 passed (7.0s)；单测 67/67；静态 ALL PASSED (71ids/div33/css159/js528)；7 E2E ALL PASSED；同主题 A/B observer 对比无破损，观感按用户拍板采用 r160 新默认 |
 | 11 | 快照增量协议 | C1（压轴） | ⬜ | |
 
 ## 批次日志
@@ -120,3 +121,11 @@
 - **附带修复（720p 底部 ⚔ 裁切）**：根因 `顶部102+画布(720×.68=490)+gap12+dpad120+底padding44=768>720`。修复①`resize()` 加 `vFactor = innerHeight<=760 ? .60 : .68`（画布 432px）；②`@media (max-height:720px)` 内 `body{padding-bottom:16px}`、`.dpad{grid-template-rows:repeat(3,46px);gap:6px}`、`body.follow .dpad{grid-template-rows:46px 46px}`。实测 1280×720：scrollH=720 零溢出、dpadBottom=644、atkVisible=true。
 - **验证**：Playwright 3/3 passed (7.3s)；单测 67/67 ALL PASSED；静态 ALL STATIC CHECKS PASSED (ids=71 dup=0 div=33/33 css=159/159 js=528/528)；7 套 E2E ALL PASSED；observer 视觉验收通过（day 主题浅色+金框为预期非缺陷）。
 - **暴露的新工作**：无；**顺序调整**：无。
+
+### 批10 three.min.js 升级（C4）✅
+- **版本核实**：jsdelivr flat API 探测——r160（npm `0.160.0`）是**最后一个带 UMD `three.min.js`** 的版本（0.161.0 起仅 `three.cjs`/`three.module*`）；最新 three 为 0.186.1。替换文件：下载 `three@0.160.0/build/three.min.js`（669,884 B，`REVISION="160"`，`node --check` 过），`<script src="three.min.js">` 引用方式不变。文件头自带 r150+ deprecation console.warn（仅 warning 不影响冒烟）。
+- **API 面核查**：index.html 所用 three API 全为现代稳定类（BufferGeometry/MeshStandardMaterial/PlaneGeometry/CatmullRomCurve3/ExtrudeGeometry/Sprite/Points/Fog/PCFShadowMap），无 outputEncoding/physicallyCorrectLights 等已删 API；未显式设置色彩空间 → r160 新默认（sRGB 输出 + ColorManagement）接管。
+- **渲染回归（同主题 A/B）**：临时脚本（`$env:TEMP\ab_shot.js`，不入库）固定 `theme=default`+3AI 建房入局截图 r160/r128 各一张。**关键坑**：手动建房只选中房间，须再点 `#btnStart` 才入局（单人练习才有 soloPending 自动 start）。observer 量化：色相零回归（上轮红↔teal 翻转系随机主题干扰）、UI 分区 diff=0、无过曝无破损；变化=棋盘亮度+24%/饱和−34%/格纹对比−40%（sRGB 色彩管理预期效应）。
+- **拍板**：问用户三选一 → **采用 r160 新默认（零改动）**，不锁 ColorManagement 旧观感、不改 THEMES 配色。
+- **验证**：Playwright 3/3 passed (7.0s)（含 canvas 非空断言+无 console.error）；单测 67/67 ALL PASSED；静态 ALL PASSED (ids=71 dup=0 div=33/33 css=159/159 js=528/528)；7 套 E2E ALL PASSED。
+- **暴露的新工作**：r161+ 若再升级需 `<script type="module">` 改造（已记 HANDOVER 技术债 #9）；**顺序调整**：无。
