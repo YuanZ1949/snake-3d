@@ -268,20 +268,30 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房/断线回收 |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 
-**运行方式**（Termux 本机缺 `websockets`，必须在服务器上跑）：
+**运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
 ```bash
-# 单测
+# ── 单测 ── Windows 本机（仓库自带 .venv，websockets==13.1）
+.venv\Scripts\python.exe test_game.py
+
+# ── 单测 ── Termux 本机 / 或直接在服务器上跑
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python test_game.py"
 
-# E2E：先起测试服（28000，独立 data/，复用生产 venv）
+# ── E2E ── Windows 本机：先起本地测试服（28000，独立 data/）
+$env:PORT='28000'; .venv\Scripts\python.exe serve.py     # 占一个终端常驻
+.venv\Scripts\python.exe test_ws.py                      # 另开终端跑，同理 test_ws2/3/4.py
+#   停本地测试服：
+#   Get-NetTCPConnection -LocalPort 28000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+#   本地跑 E2E 会写 data/store.json、data/usage.json（测试账号），见 §14-10
+
+# ── E2E ── Termux/服务器：先起测试服（28000，独立 data/，复用生产 venv）
 ssh tencent "fuser -k 28000/tcp; cd /home/ubuntu/snake-test && PORT=28000 setsid nohup /home/ubuntu/snake-3d/.venv/bin/python serve.py > srv.log 2>&1 & " 
 ssh tencent "cd /home/ubuntu/snake-test && for f in test_ws*.py; do /home/ubuntu/snake-3d/.venv/bin/python \$f; done"
 
-# 生产验证
+# ── 生产验证 ── verify_*.py 连的是 127.0.0.1:8090，只能在服务器上跑
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python verify_rooms.py"
 
-# 前端静态检查（本机 Node 即可）
+# ── 前端静态检查 ── 本机 Node 即可
 node --check /path/to/extracted.js        # 从 index.html 抽 <script> 后检查
 ```
 
@@ -299,7 +309,7 @@ node --check /path/to/extracted.js        # 从 index.html 抽 <script> 后检�
 
 | 项 | 值 |
 |---|---|
-| 主机 | 腾讯云 Ubuntu 22.04 `193.112.172.83`（别名 `tencent`，用户 `ubuntu`，密钥 `~/1.pem`，免密 sudo） |
+| 主机 | 腾讯云 Ubuntu 22.04 `193.112.172.83`（别名 `tencent`，用户 `ubuntu`，密钥 `~/1.pem`，免密 sudo）。**Windows 本机 `~/.ssh/config` 已同时配 `tencent` 与 `vmsz` 两个别名指向同一台**，本文档命令用任一别名都能原样执行 |
 | 目录 | `/home/ubuntu/snake-3d/`（生产）、`/home/ubuntu/snake-test/`（28000 测试）、`/home/ubuntu/snake-3d.git`（**git 裸仓库**，只读镜像） |
 | 服务 | `snake-3d.service`（开机自启、崩溃自启），`Environment=PORT=8090` |
 | 端口 | 安全组仅放行 **22、8090**；`8091` 为 1Panel 仅监听 127.0.0.1 |
@@ -319,6 +329,11 @@ ssh tencent "sudo systemctl restart snake-3d"
 # 4) 验证
 ssh tencent "systemctl is-active snake-3d"
 md5sum serve.py index.html          # 与 ssh tencent "md5sum ..." 比对
+#   Windows PowerShell 的 PATH 里没有 md5sum，二选一：
+#     C:\MyFile\Program\Git\usr\bin\md5sum.exe serve.py index.html
+#     (Get-FileHash serve.py -Algorithm MD5).Hash.ToLower()
+#   ⚠️ 本机 core.autocrlf=true 落盘是 CRLF，裸 md5 与服务器天然不等（差的全是行尾）。比内容先归一化：
+#     python -c "import hashlib,io;print(hashlib.md5(io.open('serve.py','rb').read().replace(b'\r\n',b'\n')).hexdigest())"
 curl -s -o /dev/null -w '%{http_code}\n' http://193.112.172.83:8090/
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python verify_rooms.py"
 ```
@@ -334,12 +349,17 @@ ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<时间戳> serve.py &&
 ### 11.4 Git
 
 - 分支 **`dev`**（全部开发提交），`main` 停在基线 `f583ce3`。
-- **远端**：服务器裸仓库 **`tencent:/home/ubuntu/snake-3d.git`**（本地别名 `server`，`dev`/`main` 已设上游跟踪，日常直接 `git push` 即可同步）。
-  服务器上查看/克隆历史：`git --git-dir=/home/ubuntu/snake-3d.git log dev` 或 `git clone /home/ubuntu/snake-3d.git ~/repo`
+- **远端**：服务器裸仓库 **`tencent:/home/ubuntu/snake-3d.git`**（本地别名 `server`）。
+  - **Termux 本机**：`dev`/`main` 已设上游跟踪，`git push` 不带参数即可同步。
+  - **Windows 本机**：clone 得到的远端名叫 `origin`（`dev` 跟踪 `origin/dev`，`main` 只有 `origin/main`），已另补一个同址的 `server` 别名 —— 故 `git push server --all` 与 `git push` 都可用。
+- 服务器上查看/克隆历史：`git --git-dir=/home/ubuntu/snake-3d.git log dev` 或 `git clone /home/ubuntu/snake-3d.git ~/repo`
 - ⚠️ 生产目录 `/home/ubuntu/snake-3d/` **不是** git 仓库，它只是发布投放点（靠 `*.bak-*` 回滚），不要在里面执行 git 操作。
 - 提交历史（新→旧）：
 
 ```
+85ceb6d docs: 交接文档补充服务器裸仓库远端（server）与同步命令
+895b0e4 docs: 交接文档头部改为功能基线提交（避免与 HEAD 混淆）
+1054411 docs: 新增项目交接文档（架构/协议/玩法参数/测试/部署/技术债/常见坑）
 0f0245a feat(game): 环境光提亮 + 速度档拉开 + 随时返回主页 + 地图最大 96
 a5a7e56 feat(usage): 后台记录用户服务器使用情况（页面不体现）
 646a220 feat(room): 昵称账号合并 + 地图组合自定义 + 房间列表
@@ -356,7 +376,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 1. 改 `serve.py` / `index.html`。
 2. 本机静态检查：`node --check`、id 引用比对、括号配对（见 §10）。
-3. 上传 `snake-test` 跑单测 + 4 套 E2E。
+3. 跑单测 + 4 套 E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10，已实测 18 单测 + 4 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
 4. 通过后按 §11.2 发布生产，跑 `verify_rooms.py`。
 5. `git add -A && git commit`（中文 feat/fix/style 提交说明）。
 6. 通知使用者**强刷页面**（Ctrl/Cmd+Shift+R）确认新前端。
@@ -381,15 +401,17 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 ## 14. 常见坑（务必阅读）
 
-1. **Termux 的 python3 没有 `websockets`** —— 一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。
-2. **`pkill -f <pattern>` 通过 SSH 执行会把自己杀掉**（pattern 匹配到 SSH 命令行本身，exit 255）。用 `fuser -k 28000/tcp`，或写成 `pkill -f 'serve[.]py'`。
-3. **后台起测试服时 SSH 调用必然超时**，但进程其实已经起来了 —— 用 `ss -ltn | grep 28000` 确认，不要重复起。
-4. **Termux 没有 `/tmp`** —— 临时文件放 `$PREFIX/tmp/opencode`（即 `/data/data/com.termux/files/usr/tmp/opencode`）。
-5. **`websockets` 不要升到 16.x** —— `process_request` API 已移除，HTTP 会全部 500（见 `DEPLOY.md`）。
+1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 4 套 E2E 可直接本地跑（见 §10）。
+2. **`pkill -f <pattern>` 通过 SSH 执行会把自己杀掉**（pattern 匹配到 SSH 命令行本身，exit 255）。用 `fuser -k 28000/tcp`，或写成 `pkill -f 'serve[.]py'`。**Windows 本机没有 `fuser`**，本地停测试服用 `Get-NetTCPConnection -LocalPort 28000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`。
+3. **后台起测试服时 SSH 调用必然超时**，但进程其实已经起来了 —— 用 `ss -ltn | grep 28000` 确认，不要重复起（此坑仅限服务器端；Windows 本地后台起服无此问题）。
+4. **Termux 没有 `/tmp`** —— 临时文件放 `$PREFIX/tmp/opencode`（即 `/data/data/com.termux/files/usr/tmp/opencode`）。Windows 本机用 `$env:TEMP`。
+5. **`websockets` 不要升到 16.x** —— `process_request` API 已移除，HTTP 会全部 500（见 `DEPLOY.md`）。**已在 Windows 本机复现**：系统 Python 的 16.0 下 `GET /` 返回 500，`serve.py:1310 AttributeError: 'Request' object has no attribute 'keys'` —— 因此本机必须用仓库 `.venv`，别用系统解释器。
 6. **改完前端必须强刷** —— 浏览器可能缓存旧 `index.html`；服务端本身是读盘的。
 7. **改了 `serve.py` 必须 `systemctl restart snake-3d`**；只改 `index.html` 不用重启。
 8. **`node --check` 不能用进程替换 `<(sed ...)`**（Node 读不了管道 fd）——先落地成临时文件再检查。
 9. **房间回收的测试要区分"创建者在线/离线"** —— 否则会误判为 bug。
+
+10. **`data/` 永不入库** —— 里面是账户 `store.json` 与用量 `usage.json`/`usage.log`，`.gitignore` 已加 `data/`。本地跑 E2E 会生成测试账号属正常，`git status` 不再显示 `?? data/`。
 
 ---
 
@@ -404,22 +426,31 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 ## 附：一页速查
 
 ```bash
+# ── 本机（Windows）开发 ──
+.venv\Scripts\python.exe test_game.py                      # 单测 18 项
+$env:PORT='28000'; .venv\Scripts\python.exe serve.py        # 起本地测试服；另开终端跑 test_ws*.py
+node --check <抽出的js文件>                                 # 前端静态检查（Node 24 已装）
+git status && git push server --all                        # 同步到服务器裸仓库
+
+# ── 生产（下列命令本机已逐条实测可用） ──
 # 看状态
 ssh tencent "systemctl status snake-3d --no-pager | head -5"
 # 看日志
 ssh tencent "journalctl -u snake-3d -n 50 --no-pager"
-# 跑测试（生产 venv）
+# 跑测试（服务器生产 venv）
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python test_game.py"
 # 用量报表
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7"
-# 发布
-scp serve.py index.html tencent:/home/ubuntu/snake-3d/ && ssh tencent "sudo systemctl restart snake-3d"
-# 同步仓库到服务器（dev/main 已跟踪 server/*，直接推）
+# 发布（scp 的 test_*.py 通配符已实测可展开）
+scp serve.py index.html test_*.py tencent:/home/ubuntu/snake-3d/ && ssh tencent "sudo systemctl restart snake-3d"
+# 同步仓库到服务器裸仓库
 git push server --all
 # 服务器上查看完整历史 / 拉一份
 ssh tencent "git --git-dir=/home/ubuntu/snake-3d.git log --oneline dev | head"
 ssh tencent "git clone /home/ubuntu/snake-3d.git /home/ubuntu/repo"
 # 回滚
 ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<ts> serve.py && sudo systemctl restart snake-3d"
+
+# ⚠️ 下面这行是 Termux 本机专属，Windows 本机不适用（地址不同、且无 CGNAT 问题）：
 # 本机地址：回环 127.0.0.1 ｜ 蜂窝 10.2.90.55 ｜ VPN 192.168.193.2 ｜ 公网出口 14.31.16.44（CGNAT，不可入站）
 ```
