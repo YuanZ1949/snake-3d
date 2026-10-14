@@ -216,7 +216,8 @@ def test_persist_roundtrip(tmpdir=None):
     try:
         serve.rooms["rp1"] = serve.Room(
             "rp1", "回环", 32, theme_fixed="ice", rock_mult=0.5, portal_on=True,
-            win_mode="score", limit=120, respawn=True, passw="ab12cd")
+            win_mode="score", limit=120, respawn=True, passw="ab12cd",
+            walldeflect=True)   # 批17：碰墙折返随持久化往返
         serve.rooms["rp1"].persist = True
         serve.save_persist_rooms(path)
         saved = serve.rooms.pop("rp1")
@@ -227,6 +228,7 @@ def test_persist_roundtrip(tmpdir=None):
             "回环", 32, "ice", 0.5, True)
         assert (r.win_mode, r.limit, r.respawn, r.passw) == (
             "score", 120, True, "ab12cd")
+        assert r.walldeflect is True
         del serve.rooms["rp1"]
     finally:
         try:
@@ -1333,6 +1335,46 @@ def test_bot_picks_nearest_target():
     assert p['queue'] == [(0, 1)], p['queue']
 
 
+# ---- 批17 H：碰外墙偏转房间选项（walldeflect）----
+def test_walldeflect_room_bounces_at_wall():
+    """墙折返房：蛇头撞边界墙 → 垂直折返不死（复用 deflect 道具语义）"""
+    r = fresh(10, walldeflect=True)
+    p = mk(r, 1, 'a', [(0, 5), (1, 5), (2, 5)], (-1, 0))
+    r.step(50, 1000)
+    assert p['alive'], 'walldeflect 房撞墙应折返不死'
+    assert p['dir'] in ((0, 1), (0, -1)), f'应垂直折返，实际 {p["dir"]}'
+    assert p['cells'][0] != (-1, 5)
+
+
+def test_walldeflect_room_no_escape_dies():
+    """墙折返房：垂直两向全被占（岩石+界外）→ 无路可折照死 cause='wall'"""
+    r = fresh(10, walldeflect=True)
+    r.rocks = [(0, 1)]
+    p = mk(r, 1, 'a', [(0, 0), (1, 0), (2, 0)], (-1, 0))
+    r.step(50, 1000)
+    assert not p['alive'] and p.get('cause') == 'wall'
+
+
+def test_walldeflect_room_rock_front_still_dies():
+    """墙折返房：正面撞岩石照死（折返只对边界墙，cause='rock'）"""
+    r = fresh(10, walldeflect=True)
+    r.rocks = [(3, 2)]
+    p = mk(r, 1, 'a', [(2, 2), (2, 3), (2, 4)], (1, 0))
+    r.step(50, 1000)
+    assert not p['alive'] and p.get('cause') == 'rock'
+
+
+def test_walldeflect_bite_min_len_still_dies():
+    """墙折返房：2 格蛇被咬照常整条淘汰（折返不救被咬）"""
+    r = fresh(10, walldeflect=True)
+    q = mk(r, 2, 'q', [(5, 5), (5, 4)], (0, 1))
+    q['last_move'] = 1000                      # 受害者本帧不 due
+    p = mk(r, 1, 'p', [(5, 3), (5, 2), (5, 1)], (0, 1))
+    r.step(50, 1000)
+    assert not q['alive'] and q.get('cause') == 'bite'
+    assert p['alive']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1386,6 +1428,10 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_place_food_avoids_sealed_pocket,
             test_place_food_reach_time_budget,
             test_bot_turns_toward_target_when_blocked,
-            test_bot_picks_nearest_target]:
+            test_bot_picks_nearest_target,
+            test_walldeflect_room_bounces_at_wall,
+            test_walldeflect_room_no_escape_dies,
+            test_walldeflect_room_rock_front_still_dies,
+            test_walldeflect_bite_min_len_still_dies]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

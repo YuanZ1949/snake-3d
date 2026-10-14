@@ -550,6 +550,12 @@
                 <option value="1">无限复活</option>
               </select>
             </label>
+            <label><span>碰墙</span>
+              <select class="nameIn sm" id="cWallDeflect" aria-label="碰墙模式">
+                <option value="">关闭·撞墙即死</option>
+                <option value="1">碰外墙折返</option>
+              </select>
+            </label>
             <label><span>AI蛇</span>
               <select class="nameIn sm" id="cBots" aria-label="AI蛇数量">
                 <option value="">无（多人）</option>
@@ -2790,6 +2796,7 @@
                   rockLabel(r.rock), r.portal ? '传送门开' : '传送门关'];
     if (r.winMode === 'score') bits.push('积分赛');
     if (r.respawn) bits.push('无限复活');
+    if (r.wd) bits.push('↩︎碰墙折返');   // 批17 H
     if (r.limit > 0) bits.push(`限时${fmtDur(r.limit)}`);
     if (r.bots > 0) bits.push(`🤖AI×${r.bots}`);
     if (r.hasPass) bits.push('🔒口令');
@@ -2919,6 +2926,7 @@
     const lim = $('cLimit').value;
     if (lim !== '') msg.limit = parseInt(lim, 10) || 0;
     if ($('cRespawn').value) msg.respawn = true;
+    if ($('cWallDeflect').value) msg.wd = true;   // 批17 H：碰外墙折返
     const bots = $('cBots').value;
     if (bots !== '') msg.bots = parseInt(bots, 10) || 0;
     const ps = ($('cPass').value || '').trim();

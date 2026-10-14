@@ -336,7 +336,8 @@ usage = Usage()
 # ============================================================ 房间
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
-                 win_mode='last', limit=0, respawn=False, bots=0, passw=None):
+                 win_mode='last', limit=0, respawn=False, bots=0, passw=None,
+                 walldeflect=False):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
@@ -351,6 +352,9 @@ class Room:
             limit = 0
         self.limit = max(0, min(LIMIT_MAX, limit))
         self.respawn = isinstance(respawn, bool) and respawn
+        # ---- 批17 H：碰外墙偏转（房间级默认行为，等同常驻 deflect 道具的墙体语义：
+        #      仅边界墙折返，岩石/墙块照死，无路可折照死） ----
+        self.walldeflect = bool(walldeflect)
         # 限时兜底：积分赛必须有终点；复活模式不能靠淘汰结算，也必须限时
         if self.limit == 0:
             if self.win_mode == 'score':
@@ -527,6 +531,7 @@ class Room:
             'winMode': self.win_mode,                  # 获胜模式（last=死斗 / score=积分）
             'limit': self.limit,                       # 限时秒（0=不限）
             'respawn': self.respawn,                   # 是否无限复活
+            'wd': self.walldeflect,                    # 批17：碰外墙折返（仅边界墙）
             'bots': self.bots,                         # AI 蛇数量（0=无）
             'hasPass': self.passw is not None,         # 是否口令房（口令本身不下发）
             'persist': self.persist,                   # 「保存」常驻标记（新#11）
@@ -1114,7 +1119,9 @@ class Room:
             if not (wall or rock or own):
                 continue
             shielded = self.effect_active(p, 'shield', now)
-            guard = shielded or (self.effect_active(p, 'deflect', now) and wall)
+            # 批17 H：walldeflect 房 = 全员常驻「仅边界墙折返」（与 deflect 道具同语义）
+            guard = shielded or ((self.effect_active(p, 'deflect', now) or self.walldeflect)
+                                 and wall)
             if guard:
                 nd = self._deflect_dir(p, blockset)
                 if nd is not None:
@@ -1522,7 +1529,7 @@ def persist_rooms_dump():
         out.append({'id': rid, 'name': r.name, 'size': r.cols,
                     'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
-                    'bots': r.bots, 'pass': r.passw})
+                    'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect})
     return out
 
 
@@ -1566,7 +1573,7 @@ def load_persist_rooms(path=PERSIST_FILE):
                  portal_on=portal if isinstance(portal, bool) else None,
                  win_mode=d.get('winMode'), limit=d.get('limit') or 0,
                  respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
-                 passw=d.get('pass'))
+                 passw=d.get('pass'), walldeflect=d.get('wd') is True)
         r.persist = True
         r.created = time.time()            # 持久化房间不回收，创建时间无意义
         rooms[rid] = r
@@ -1770,6 +1777,8 @@ async def handle_msg(sess, m):
             limit = 0
         limit = max(0, min(LIMIT_MAX, limit))
         respawn = m.get('respawn') is True
+        # ---- 批17 H：碰外墙偏转（布尔开关，非法回退 False=撞墙即死） ----
+        walldeflect = m.get('wd') is True
         # ---- 单人/练习：AI 蛇数量（非法值回退 0） ----
         try:
             bots = int(m.get('bots', 0))
@@ -1784,7 +1793,8 @@ async def handle_msg(sess, m):
             await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
             return
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
-                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw)
+                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
+                          walldeflect=walldeflect)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})

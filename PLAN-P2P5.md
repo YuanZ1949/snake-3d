@@ -59,8 +59,8 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 13 D 方向失控 | ✅ | b5e9759 | 单测 69 + 8 E2E + 静态 + Playwright 全绿 |
 | 14 F 碰撞卡叠 | ✅ | 本 commit | 单测 79（+10 新例，旧码 9 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3） |
 | 15 C AI 吃水果 | ✅ | 本 commit | 单测 83（+4 新例，旧码 4 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3）；96×96 BFS 实测 11.1ms（断言 50ms，命中缓存 ~0） |
-| 16 B+G 下拉暗色+死亡观战 | ✅ | 本 commit | Playwright 5/5（+2 新例，旧码双红：colorScheme=light / 观战按钮缺失）+ local_ci ALL GREEN（8 E2E/单测 83/静态） |
-| 17 H 外墙偏转选项 | ⬜ | | |
+| 16 B+G 下拉暗色+死亡观战 | ✅ | 6a496ac | Playwright 5/5（+2 新例，旧码双红：colorScheme=light / 观战按钮缺失）+ local_ci ALL GREEN（8 E2E/单测 83/静态） |
+| 17 H 外墙偏转选项 | ✅ | 本 commit | 单测 87（+4 新例，旧码红：无 walldeflect 参数）+ persist 往返含 wd + local_ci ALL GREEN（8 E2E/静态/Playwright 5/5） |
 | 18 E 房间参数编辑 | ⬜ | | |
 | 19 A3+部署上线 | ⬜ | | |
 
