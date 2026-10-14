@@ -1,3 +1,5 @@
+import time
+
 import serve
 
 serve.init_rooms()
@@ -293,12 +295,54 @@ def test_usage_log():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_speed_change_instant():
+    # 速度档位切换立即生效：调慢当场变慢、调快当场变快
+    r = fresh(24)
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    p["tick"] = 150
+    assert serve.apply_speed(p, 260) == 260          # 切「慢」
+    assert p["base_tick"] == 260 and p["tick"] == 215, (p["base_tick"], p["tick"])
+    p["tick"] = 110                                   # 吃水果累积加速后的状态
+    serve.apply_speed(p, 85)                          # 切「快」
+    assert p["base_tick"] == 85 and p["tick"] == 85, (p["base_tick"], p["tick"])
+    serve.apply_speed(p, 150)                         # 切回「中」
+    assert 105 <= p["tick"] <= 150, p["tick"]
+    assert serve.apply_speed(p, 10) == 80             # 越界夹紧
+    assert serve.apply_speed(p, 9999) == 300
+    print("speed change OK -> base=%d tick=%d" % (p["base_tick"], p["tick"]))
+
+
+def test_free_cells_big_map():
+    # 最大地图（96×96）找空格：结果正确，且不能卡住主循环
+    r = fresh(96)
+    assert (r.cols, r.rows) == (96, 96), (r.cols, r.rows)
+    assert r.cols <= serve.MAP_MAX, (r.cols, serve.MAP_MAX)
+    mk(r, 1, "A", [(5, 5), (6, 5), (7, 5)], (1, 0))
+    r.rocks = [(10, 10), (11, 11)]
+    r.walls = [(0, 0)]
+    r.items = [{"x": 20, "y": 20, "kind": "shield", "born": 0}]
+    r.food = {"id": 1, "x": 30, "y": 30, "score": 1, "color": "red"}
+    blocked = {(5, 5), (6, 5), (7, 5), (10, 10), (11, 11), (0, 0), (20, 20), (30, 30)}
+    free = r.free_list()
+    assert len(free) == 96 * 96 - len(blocked), len(free)
+    assert not (blocked & set(free)), "占用格不该出现在空格里"
+    t0 = time.perf_counter()
+    for _ in range(20):
+        r.free_list()
+    ms = (time.perf_counter() - t0) / 20 * 1000
+    assert ms < 30, "%.1fms/scan 太慢" % ms
+    r.place_food()
+    assert r.food and (r.food["x"], r.food["y"]) not in blocked, r.food
+    print("free cells 96x96 OK: free=%d, %.2fms/scan" % (len(free), ms))
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_respects_min_len, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
-           test_room_custom_config, test_usage_log]:
+           test_room_custom_config, test_speed_change_instant,
+           test_free_cells_big_map, test_usage_log]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

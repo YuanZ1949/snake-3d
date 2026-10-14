@@ -386,6 +386,7 @@
     <button class="chip" id="btnSkin" aria-label="皮肤">🐍 翠野</button>
     <button class="chip" id="btnCam" aria-label="镜头模式">🎥跟随</button>
     <span class="chip" id="connChip">● 连接中…</span>
+    <button class="chip" id="btnHome" title="返回主页" aria-label="返回主页">🏠 主页</button>
   </div>
 
   <div class="wrap" id="wrap">
@@ -424,12 +425,23 @@
           <div class="grid2">
             <label><span>尺寸</span>
               <select class="nameIn sm" id="cSize" aria-label="房间尺寸">
-                <option value="12">12×12</option>
-                <option value="16">16×16</option>
-                <option value="24" selected>24×24</option>
-                <option value="32">32×32</option>
-                <option value="40">40×40</option>
-                <option value="48">48×48</option>
+                <optgroup label="小">
+                  <option value="12">12×12</option>
+                  <option value="16">16×16</option>
+                </optgroup>
+                <optgroup label="标准">
+                  <option value="24" selected>24×24</option>
+                  <option value="32">32×32</option>
+                </optgroup>
+                <optgroup label="大">
+                  <option value="40">40×40</option>
+                  <option value="48">48×48</option>
+                  <option value="64">64×64</option>
+                </optgroup>
+                <optgroup label="超大">
+                  <option value="80">80×80</option>
+                  <option value="96">96×96</option>
+                </optgroup>
               </select>
             </label>
             <label><span>主题</span>
@@ -482,6 +494,7 @@
     <div class="overlay hidden" id="pauseScreen">
       <h2>已暂停</h2>
       <button class="primary" id="btnResume">继续</button>
+      <button class="chip" id="btnPauseHome">🏠 返回主页</button>
     </div>
 
     <div class="overlay hidden" id="overScreen">
@@ -490,6 +503,7 @@
       <div class="big" id="finalScore">0</div>
       <div class="record" id="recordTip"></div>
       <button class="primary" id="btnRestart">重新入局</button>
+      <button class="chip" id="btnOverHome">🏠 返回主页</button>
     </div>
   </div>
 
@@ -546,8 +560,11 @@
   let camYaw = 0, userYaw = 0, camDist = 11, prevFrame = 0, bgmTimer = null, bgmStep = 0;
   let camFollow = true;
   let rotT = [];
-  const SPEEDS = [{n: '慢', ms: 190}, {n: '中', ms: 150}, {n: '快', ms: 110}];
+  // 速度档位刻意拉开：慢的更慢、快的更快（服务端切换后立即生效）
+  const SPEEDS = [{n: '慢', ms: 260}, {n: '中', ms: 150}, {n: '快', ms: 85}];
   let speedIdx = Number(localStorage.getItem('snake-speed') || 1);
+  if (!(speedIdx >= 0 && speedIdx < SPEEDS.length)) speedIdx = 1;
+  const speedText = i => SPEEDS[i].n + SPEEDS[i].ms;   // 例：中150
   let lastAtk = 0;
   const ATK_COOL = 800;
   // ---- 网络 / 多人 ----
@@ -618,8 +635,10 @@
   window.addEventListener('resize', resize);
   resize();
 
-  scene.add(new THREE.HemisphereLight(0x8fa8ff, 0x14182c, .55));
-  const sun = new THREE.DirectionalLight(0xffffff, .95);
+  // 环境光 + 半球光：把暗部托起来，不再一片死黑；平行光负责方向与阴影
+  scene.add(new THREE.AmbientLight(0xffffff, .34));
+  scene.add(new THREE.HemisphereLight(0x9fb8ff, 0x27305a, .72));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.12);
   sun.position.set(10, 24, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(512, 512);
@@ -656,7 +675,9 @@
 
   function buildBoard() {
     clearBoard();
-    const dim = Math.max(COLS, ROWS), cp = 40;
+    const dim = Math.max(COLS, ROWS);
+    // 大地图要压缩单格像素，否则 96×96 会生成 3840² 贴图（≈59MB，手机会炸）
+    const cp = Math.max(8, Math.min(40, Math.floor(2048 / dim)));
     const c = document.createElement('canvas');
     c.width = c.height = dim * cp;
     const g = c.getContext('2d');
@@ -707,6 +728,12 @@
     sun.shadow.camera.left = -half; sun.shadow.camera.right = half;
     sun.shadow.camera.top = half; sun.shadow.camera.bottom = -half;
     sun.shadow.camera.updateProjectionMatrix();
+    // 地图越大雾越远，否则大棋盘的远端会整片糊在雾里看不见人
+    if (scene.fog) {
+      const diag = Math.hypot(COLS, ROWS);
+      scene.fog.near = Math.max(40, Math.round(diag * .6));
+      scene.fog.far = Math.max(95, Math.round(diag * 1.15));
+    }
   }
 
   function applyTheme(name) {
@@ -1286,7 +1313,7 @@
 
   function updateHud() {
     scoreEl.textContent = (joined && myEnt) ? myEnt.score : score;
-    speedEl.textContent = SPEEDS[speedIdx].n;
+    speedEl.textContent = speedText(speedIdx);
   }
 
   // ================= 网络层 =================
@@ -1360,6 +1387,31 @@
     lastAtk = now;
     send({t: 'atk'});
     sAtk();
+  }
+
+  // 返回主页：结束当前对局/观战、恢复演示世界（服务端 leave 会把玩家移出房间）
+  function goHome() {
+    wantPlay = false;
+    spectating = false;
+    joined = false;
+    myEnt = null; myId = null;
+    dirQ = [];
+    winRound = false;
+    demoPaused = false;
+    clearEnts();
+    reset();
+    lastTick = performance.now();
+    $('btnJoinIn').classList.add('hidden');
+    btnPause.classList.remove('off');
+    btnPause.textContent = '暂停';
+    overScreen.classList.add('hidden');
+    pauseScreen.classList.add('hidden');
+    $('lbScreen').classList.add('hidden');
+    startScreen.classList.remove('hidden');
+    state = 'idle';
+    if (wsOpen) send({t: 'leave'});
+    setConn(wsOpen ? '● 已连接' : '● 未连接', wsOpen ? 'ok' : 'bad');
+    $('connTip').textContent = '已返回主页，随时可以重新开局';
   }
 
   function start() {
@@ -2530,6 +2582,9 @@
   }, {passive: true});
 
   $('btnStart').onclick = start;
+  $('btnHome').onclick = goHome;
+  $('btnPauseHome').onclick = goHome;
+  $('btnOverHome').onclick = goHome;
   $('btnSpectate').onclick = spectate;
   $('btnJoinIn').onclick = joinIn;
   $('btnLogin').onclick = doLogin;
@@ -2554,10 +2609,11 @@
   $('btnSpeed').onclick = () => {
     speedIdx = (speedIdx + 1) % SPEEDS.length;
     localStorage.setItem('snake-speed', speedIdx);
-    speedEl.textContent = SPEEDS[speedIdx].n;
+    speedEl.textContent = speedText(speedIdx);
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
+   'btnHome', 'btnPauseHome', 'btnOverHome',
    'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {

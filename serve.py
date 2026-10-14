@@ -13,7 +13,7 @@ DATA_DIR = ROOT / 'data'
 STORE_PATH = DATA_DIR / 'store.json'
 
 COLS, ROWS = 24, 24
-MAP_MIN, MAP_MAX = 12, 48
+MAP_MIN, MAP_MAX = 12, 96
 FRUITS = [(10, 0xff5f5f), (15, 0xe74c3c), (20, 0xff6b81), (15, 0xa78bfa), (15, 0xffa94d)]
 CYCLE = 0.05            # 主循环 50ms
 PROJ_SPEED = 22.0       # 弹药格/秒
@@ -485,9 +485,28 @@ class Room:
         p['dir'] = bd
         p['cells'] = [(cx, cy), (cx - bd[0], cy - bd[1]), (cx - 2 * bd[0], cy - 2 * bd[1])]
 
+    def free_cells(self):
+        """一次性构建占用集合，避免逐格调用 occupied() 时反复遍历所有蛇。
+        大地图（最高 96×96）扫描一次只需 1-2ms，否则会卡住主循环。"""
+        occ = set(self.rocks) | set(self.walls) | set(self.portals)
+        if self.food:
+            occ.add((self.food['x'], self.food['y']))
+        if self.bonus:
+            occ.add((self.bonus['x'], self.bonus['y']))
+        for it in self.items:
+            occ.add((it['x'], it['y']))
+        for p in self.players.values():
+            if p['alive']:
+                occ.update(p['cells'])
+        return occ
+
+    def free_list(self):
+        occ = self.free_cells()
+        return [(x, y) for x in range(self.cols) for y in range(self.rows)
+                if (x, y) not in occ]
+
     def place_food(self):
-        free = [(x, y) for x in range(self.cols) for y in range(self.rows)
-                if not self.occupied(x, y)]
+        free = self.free_list()
         if not free:
             self.food = None
             return
@@ -516,7 +535,7 @@ class Room:
 
     # -------- 道具 --------
     def spawn_item(self, now):
-        free = [(x, y) for x in range(self.cols) for y in range(self.rows) if not self.occupied(x, y)]
+        free = self.free_list()
         if not free:
             return
         x, y = random.choice(free)
@@ -785,7 +804,7 @@ class Room:
             self.ev('expire', id=self.bonus.get('id'), x=self.bonus['x'], y=self.bonus['y'])
             self.bonus = None
         if not self.bonus and not self.win_pending and random.random() < 0.004:
-            free = [(x, y) for x in range(self.cols) for y in range(self.rows) if not self.occupied(x, y)]
+            free = self.free_list()
             if free:
                 x, y = random.choice(free)
                 self.bonus = {'id': self.next_bonus_id, 'x': x, 'y': y, 'score': 50, 'born': now}
@@ -983,6 +1002,16 @@ def make_player(pid, sess, name, skin):
     }
 
 
+def apply_speed(p, ms):
+    """切换速度档位并立即生效：调慢当场变慢、调快当场变快。
+    同时把 tick 保持在 [base-45, base] 区间，保留吃水果累积的加速。"""
+    ms = max(80, min(300, int(ms)))
+    p['base_tick'] = ms
+    if p['alive']:
+        p['tick'] = max(60, max(ms - 45, min(p['tick'], ms)))
+    return ms
+
+
 async def send(sess, obj):
     try:
         await sess.ws.send(json.dumps(obj, ensure_ascii=False))
@@ -1144,6 +1173,16 @@ async def handle_msg(sess, m):
         await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
         return
 
+    if t == 'leave':
+        # 返回主页：把自己移出房间（旧客户端不发此消息，行为不变）
+        left = sess.room.id if sess.room else None
+        sess.want_play = False
+        leave_room(sess)
+        gc_empty_rooms()
+        await broadcast_rooms()
+        await send(sess, {'t': 'left', 'room': left})
+        return
+
     # 其余消息需要已在房间中
     room = sess.room
     if room is None or sess.pid is None or sess.pid not in room.players:
@@ -1173,10 +1212,7 @@ async def handle_msg(sess, m):
                                  'dx': p['dir'][0], 'dy': p['dir'][1]})
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
     elif t == 'speed':
-        ms = max(80, min(300, int(m.get('ms', 150))))
-        p['base_tick'] = ms
-        if p['alive']:
-            p['tick'] = min(p['tick'], ms)
+        apply_speed(p, m.get('ms', 150))
     elif t == 'skin':
         p['skin'] = int(m.get('i', 0)) % 5
     elif t == 'respawn':
