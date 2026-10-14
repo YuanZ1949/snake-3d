@@ -34,7 +34,7 @@
 | 5 | 重连+聊天 | B2 + B3 | ✅ | 单测 61/61 先红后绿（含挂起蛇冻结）；静态检查 ALL PASSED (65ids/div32/css141)；6 E2E Exit 0（RECONNECT+CHAT：resumed 同 id/漂移1.0格/聊天送达+限速） |
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ✅ | 单测 66/66 先红后绿；静态检查 ALL PASSED (70ids/div33/css145)；7 E2E Exit 0（PASS+PERSIST 全 9 步；verify_rooms 证实断开后 r1 保留） |
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ✅ | 单测 67/67 先红后绿（day 主题池）；静态检查 ALL PASSED (70ids/div33)；7 E2E Exit 0（顺带实证 default 房随机到 day 主题）；浏览器截图 BLOCKED（桌面浏览器未连接，视觉项以静态+单测+E2E 佐证） |
-| 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ⬜ | |
+| 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ✅ | 纯前端批（无服务端改动）：单测 67/67 全绿维持；静态检查 ALL PASSED (68ids/div33/css156/js528)；7 E2E Exit 0；起服 / 200 |
 | 9 | CI/Playwright | C2 | ⬜ | |
 | 10 | three.min.js 升级 | C4 | ⬜ | |
 | 11 | 快照增量协议 | C1（压轴） | ⬜ | |
@@ -106,3 +106,10 @@
 - **test_game.py**：+1（test_day_theme_in_pool：池含 day、THEME_CFG 齐备、建房/地形/随机不炸），先红（AssertionError: THEMES 无 day）后绿 **67/67**。
 - **验证**：静态 ALL STATIC CHECKS PASSED (70ids/div33/css516)；停服清理后起双服，7 套 E2E 全 **Exit 0**（verify_rooms 实测 default 房随机到 theme=day）；E2E 残留 persist_rooms.json 已清理；HTTP / 200。
 - **暴露的新工作**：桌面浏览器未连接 → 截图视觉验收 BLOCKED（已记入 HANDOVER 主题节），批9 Playwright 落地后可补自动化截图。**顺序调整**：无。
+
+### 批8 小地图+观战切换+移动端（B1 + 新#8 + B4）✅
+- **纯前端批**（serve.py 零改动）：单测 67/67 维持全绿；静态 ALL STATIC CHECKS PASSED (68ids/div33/css156/js528)；7 套 E2E 全 Exit 0；起服 / 200；E2E 残留 persist_rooms.json 已清理、双服已停。
+- **B1 小地图**：`#miniMap` canvas 150×150（@media 760px→104）固定右上，joined||spectating 才显示，每帧 updateMinimap 绘制：墙块/岩石/传送门（i%2 紫蓝）/水果实际色/星星金/道具类型色/玩家（自己绿大、他人红、尸体不画）/观战目标白圈；syncWalls/syncPortals 新增 wallCells/portalCells 几何缓存。
+- **新#8 观战切换**：全局 `spectTarget`（null=跟随领先者）；keydown 观战时 ←/→/A/D → spectSwitch(±1) 循环（spectList=存活蛇按分数降序，与相机同序），toast「观战：名（i/N）」；触屏观战左右滑同效；相机优先 spectTarget、失效回退领先者；spectate/joinIn/goHome 重置。
+- **B4 移动端**：`@media (max-width:760px)` 压缩 h1/HUD chip/开始页 sub/聊天宽度/小地图尺寸、开始页 overflow-y:auto；转向已有触屏滑动+dpad pointer 覆盖，无需新增。
+- 浏览器截图仍 BLOCKED（批9 Playwright 落地后补视觉验收）。

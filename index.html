@@ -394,6 +394,29 @@
   .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(24,20,34,.96); color: #ffb3b3; border: 1px solid rgba(255,120,120,.45); padding: 8px 18px; border-radius: 10px; font-size: 13px; z-index: 999; max-width: 80%; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
   .toast.hidden { display: none; }
   .chatIn.hidden { display: none; }
+
+  /* ===== 小地图（批8 B1） ===== */
+  .miniMap {
+    position: fixed; right: 12px; top: 66px;
+    width: 150px; height: 150px;
+    border-radius: 10px; border: 1px solid rgba(255,255,255,.20);
+    background: rgba(8,11,24,.72);
+    z-index: 8; pointer-events: none;
+    box-shadow: 0 4px 18px rgba(0,0,0,.35);
+  }
+  .miniMap.hidden { display: none; }
+
+  /* ===== 移动端压缩（批8 B4） ===== */
+  @media (max-width: 760px) {
+    h1 { font-size: 17px; margin-top: 6px !important; }
+    .hud { font-size: 12px; gap: 6px; }
+    .hud .chip { padding: 4px 8px; }
+    #startScreen { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    #startScreen .sub { font-size: 11px; max-width: 94vw; }
+    .miniMap { width: 104px; height: 104px; right: 8px; top: 54px; }
+    .chatLog { max-width: 78%; font-size: 12px; }
+    .chatIn { max-width: 78%; font-size: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -420,6 +443,7 @@
     <div id="effects" class="effects"></div>
     <div id="chatLog" class="chatLog" aria-live="polite"></div>
     <input id="chatIn" class="chatIn hidden" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
+    <canvas id="miniMap" class="miniMap hidden" width="150" height="150" aria-label="小地图"></canvas>
     <div id="toast" class="toast hidden" role="alert"></div>
     <button id="btnJoinIn" class="hidden">入局</button>
 
@@ -647,6 +671,8 @@
   let projMeshes = [];             // 服务器弹药的渲染体
   let winRound = false;            // 本轮已出胜负
   let spectating = false;          // 观战模式（未入局但观看他人对局）
+  let spectTarget = null;          // #8 观战目标 ent id（null=自动跟随领先者）
+  let wallCells = [], portalCells = [];   // B1 小地图几何缓存（[x,y] 列表）
   let roundNo = -1;
   let demoPaused = false;
   // ---- 账户 / 房间 / 道具 / 主题 ----
@@ -1306,6 +1332,7 @@
     const sig = list.map(r => r[0] + ',' + r[1]).join('|');
     if (sig === wallKey) return;
     wallKey = sig;
+    wallCells = list.slice();
     wallPool.forEach(m => { m.visible = false; });
     list.forEach((r, i) => {
       const m = getWallMesh(i);
@@ -1320,6 +1347,7 @@
     const sig = list.map(r => r[0] + ',' + r[1]).join('|');
     if (sig === portalKey) return;
     portalKey = sig;
+    portalCells = list.slice();
     portalMeshes.forEach(m => scene.remove(m));
     portalMeshes = [];
     list.forEach((r, i) => {
@@ -1530,6 +1558,7 @@
   function goHome() {
     wantPlay = false;
     spectating = false;
+    spectTarget = null;
     joined = false;
     myEnt = null; myId = null;
     dirQ = [];
@@ -1576,11 +1605,28 @@
     lastTick = performance.now();
   }
 
+  // ===== 批8 #8：观战目标切换（复用左右键） =====
+  function spectList() {
+    const l = [...ents.values()].filter(e => e.alive && e.spine.length);
+    l.sort((a, b) => b.score - a.score);      // 与相机「跟随领先者」同序，名单稳定
+    return l;
+  }
+  function spectSwitch(step) {
+    const l = spectList();
+    if (!l.length) { spectTarget = null; return; }
+    let i = l.findIndex(e => e.id === spectTarget);
+    if (i < 0) i = 0;                          // 尚未手动选过：以当前（领先者）为基准
+    i = (i + step + l.length) % l.length;
+    spectTarget = l[i].id;
+    showToast('观战：' + (l[i].name || '…') + '（' + (i + 1) + '/' + l.length + '）');
+  }
+
   function spectate() {
     ac();
     bgmStart();
     askPassIfNeeded(curRoom);   // 口令房观战也要口令（C3）
     spectating = true;
+    spectTarget = null;
     wantPlay = false;
     myId = null;
     state = 'joining';
@@ -1595,6 +1641,7 @@
 
   function joinIn() {
     spectating = false;
+    spectTarget = null;
     wantPlay = true;
     $('btnJoinIn').classList.add('hidden');
     start(); // 复用入局流程（内部会 doJoin）
@@ -2529,9 +2576,16 @@
       hw = myEnt.spine[0];
       heading = Math.atan2(myEnt.dir.x, myEnt.dir.y);
     } else if (spectating) {
-      const alive = [...ents.values()].filter(e => e.alive && e.spine.length);
-      alive.sort((a, b) => b.score - a.score);
-      const lead = alive[0];
+      // 批8 #8：优先跟随手动选定的观战目标，无效则回退领先者
+      let lead = null;
+      if (spectTarget) {
+        const t = ents.get(spectTarget);
+        if (t && t.alive && t.spine.length) lead = t; else spectTarget = null;
+      }
+      if (!lead) {
+        const alive = spectList();
+        lead = alive[0];
+      }
       if (lead) {
         hw = lead.spine[0];
         heading = Math.atan2(lead.dir.x, lead.dir.y);
@@ -2558,6 +2612,55 @@
     camera.lookAt(camLook);
     renderer.render(scene, camera);
     updateEdgeHints();
+    updateMinimap();
+  }
+
+  // ================= 小地图（批8 B1） =================
+  function updateMinimap() {
+    const cv = $('miniMap');
+    const show = joined || spectating;
+    cv.classList.toggle('hidden', !show);
+    if (!show) return;
+    const W = cv.width, H = cv.height;
+    const g = cv.getContext('2d');
+    const s = Math.min(W / COLS, H / ROWS);
+    const ox = (W - COLS * s) / 2, oy = (H - ROWS * s) / 2;
+    const cx = x => ox + (x + .5) * s, cy = y => oy + (y + .5) * s;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = 'rgba(8,11,24,.72)';
+    g.fillRect(ox, oy, COLS * s, ROWS * s);
+    g.strokeStyle = 'rgba(255,255,255,.30)';
+    g.strokeRect(ox + .5, oy + .5, COLS * s - 1, ROWS * s - 1);
+    const dot = (x, y, r, c) => { g.fillStyle = c; g.beginPath(); g.arc(cx(x), cy(y), r, 0, 6.284); g.fill(); };
+    const sq = (Math.max(2, s) | 0);
+    // 静态地形
+    g.fillStyle = '#39415a';
+    for (const r of wallCells) g.fillRect(ox + r[0] * s, oy + r[1] * s, sq, sq);
+    g.fillStyle = '#59637c';
+    for (const r of rocks) g.fillRect(ox + r.x * s + .5, oy + r.y * s + .5, Math.max(2, sq - 1), Math.max(2, sq - 1));
+    portalCells.forEach((r, i) => dot(r[0], r[1], Math.max(2, s * .4), i % 2 ? '#61d0ff' : '#b197fc'));
+    // 资源
+    if (food) dot(food.x, food.y, Math.max(2, s * .45), '#' + ((food.color || 0xff5f5f) >>> 0).toString(16).padStart(6, '0'));
+    if (bonus) dot(bonus.x, bonus.y, Math.max(2, s * .5), '#ffd166');
+    itemMeshes.forEach(e => dot(e.x, e.y, Math.max(2, s * .4),
+      '#' + (((ITEMS[e.type] || ITEMS.shield).color) >>> 0).toString(16).padStart(6, '0')));
+    // 玩家：自己绿大点、他人红点（尸体不画）
+    for (const e of spectList()) {
+      if (!e.cells.length) continue;
+      const isMe = e.id === myId;
+      dot(e.cells[0].x, e.cells[0].y, isMe ? Math.max(2.5, s * .55) : Math.max(2, s * .4), isMe ? '#7ee787' : '#ff6b6b');
+    }
+    // 观战目标白圈
+    if (spectating && spectTarget) {
+      const t = ents.get(spectTarget);
+      if (t && t.cells.length) {
+        g.strokeStyle = '#ffffff';
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.arc(cx(t.cells[0].x), cy(t.cells[0].y), Math.max(4, s * .8), 0, 6.284);
+        g.stroke();
+      }
+    }
   }
 
   // ================= 账户 / 房间 / 排行榜 =================
@@ -2835,6 +2938,11 @@
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;   // 输入中不抢游戏按键
     const k = e.key.toLowerCase();
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();
+    // 批8 #8：观战时左右键（←/→/A/D）循环切换被观战者
+    if (spectating && (k === 'arrowleft' || k === 'arrowright' || k === 'a' || k === 'd')) {
+      if (!e.repeat) spectSwitch((k === 'arrowright' || k === 'd') ? 1 : -1);
+      return;
+    }
     if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
     else if (k === 'j') { if (!e.repeat) fire(); }
     else if (k === 'k') { if (!e.repeat) fireUlt(); }
@@ -2881,6 +2989,12 @@
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.clientX, dy = t.clientY - touchStart.clientY;
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+    // 批8 #8：观战时左右滑动切换被观战者
+    if (spectating) {
+      if (Math.abs(dx) > Math.abs(dy)) spectSwitch(dx > 0 ? 1 : -1);
+      touchStart = null;
+      return;
+    }
     if (camFollow) {
       if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 1 : -1, 0);
     } else if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 1 : -1, 0);
