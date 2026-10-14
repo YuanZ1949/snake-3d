@@ -134,18 +134,30 @@ def test_bite_truncates_not_kills():
     print("bite truncate OK: victim len", len(p2["cells"]), "eater len", len(p1["cells"]))
 
 
-def test_bite_respects_min_len():
+def test_bite_min_len_eliminates():
+    # 规则升级（需求方点名）：已是最低 2 格的蛇再被咬 → 整条淘汰
     r = fresh(16)
     now = serve.now_ms()
     p1 = mk(r, 1, "A", [(5, 5), (4, 5)], (1, 0))
     p2 = mk(r, 2, "B", [(7, 5), (6, 5)], (0, 1))   # 已是最低 2 格
     p1["inv"] = 0
     p2["inv"] = 0
+    r.events.clear()
     r.step(0.05, now)
-    assert p2["alive"] and len(p2["cells"]) == serve.MIN_LEN, p2["cells"]
-    assert p1["score"] == 0, p1["score"]
-    assert p1.get("grow", 0) == 0
-    print("bite min-len OK: victim len", len(p2["cells"]), "eater score", p1["score"])
+    assert not p2["alive"], "2-grid snake should be eliminated"
+    assert p2["cause"] == "bite" and p2["by"] == 1, (p2["cause"], p2["by"])
+    # 攻击者吞掉剩余 2 格：grow +2，但本 tick 自身移动已消耗 1 → 余 1，身长 +1
+    assert p1.get("grow", 0) == 1, p1.get("grow")
+    assert len(p1["cells"]) == 3, p1["cells"]
+    # 淘汰最后一名对手 → 触发胜局，+WIN_SCORE
+    assert r.win_pending == {"winner": 1}, r.win_pending
+    assert p1["score"] == 2 * serve.BITE_SCORE_PER_CELL + serve.WIN_SCORE, p1["score"]
+    kinds = [e["t"] for e in r.events]
+    assert "die" in kinds, kinds
+    die = [e for e in r.events if e["t"] == "die"][0]
+    assert die["cause"] == "bite" and die["by"] == 1, die
+    assert [e for e in r.events if e["t"] == "bite"][0].get("kill") is True
+    print("bite elimination OK: victim dead, eater score", p1["score"])
 
 
 def test_bite_immunity():
@@ -336,13 +348,117 @@ def test_free_cells_big_map():
     print("free cells 96x96 OK: free=%d, %.2fms/scan" % (len(free), ms))
 
 
+def test_combo_increments_and_expires():
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    r.food = {"id": 1, "x": 6, "y": 5, "score": 10, "color": 0xff5f5f}
+    # 第一次吃果：combo=1，倍率 x1
+    r.step(0.05, now)
+    assert p["combo"] == 1, p.get("combo")
+    assert p["score"] == 10, p["score"]
+    # 3 秒内再吃：combo=2，仍 x1（档位 1-4）
+    r.food = {"id": 2, "x": 7, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.step(0.05, now + 200)
+    assert p["combo"] == 2, p["combo"]
+    assert p["score"] == 20, p["score"]
+    # 超时后再吃：combo 重置为 1
+    r.food = {"id": 3, "x": 8, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.step(0.05, now + 200 + serve.COMBO_MS + 10)
+    assert p["combo"] == 1, p["combo"]
+    assert p["score"] == 30, p["score"]
+    print("combo chain/reset OK: combo", p["combo"], "score", p["score"])
+
+
+def test_combo_multiplier_tiers():
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    # 直接驱动倍率函数：1-4→x1, 5-9→x1.5, 10-14→x2, 15+→x2.5
+    assert serve.combo_mult(1) == 1.0
+    assert serve.combo_mult(4) == 1.0
+    assert serve.combo_mult(5) == 1.5
+    assert serve.combo_mult(9) == 1.5
+    assert serve.combo_mult(10) == 2.0
+    assert serve.combo_mult(15) == 2.5
+    # 连吃 5 个（同 tick 链不现实，直接设 combo 后吃一个）
+    p["combo"] = 4
+    p["combo_at"] = now
+    r.food = {"id": 1, "x": 6, "y": 5, "score": 20, "color": 0xff6b81}
+    r.step(0.05, now + 200)
+    assert p["combo"] == 5, p["combo"]
+    assert p["score"] == int(20 * 1.5), p["score"]   # 30
+    print("combo tiers OK: combo", p["combo"], "score", p["score"])
+
+
+def test_double_item_doubles_score():
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    p["eff"] = {"double": now + 9999}
+    r.food = {"id": 1, "x": 6, "y": 5, "score": 15, "color": 0xe74c3c}
+    r.step(0.05, now)
+    assert p["score"] == 30, p["score"]              # 15 × 2
+    # 咬蛇得分也翻倍：造一只 2 格蛇
+    p2 = mk(r, 2, "B", [(8, 5), (7, 5)], (0, 1))
+    p2["inv"] = 0
+    r.food = None
+    r.step(0.05, now + 200)
+    # 咬杀 2 格：8×2=16 → 双倍 32；再加胜局 200 → 双倍不作用于胜局（只作用于咬蛇/吃果）
+    assert p2["alive"] is False, p2["cells"]
+    assert p["score"] == 30 + 32 + serve.WIN_SCORE, p["score"]
+    print("double item OK: score", p["score"])
+
+
+def test_magnet_pulls_food():
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    p["eff"] = {"magnet": now + 9999}
+    r.food = {"id": 1, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.step_wrapper(0.05, now)
+    # 食物朝蛇头移动 1 格
+    assert (r.food["x"], r.food["y"]) == (8, 5), r.food
+    # 挡路的岩石 → 绕开（换轴移动）
+    r.rocks = [(7, 5)]
+    r.step_wrapper(0.05, now + 60)
+    assert (r.food["x"], r.food["y"]) != (7, 5), r.food
+    assert abs(r.food["x"] - 8) + abs(r.food["y"] - 5) == 1, r.food
+    # 无磁铁效果 → 不动
+    p["eff"] = {}
+    r.rocks = []
+    r.food = {"id": 2, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.step_wrapper(0.05, now + 120)
+    assert (r.food["x"], r.food["y"]) == (9, 5), r.food
+    print("magnet OK")
+
+
+def test_rage_halves_cooldown_and_speeds_bullet():
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
+    # CD 计算：无狂暴 800ms，狂暴 400ms
+    assert r.atk_cd(p, now) == serve.ATK_COOL, r.atk_cd(p, now)
+    p["eff"] = {"rage": now + 9999}
+    assert r.atk_cd(p, now) == serve.ATK_COOL // 2, r.atk_cd(p, now)
+    # 子弹速度 ×1.5
+    p["eff"] = {}
+    r.projectiles = [{"owner": 1, "x": 1.0, "y": 1.0, "dx": 1.0, "dy": 0.0, "spd": 1.5}]
+    r._step_projectiles(0.1, now)
+    assert abs(r.projectiles[0]["x"] - (1.0 + serve.PROJ_SPEED * 1.5 * 0.1)) < 1e-6, r.projectiles
+    print("rage OK: cd", serve.ATK_COOL // 2, "bullet spd x1.5")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
-           test_bite_respects_min_len, test_bite_immunity,
+           test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
            test_room_custom_config, test_speed_change_instant,
-           test_free_cells_big_map, test_usage_log]:
+           test_free_cells_big_map, test_usage_log,
+           test_combo_increments_and_expires, test_combo_multiplier_tiers,
+           test_double_item_doubles_score, test_magnet_pulls_food,
+           test_rage_halves_cooldown_and_speeds_bullet]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

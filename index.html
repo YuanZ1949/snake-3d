@@ -355,9 +355,15 @@
   .eff.shield { color: #61d0ff; border-color: rgba(97,208,255,.5); }
   .eff.speed  { color: #ffd166; border-color: rgba(255,209,102,.5); }
   .eff.ghost  { color: #c9a6ff; border-color: rgba(201,166,255,.5); }
+  .eff.magnet { color: #ff7bd1; border-color: rgba(255,123,209,.5); }
+  .eff.double { color: #ffe066; border-color: rgba(255,224,102,.5); }
+  .eff.rage   { color: #ff8a5c; border-color: rgba(255,106,74,.55); }
   .eff.inv    { color: #7ee787; border-color: rgba(126,231,135,.5); }
   .eff .track { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
   .eff .bar { height: 100%; background: currentColor; width: 100%; }
+  .chip.combo { color: #ffd166; border-color: rgba(255,209,102,.55); animation: comboPulse .7s ease-in-out infinite; }
+  .chip.combo.hot { color: #ff8a5c; border-color: rgba(255,138,92,.65); }
+  @keyframes comboPulse { 50% { transform: scale(1.08); } }
 
   .tips { font-size: 12px; color: #6b7194; line-height: 1.7; text-align: center; }
   .tips kbd {
@@ -380,6 +386,7 @@
 
   <div class="hud">
     <span class="chip">得分 <b id="score">0</b></span>
+    <span class="chip combo hidden" id="comboChip">🔥 <b id="comboN">0</b></span>
     <span class="chip">最高 <b id="best">0</b></span>
     <button class="chip" id="btnSpeed" aria-label="速度">速度 <b id="speed">中</b></button>
     <button class="chip" id="btnMute" aria-label="静音">🔊</button>
@@ -591,6 +598,9 @@
     shield: {emoji: '🛡', color: 0x61d0ff, label: '护盾'},
     speed:  {emoji: '⚡', color: 0xffd166, label: '加速'},
     ghost:  {emoji: '👻', color: 0xc9a6ff, label: '穿墙'},
+    magnet: {emoji: '🧲', color: 0xff7bd1, label: '磁铁'},
+    double: {emoji: '✨', color: 0xffe066, label: '双倍'},
+    rage:   {emoji: '🔥', color: 0xff6b4a, label: '狂暴'},
   };
   const ITEM_LIFE = 12000;
   const THEMES = {
@@ -1259,6 +1269,16 @@
     } else if (type === 'ghost') {
       m = new THREE.Mesh(new THREE.SphereGeometry(.3, 14, 12),
         new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .6, transparent: true, opacity: .62}));
+    } else if (type === 'magnet') {
+      m = new THREE.Mesh(new THREE.TorusGeometry(.26, .1, 8, 18, Math.PI),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .85, roughness: .3, metalness: .5}));
+      m.rotation.z = Math.PI;
+    } else if (type === 'double') {
+      m = new THREE.Mesh(new THREE.OctahedronGeometry(.3),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .9, roughness: .2, metalness: .6, flatShading: true}));
+    } else if (type === 'rage') {
+      m = new THREE.Mesh(new THREE.IcosahedronGeometry(.3),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: 1.0, roughness: .4, metalness: .3, flatShading: true}));
     } else {
       m = new THREE.Mesh(new THREE.TorusGeometry(.26, .09, 10, 20),
         new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .85, roughness: .3, metalness: .5}));
@@ -1314,6 +1334,13 @@
   function updateHud() {
     scoreEl.textContent = (joined && myEnt) ? myEnt.score : score;
     speedEl.textContent = speedText(speedIdx);
+    const c = (joined && myEnt) ? (myEnt.combo | 0) : 0;
+    const chip = $('comboChip');
+    chip.classList.toggle('hidden', c < 2);
+    if (c >= 2) {
+      $('comboN').textContent = '×' + c;
+      chip.classList.toggle('hot', c >= 10);
+    }
   }
 
   // ================= 网络层 =================
@@ -1380,10 +1407,15 @@
   const projMat = new THREE.MeshStandardMaterial({color: 0xffe08a, emissive: 0xffb84d, emissiveIntensity: .9});
   const sAtk = () => beep(1000, .08, 'square', .1, -400);
 
+  function atkCoolMs() {
+    // 狂暴期间服务端 CD 减半，客户端同步
+    return (myEnt && myEnt.eff && myEnt.eff.rage > 0) ? (ATK_COOL >> 1) : ATK_COOL;
+  }
+
   function fire() {
     if (state !== 'playing' || !joined) return;
     const now = performance.now();
-    if (now - lastAtk < ATK_COOL) return;
+    if (now - lastAtk < atkCoolMs()) return;
     lastAtk = now;
     send({t: 'atk'});
     sAtk();
@@ -1633,6 +1665,7 @@
         e.score = p.score;
         e.skin = p.skin;
         e.inv = p.inv || 0;
+        e.combo = p.combo | 0;
         e.eff = p.eff || {};
         paintEnt(e);
       } else {
@@ -1642,6 +1675,7 @@
         e.dir = {x: p.dir[0], y: p.dir[1]};
         e.score = p.score;
         e.inv = p.inv || 0;
+        e.combo = p.combo | 0;
         e.eff = p.eff || {};
         if (e.name !== p.name) e.name = p.name || '';
         if (e.skin !== p.skin) { e.skin = p.skin; paintEnt(e); }
@@ -1749,7 +1783,7 @@
       projMeshes = list.map(p => {
         const m = new THREE.Mesh(projGeo, projMat);
         m.position.set(p.x - COLS/2 + .5, SEG_H/2, p.y - ROWS/2 + .5);
-        m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, at: performance.now()};
+        m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, spd: p.spd || 1, at: performance.now()};
         scene.add(m);
         return m;
       });
@@ -1761,7 +1795,7 @@
       const dist = Math.abs(p.x - u.gx) + Math.abs(p.y - u.gy);
       const turned = p.dx !== u.dx || p.dy !== u.dy;
       if (dist > 1.5 || turned) u.at = performance.now();
-      u.gx = p.x; u.gy = p.y; u.dx = p.dx; u.dy = p.dy;
+      u.gx = p.x; u.gy = p.y; u.dx = p.dx; u.dy = p.dy; u.spd = p.spd || 1;
     }
   }
 
@@ -1769,8 +1803,9 @@
     for (const m of projMeshes) {
       const u = m.userData;
       const t = Math.max(0, Math.min(.1, (now - u.at) / 1000));
-      m.position.x = u.gx - COLS/2 + .5 + u.dx * 22 * t;
-      m.position.z = u.gy - ROWS/2 + .5 + u.dy * 22 * t;
+      const v = 22 * (u.spd || 1);
+      m.position.x = u.gx - COLS/2 + .5 + u.dx * v * t;
+      m.position.z = u.gy - ROWS/2 + .5 + u.dy * v * t;
     }
   }
 
@@ -1804,7 +1839,7 @@
     const parts = [];
     if (myEnt) {
       const eff = myEnt.eff || {};
-      for (const k of ['shield', 'speed', 'ghost']) {
+      for (const k of ['shield', 'speed', 'ghost', 'magnet', 'double', 'rage']) {
         const left = eff[k] | 0;
         if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, left: left, total: 6000});
       }
@@ -1952,7 +1987,7 @@
         const p = w || (e && e.cells[0] ? cellW(e.cells[0].x, e.cells[0].y) : null);
         if (p) burst(p.x, .55, p.z, 0xff8787, ev.id === myId ? 14 : 6);
         if (ev.id === myId) {
-          if (p) floater(p.x, 1.2, p.z, '+' + ev.score);
+          if (p) floater(p.x, 1.2, p.z, '+' + ev.score + (ev.mult > 1 ? ' ×' + ev.mult : ''));
           sEat();
         }
         break;
@@ -1975,12 +2010,12 @@
         break;
       }
       case 'bite': {
-        // 咬断对方：对方被截短，攻击者获得并入的长度
+        // 咬断对方：对方被截短，攻击者获得并入的长度；kill=true 为整条淘汰
         const v = ents.get(ev.victim);
-        if (v && v.cells[0]) { const p = cellW(v.cells[0].x, v.cells[0].y); burst(p.x, .6, p.z, 0xffb4b4, 16); }
+        if (v && v.cells[0]) { const p = cellW(v.cells[0].x, v.cells[0].y); burst(p.x, .6, p.z, ev.kill ? 0xff5f5f : 0xffb4b4, ev.kill ? 30 : 16); }
         const e = ents.get(ev.eater);
-        if (e && e.cells[0]) { const p = cellW(e.cells[0].x, e.cells[0].y); floater(p.x, 1.5, p.z, '+' + ev.score); }
-        if (ev.eater === myId) { sStar(); shake = Math.max(shake, .45); }
+        if (e && e.cells[0]) { const p = cellW(e.cells[0].x, e.cells[0].y); floater(p.x, 1.5, p.z, '+' + ev.score + (ev.kill ? ' 💀' : '')); }
+        if (ev.eater === myId) { sStar(); shake = Math.max(shake, ev.kill ? .8 : .45); }
         else if (ev.victim === myId) { shake = Math.max(shake, .7); beep(200, .18, 'sawtooth', .13, -60); }
         break;
       }
@@ -2047,6 +2082,7 @@
     rock: '撞上岩石了',
     self: '咬到自己了',
     eaten: '被咬死了',
+    bite: '被咬成只剩 2 格后吞掉了',
   };
 
   function onMyDeath(ev) {
@@ -2056,7 +2092,7 @@
     const sc = myEnt ? myEnt.score : 0;
     $('overTitle').textContent = '你被淘汰了';
     let sub = CAUSE_TEXT[ev.cause] || '被淘汰';
-    if (ev.cause === 'eaten' && ev.by != null) {
+    if ((ev.cause === 'eaten' || ev.cause === 'bite') && ev.by != null) {
       const killer = ents.get(ev.by);
       sub = killer ? ('被 ' + killer.name + ' 咬死了') : sub;
     }
@@ -2310,7 +2346,7 @@
     updateFx();
 
     const atkBtn = $('btnAtk');
-    const cooling = now - lastAtk < ATK_COOL;
+    const cooling = now - lastAtk < atkCoolMs();
     atkBtn.classList.toggle('cool', cooling);
     atkBtn.classList.toggle('ready', !cooling && joined && state === 'playing');
 

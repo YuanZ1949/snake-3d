@@ -26,7 +26,17 @@ EFFECT_MS = 6000        # 道具效果持续时间
 MIN_LEN = 2             # 蛇被截断后保留的最少格数
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
-ITEM_TYPES = ('shield', 'speed', 'ghost')
+ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage')
+COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击重置
+COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
+
+
+def combo_mult(combo):
+    """连击倍率：1-4→x1, 5-9→x1.5, 10-14→x2, 15+→x2.5（封顶）。"""
+    for need, m in COMBO_TIERS:
+        if combo >= need:
+            return m
+    return 1.0
 THEMES = ('default', 'lava', 'ice', 'space')
 # 主题参数：岩石密度倍率 / 是否生成传送门 / 固定墙块数量 / 配色（供前端参考）
 THEME_CFG = {
@@ -449,6 +459,8 @@ class Room:
         p['inv'] = now_ms() + SPAWN_INV
         p['eff'] = {}
         p['grow'] = 0
+        p['combo'] = 0
+        p['combo_at'] = 0
         if not fresh_cells and p.get('cells'):
             return
         pid = p.get('id')
@@ -548,6 +560,13 @@ class Room:
         p['eff'][it['type']] = max(p['eff'].get(it['type'], 0), now) + EFFECT_MS
         self.ev('item', id=p['id'], x=it['x'], y=it['y'], kind=it['type'],
            score=0)
+
+    def score_gain(self, p, n, now):
+        """统一记分入口：双倍道具生效时得分翻倍，返回实得分值。"""
+        if self.effect_active(p, 'double', now):
+            n *= 2
+        p['score'] += n
+        return n
 
     def effect_active(self, p, kind, now):
         return p.get('eff', {}).get(kind, 0) > now
@@ -735,16 +754,31 @@ class Room:
             ep = self.players.get(eid)
             if not q or not ep or not q['alive'] or not ep['alive']:
                 continue
+            if len(q['cells']) <= MIN_LEN:
+                # 咬蛇淘汰：已是最低长度的蛇再被咬 → 整条淘汰，残躯归攻击者
+                cut = len(q['cells'])
+                q['alive'] = False
+                q['cause'] = 'bite'
+                q['by'] = eid
+                ep['grow'] = ep.get('grow', 0) + cut
+                gained = self.score_gain(ep, BITE_SCORE_PER_CELL * cut, now)
+                if ep.get('user'):
+                    store.inc(ep['user'], 'kills')
+                if q.get('user'):
+                    store.inc(q['user'], 'deaths')
+                self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
+                self.ev('die', id=vid, cause='bite', by=eid)
+                continue
             keep = max(MIN_LEN, idx)
             if keep >= len(q['cells']):
                 continue
             cut = len(q['cells']) - keep
             q['cells'] = q['cells'][:keep]
             ep['grow'] = ep.get('grow', 0) + cut     # 截下部分并入攻击者，随后逐格增长
-            ep['score'] += BITE_SCORE_PER_CELL * cut
+            gained = self.score_gain(ep, BITE_SCORE_PER_CELL * cut, now)
             if ep.get('user'):
                 store.inc(ep['user'], 'kills')
-            self.ev('bite', eater=eid, victim=vid, cut=cut, score=BITE_SCORE_PER_CELL * cut)
+            self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained)
 
         # 淘汰结算（仅环境致死：撞墙/岩石/自己）
         for p in due:
@@ -764,8 +798,17 @@ class Room:
             ate = False
             if self.food and (hx, hy) == (self.food['x'], self.food['y']):
                 ate = True
-                p['score'] += self.food['score']
-                self.ev('eat', id=p['id'], x=hx, y=hy, score=self.food['score'])
+                # 连击：3 秒窗口内连续吃果计数递增，超时重置；倍率按档位
+                if now - p.get('combo_at', 0) <= COMBO_MS:
+                    p['combo'] = p.get('combo', 0) + 1
+                else:
+                    p['combo'] = 1
+                p['combo_at'] = now
+                mult = combo_mult(p['combo'])
+                base = self.food['score']
+                gained = self.score_gain(p, int(base * mult), now)
+                self.ev('eat', id=p['id'], x=hx, y=hy, score=gained,
+                        combo=p['combo'], mult=mult)
                 self.fruits_eaten += 1
                 if p.get('user'):
                     store.inc(p['user'], 'food')
@@ -775,8 +818,8 @@ class Room:
                     p['tick'] -= 3
             if self.bonus and (hx, hy) == (self.bonus['x'], self.bonus['y']):
                 ate = True
-                p['score'] += self.bonus['score']
-                self.ev('star', id=p['id'], x=hx, y=hy, score=self.bonus['score'])
+                gained = self.score_gain(p, self.bonus['score'], now)
+                self.ev('star', id=p['id'], x=hx, y=hy, score=gained)
                 self.bonus = None
             for it in self.items:
                 if it['id'] in eaten_items:
@@ -798,7 +841,52 @@ class Room:
         """被咬免疫：重生保护或护盾道具。"""
         return now < p.get('inv', 0) or self.effect_active(p, 'shield', now)
 
+    def _magnet_move(self, x, y, hx, hy, occ):
+        """磁铁单步：朝蛇头挪 1 格；蛇头格停下（由蛇头来吃）；被挡则绕行。"""
+        dx, dy = hx - x, hy - y
+        first = None
+        if dx:
+            first = (x + (1 if dx > 0 else -1), y)
+        elif dy:
+            first = (x, y + (1 if dy > 0 else -1))
+        if first == (hx, hy):
+            return x, y                        # 停在蛇头旁，不落进蛇头格
+        cands = []
+        if first:
+            cands.append(first)
+        if dx and dy:
+            cands.append((x, y + (1 if dy > 0 else -1)))
+        # 直路被挡 → 垂直绕行
+        cands += [(x, y - 1), (x, y + 1), (x - 1, y), (x + 1, y)]
+        for cx, cy in cands:
+            if (cx, cy) == (hx, hy):
+                continue
+            if 0 <= cx < self.cols and 0 <= cy < self.rows and (cx, cy) not in occ:
+                return cx, cy
+        return x, y
+
+    def _magnet_pull(self, now):
+        """磁铁道具：持有者把食物/星星朝自己头拉 1 格（绕开障碍）。"""
+        holders = [p for p in self.players.values()
+                   if p['alive'] and p['cells'] and self.effect_active(p, 'magnet', now)]
+        if not holders:
+            return
+        occ = self.free_cells()
+        for p in holders:
+            hx, hy = p['cells'][0]
+            for obj in (self.food, self.bonus):
+                if not obj:
+                    continue
+                occ.discard((obj['x'], obj['y']))
+                obj['x'], obj['y'] = self._magnet_move(obj['x'], obj['y'], hx, hy, occ)
+                occ.add((obj['x'], obj['y']))
+
+    def atk_cd(self, p, now):
+        """攻击冷却：狂暴期间减半。"""
+        return ATK_COOL // 2 if self.effect_active(p, 'rage', now) else ATK_COOL
+
     def step_wrapper(self, dt, now):
+        self._magnet_pull(now)
         # 星星与道具过期
         if self.bonus and now - self.bonus['born'] > BONUS_LIFE:
             self.ev('expire', id=self.bonus.get('id'), x=self.bonus['x'], y=self.bonus['y'])
@@ -820,15 +908,15 @@ class Room:
             now = now_ms()
         rockset = set(self.rocks)
         for pr in self.projectiles[:]:
-            pr['x'] += pr['dx'] * PROJ_SPEED * dt
-            pr['y'] += pr['dy'] * PROJ_SPEED * dt
+            pr['x'] += pr['dx'] * PROJ_SPEED * pr.get('spd', 1.0) * dt
+            pr['y'] += pr['dy'] * PROJ_SPEED * pr.get('spd', 1.0) * dt
             gx, gy = int(pr['x'] + 0.5), int(pr['y'] + 0.5)
             if 0 <= gx < self.cols and 0 <= gy < self.rows and (gx, gy) in rockset:
                 rockset.discard((gx, gy))
                 self.rocks = [r for r in self.rocks if r != (gx, gy)]
                 p = self.players.get(pr['owner'])
                 if p:
-                    p['score'] += 5
+                    self.score_gain(p, 5, now)
                 self.ev('rock', x=gx, y=gy, by=pr['owner'], score=5)
                 self.projectiles.remove(pr)
                 continue
@@ -846,10 +934,9 @@ class Room:
                     if cut > 0:
                         victim['cells'] = victim['cells'][:len(victim['cells']) - cut]
                         shooter = self.players.get(pr['owner'])
-                        if shooter:
-                            shooter['score'] += 3 * cut
+                        gained = self.score_gain(shooter, 3 * cut, now) if shooter else 0
                         self.ev('hit', x=gx, y=gy, by=pr['owner'], victim=victim['id'],
-                                cut=cut, score=3 * cut)
+                                cut=cut, score=gained)
                     else:
                         self.ev('hit', x=gx, y=gy, by=pr['owner'], victim=victim['id'],
                                 cut=0, score=0)
@@ -870,6 +957,7 @@ class Room:
                 'inv': max(0, p.get('inv', 0) - now),
                 'eff': {k: max(0, v - now) for k, v in p.get('eff', {}).items() if v > now},
                 'acct': p.get('user'),
+                'combo': p.get('combo', 0),
             })
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,
@@ -881,7 +969,8 @@ class Room:
             'portals': [list(r) for r in self.portals],
             'items': [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items],
             'proj': [{'x': round(pr['x'], 2), 'y': round(pr['y'], 2),
-                      'dx': pr['dx'], 'dy': pr['dy']} for pr in self.projectiles],
+                      'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0)}
+                     for pr in self.projectiles],
             'round': self.round_no, 'cols': self.cols, 'rows': self.rows,
             'win': None if not self.win_pending else self.win_pending['winner'],
             'over': self.win_pending is not None,
@@ -999,6 +1088,7 @@ def make_player(pid, sess, name, skin):
         'cells': [], 'dir': (1, 0), 'queue': [], 'score': 0, 'alive': False,
         'tick': 150, 'base_tick': 150, 'last_move': 0, 'last_atk': 0,
         'inv': 0, 'eff': {}, 'grow': 0, 'user': sess.user, 'cause': None, 'by': None,
+        'combo': 0, 'combo_at': 0,
     }
 
 
@@ -1204,12 +1294,13 @@ async def handle_msg(sess, m):
     elif t == 'atk':
         if not p['alive'] or room.win_pending:
             return
-        if now - p['last_atk'] < ATK_COOL or not p['cells']:
+        if now - p['last_atk'] < room.atk_cd(p, now) or not p['cells']:
             return
         p['last_atk'] = now
         hx, hy = p['cells'][0]
         room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
-                                 'dx': p['dir'][0], 'dy': p['dir'][1]})
+                                 'dx': p['dir'][0], 'dy': p['dir'][1],
+                                 'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0})
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
