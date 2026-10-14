@@ -310,6 +310,48 @@ def test_resume_keeps_snake_state():
     assert r.players[1]["alive"]
 
 
+def test_snapshot_carries_queue_len():
+    """批13①：players 快照带 q=队列长度，供客户端 dirQ 对账"""
+    r = fresh(12)
+    p = mk(r, 1, "A", [(4, 4), (4, 5), (4, 6)], (1, 0))
+    p["queue"] = [(0, 1), (1, 0)]
+    snap = r.snapshot(0, full=True)
+    me = [x for x in snap["players"] if x["id"] == 1][0]
+    assert me.get("q") == 2, me.get("q")
+
+
+def test_broadcast_send_fail_suspends_for_resume():
+    """批13③：broadcast 发送失败 → leave_room(hard=False) 挂起等 resume，
+    而不是只置 sess.room=None 留下幽灵订阅/双蛇"""
+    import asyncio
+
+    class BadWS:
+        async def send(self, m):
+            raise RuntimeError("closed ws")
+
+    class GoodWS:
+        async def send(self, m):
+            pass
+
+    r = fresh(12)
+    s1, s2 = S(), S()
+    s1.ws, s2.ws = BadWS(), GoodWS()
+    p1 = mk(r, 1, "A", [(4, 4), (4, 5), (4, 6)], (1, 0))
+    p2 = mk(r, 2, "B", [(7, 7), (7, 8), (7, 9)], (1, 0))
+    for s, pid in ((s1, 1), (s2, 2)):
+        s.room = r
+        s.pid = pid
+        s.full_sent = True
+        r.subs.add(s)
+    asyncio.run(r.broadcast())
+    assert s1 not in r.subs, "发送失败必须摘除订阅（幽灵订阅会永久占房）"
+    assert s1.room is None and s1.pid is None
+    assert p1.get("off_at"), "房里另有真人 → 原蛇挂起等 RESUME_MS 内重连恢复"
+    assert not p2.get("off_at")
+    assert s2 in r.subs, "成功者不受影响"
+    assert r.resumable(None) is p1, "重连 resume 必须命中同一条蛇"
+
+
 def test_ghost_wrap():
     r = fresh(10)
     p = mk(r, 1, "A", [(0, 5), (1, 5), (2, 5)], (-1, 0))
@@ -1074,6 +1116,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_offline_snake_frozen_until_resume,
             test_valid_room_pass, test_room_pass_field_not_leaked,
             test_gc_holds_new_rooms_24h, test_gc_keeps_persist_rooms,
-            test_persist_roundtrip, test_day_theme_in_pool]:
+            test_persist_roundtrip, test_day_theme_in_pool,
+            test_snapshot_carries_queue_len,
+            test_broadcast_send_fail_suspends_for_resume]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

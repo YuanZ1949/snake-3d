@@ -1241,6 +1241,7 @@ class Room:
                 'id': pid, 'name': p['name'], 'skin': p['skin'],
                 'cells': [list(c) for c in p['cells']],
                 'dir': list(p['dir']), 'score': p['score'],
+                'q': len(p.get('queue', ())),   # 批13①：服务端队列长度，客户端 dirQ 对账用
                 'alive': p['alive'], 'tick': p['tick'],
                 'inv': max(0, p.get('inv', 0) - now),
                 'eff': {k: max(0, v - now) for k, v in p.get('eff', {}).items() if v > now},
@@ -1311,7 +1312,11 @@ class Room:
             except Exception:
                 dead.append(sess)
         for sess in dead:
-            sess.room = None
+            # 批13③：发送失败 ≠ 仅失联——只置 sess.room=None 会让 leave_room 在
+            # 1794 早退（pid/subs 不清、无 off_at），产生幽灵订阅与重连双蛇。
+            # 走 leave_room(hard=False)：有他人时挂起等 RESUME_MS 内重连恢复，
+            # 否则照旧移出（保住空房回收）。
+            leave_room(sess, hard=False)
 
 
 # ============================================================ 房间注册表
