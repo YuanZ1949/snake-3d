@@ -24,6 +24,7 @@ SPAWN_INV = 2500        # 重生无敌保护 ms
 ITEM_LIFE = 12000       # 道具在地图上的存活时间
 EFFECT_MS = 6000        # 道具效果持续时间
 MIN_LEN = 2             # 蛇被截断后保留的最少格数
+STUCK_TICKS = 2         # 批14④：同格对头僵持 N tick 即破僵局（按 id 序留一死一）
 RESPAWN_MS = 3000       # 复活模式：死亡后延迟复活 ms
 LIMIT_MAX = 3600        # 战场限时上限（秒）
 RESUME_MS = 10000       # 断线宽限：原蛇原地保留等待重连 ms
@@ -484,6 +485,9 @@ class Room:
 
     # -------- 基础查询 --------
     def occupied(self, x, y, skip_pid=None):
+        # 批14：出界格视为占用（spawn 主路径以本函数替代 _solid，须与 _solid 同等拦截 OOB）
+        if not (0 <= x < self.cols and 0 <= y < self.rows):
+            return True
         if (x, y) in self.rocks or (x, y) in self.walls:
             return True
         if (x, y) in self.portals:
@@ -546,8 +550,30 @@ class Room:
             return cands[0]
         return None
 
+    def _resume_conflict(self, p):
+        """批14⑤：挂起期间原位是否已被占（活蛇穿入/压地形/出界）。
+        有冲突则 resume 必须重生——否则恢复出重叠/压墙的死锁几何。"""
+        cells = p.get('cells') or []
+        if not cells:
+            return True
+        block = set(self.rocks) | set(self.walls)
+        for cx, cy in cells:
+            if (cx, cy) in block:
+                return True
+            if not (0 <= cx < self.cols and 0 <= cy < self.rows):
+                return True
+            for q in self.players.values():
+                if q is p or not q['alive']:
+                    continue
+                if (cx, cy) in q['cells']:
+                    return True
+        return False
+
     def resume(self, sess, p):
-        """断线恢复：原蛇原分重新绑定会话（不重新出生）"""
+        """断线恢复：原蛇原分重新绑定会话（不重新出生）；
+        批14⑤：挂起期原位被穿入/压地形 → 位置冲突，改就地重生避开"""
+        if self._resume_conflict(p):
+            self.spawn_player(p, fresh_cells=True)
         p.pop('off_at', None)
         p['session'] = sess
         self.subs.add(sess)
@@ -613,7 +639,8 @@ class Room:
             opp = self._nearest_opp(x, y, pid)
             for d in dirs:
                 cells = [(x, y), (x - d[0], y - d[1]), (x - 2 * d[0], y - 2 * d[1])]
-                if any(self._solid(cx, cy, pid) for cx, cy in cells):
+                # 批14①：用 occupied 而非 _solid——不吃食物/道具/星星
+                if any(self.occupied(cx, cy, pid) for cx, cy in cells):
                     continue
                 ahead = self._open_ahead(x, y, d, pid)
                 if ahead < 4:
@@ -626,7 +653,30 @@ class Room:
         if best:
             p['cells'], p['dir'] = best[0], best[1]
             return
-        # 兜底：居中，并朝最开阔的方向
+        # 兜底①（批14①）：280 次随机全失败（拥挤小图）→ 用 free_cells 一次性
+        # 占用集线性扫描首个可容纳安全点。旧版在中央硬铺 3 格零检查：既可能
+        # 压住食物，两条蛇同时走兜底还会同格同向 → 永久对头死锁（F①）
+        occ = self.free_cells()
+        for x in range(self.cols):
+            for y in range(self.rows):
+                if (x, y) in occ:
+                    continue
+                cand, best_o = None, -1
+                for d in dirs:
+                    cells = [(x, y), (x - d[0], y - d[1]), (x - 2 * d[0], y - 2 * d[1])]
+                    if any(not (0 <= cx < self.cols and 0 <= cy < self.rows)
+                           or (cx, cy) in occ for cx, cy in cells):
+                        continue
+                    o = self._open_ahead(x, y, d, pid)
+                    if o > best_o:
+                        best_o, cand = o, d
+                if cand and best_o >= 4:
+                    p['cells'] = [(x, y), (x - cand[0], y - cand[1]),
+                                  (x - 2 * cand[0], y - 2 * cand[1])]
+                    p['dir'] = cand
+                    return
+        # 兜底②：连开阔安全位都找不到（地图被塞满）→ 旧居中位；
+        # 即便同格同向，也有批14④ 破僵局保底，不会永久卡死
         cx = max(2, min(self.cols - 3, self.cols // 2))
         cy = max(2, min(self.rows - 3, self.rows // 2))
         bd, ba = (1, 0), -1
@@ -862,6 +912,11 @@ class Room:
         if nd != cur:
             p['queue'] = [nd]
 
+    def _portal_exit_blocked(self, p, ex, ey):
+        """批14⑥：传送出口是否被其它活蛇占据（含蛇头）→ 占位则本帧跳过传送"""
+        return any(q['alive'] and q is not p and (ex, ey) in q['cells']
+                   for q in self.players.values())
+
     def step(self, dt, now):
         if self.win_pending:
             return
@@ -886,8 +941,13 @@ class Room:
                     p['dir'] = nd
 
         # 2) 计算目标格（含幽灵穿墙环绕 + 传送门）
+        # 批14：skip_move/dead/hit3 提前初始化——portal 分支（⑥）与对头僵持（④）
+        # 都要在这里就往里写
         pmap = self.portal_map()
         tent = {}
+        skip_move = set()   # 批14②⑥：本帧不移动（受保护身体/传送出口被占）
+        dead = set()        # 批14④：本 tick 判死集合（含僵持破局）
+        hit3 = set()        # 批14④：本 tick 参与对头僵持的蛇（未参与者清 hstreak）
         for p in due:
             hx = p['cells'][0][0] + p['dir'][0]
             hy = p['cells'][0][1] + p['dir'][1]
@@ -895,14 +955,24 @@ class Room:
                 hx %= self.cols
                 hy %= self.rows
             if (hx, hy) in pmap:
-                hx, hy = pmap[(hx, hy)]
-                # 出口朝向取出口处最开阔方向（不贴最近的墙，#2）
-                best, bo = p['dir'], -1
-                for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    o = self._open_ahead(hx, hy, d, p['id'])
-                    if o > bo:
-                        bo, best = o, d
-                p['dir'] = best
+                ex, ey = pmap[(hx, hy)]
+                if self._portal_exit_blocked(p, ex, ey):
+                    # 批14⑥：出口被占 → 本帧不传送不移动，原地等下一 tick 重试
+                    #（旧版直接传进蛇身：与占位蛇叠体、还反向咬对方）
+                    hx, hy = p['cells'][0]
+                    skip_move.add(id(p))
+                else:
+                    # 出口朝向取出口处最开阔方向；开阔度打平时延续进入方向。
+                    # 批14⑥：旧版固定从 (1,0) 起比较 + 严格大于 → 打平必偏东
+                    order = (p['dir'],) + tuple(
+                        d for d in ((1, 0), (-1, 0), (0, 1), (0, -1)) if d != p['dir'])
+                    best, bo = order[0], -1
+                    for d in order:
+                        o = self._open_ahead(ex, ey, d, p['id'])
+                        if o > bo:
+                            bo, best = o, d
+                    p['dir'] = best
+                    hx, hy = ex, ey
             tent[id(p)] = (hx, hy)
 
         head_on = set()
@@ -911,24 +981,51 @@ class Room:
             return id(p) in head_on
 
         # 3) 对头相撞 → 双方强制右转
+        #    批14③：已 head_on 者不再二次右转（同帧转两次=反向 → 下帧咬颈自杀）
+        #    批14④：同格僵持连续 STUCK_TICKS tick → 按 id 序留一死一，破永久死锁
+        clash_pairs = []
         for i, a in enumerate(due):
             for b in due[i + 1:]:
                 ta, tb = tent[id(a)], tent[id(b)]
                 if ta == tb or (ta == b['cells'][0] and tb == a['cells'][0]):
-                    self.force_right(a)
-                    self.force_right(b)
+                    if not is_head_on(a):
+                        self.force_right(a)
+                    if not is_head_on(b):
+                        self.force_right(b)
                     head_on.add(id(a))
                     head_on.add(id(b))
+                    hit3.add(id(a))
+                    hit3.add(id(b))
                     self.ev('clash', ids=[a['id'], b['id']])
+                    clash_pairs.append((a, b))
+        # 按 tick 计数（不按 pair——三方同格 1 tick 若 +2 会提前破僵局误杀）
+        for p in due:
+            if id(p) in hit3:
+                p['hstreak'] = p.get('hstreak', 0) + 1
+        for a, b in clash_pairs:
+            if (a.get('hstreak', 0) >= STUCK_TICKS
+                    and b.get('hstreak', 0) >= STUCK_TICKS):
+                # str 包裹防 int/str 混型比较；确定性 tie-break：id 大者出局
+                loser = a if str(a['id']) > str(b['id']) else b
+                if id(loser) not in dead:
+                    dead.add(id(loser))
+                    loser['cause'] = 'stuck'
+        # 未参与僵持的蛇清零连击计数（成功移动时也会清，见 section 6）
+        for p in due:
+            if id(p) not in hit3:
+                p.pop('hstreak', None)
         for a in due:
             if is_head_on(a):
                 continue
             for q in self.players.values():
-                if q is a or not q['alive'] or not q['cells']:
+                # 批14⑤：挂起蛇（off_at）不参与顶头——静止 10s 的幽灵障碍不冻结活蛇
+                if q is a or not q['alive'] or not q['cells'] or q.get('off_at'):
                     continue
                 if tent[id(a)] == q['cells'][0]:
                     self.force_right(a)
-                    self.force_right(q)
+                    # 批14③：q 可能已因别处僵持被右转，避免双重右转
+                    if not is_head_on(q):
+                        self.force_right(q)
                     head_on.add(id(a))
                     head_on.add(id(q))
                     self.ev('clash', ids=[a['id'], q['id']])
@@ -937,7 +1034,7 @@ class Room:
         # 4) 普通碰撞：墙 / 岩石 / 墙块 / 自己
         #    护盾(shield) = 任何地形碰撞都折返不死；偏转道具(deflect) = 仅边界墙折返；
         #    偏转方向取垂直方向中空间最大的一格（仍无路可走则照死）
-        dead = set()
+        #    批14④：dead 已在 section 2 前初始化（僵持破局要往里写），此处不再重建
         blockset = set(self.rocks) | set(self.walls)
         for p in due:
             if is_head_on(p):
@@ -964,18 +1061,24 @@ class Room:
         # 5) 咬到其他蛇身体 → 截断对方（对方至少保留 MIN_LEN 格，被截下的部分并入攻击者长度）
         bites = {}   # victim_id -> (eater_id, index)
         for p in due:
-            if is_head_on(p) or id(p) in dead or not p['alive']:
+            if is_head_on(p) or id(p) in dead or id(p) in skip_move or not p['alive']:
                 continue
             cell = tent[id(p)]
             for q in self.players.values():
-                if q is p or not q['alive'] or not q['cells']:
+                # 批14⑤：挂起蛇不可被咬（静止幽灵不给路过的蛇白送截断）
+                if q is p or not q['alive'] or not q['cells'] or q.get('off_at'):
                     continue
                 if cell in q['cells'][1:]:
                     if self._protected(q, now):
+                        # 批14②：受保护身体不可进入 → 本帧不移动（旧版插头穿身，
+                        # 保护期结束前持续重叠）
+                        skip_move.add(id(p))
                         continue
                     idx = q['cells'].index(cell)
                     if q['id'] not in bites or idx < bites[q['id']][1]:
                         bites[q['id']] = (p['id'], idx)
+        # 批14②：本帧被判 skip_move 的攻击者不得执行其咬（头根本没过去）
+        bites = {v: e for v, e in bites.items() if e[0] not in skip_move}
         for vid, (eid, idx) in bites.items():
             q = self.players.get(vid)
             ep = self.players.get(eid)
@@ -1021,10 +1124,11 @@ class Room:
         # 6) 存活者移动 + 进食 + 拾取道具
         eaten_items = set()
         for p in due:
-            if is_head_on(p) or id(p) in dead or not p['alive']:
+            if is_head_on(p) or id(p) in dead or id(p) in skip_move or not p['alive']:
                 continue
             hx, hy = tent[id(p)]
             p['cells'].insert(0, (hx, hy))
+            p.pop('hstreak', None)               # 批14④：成功移动即解除僵持计数
             ate = False
             if self.food and (hx, hy) == (self.food['x'], self.food['y']):
                 ate = True

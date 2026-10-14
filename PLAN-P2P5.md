@@ -51,6 +51,21 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 18 | E 房间参数编辑 | roomcfg 消息 + 房主鉴权 + 面板复用 | 最大新功能，放功能批最后 |
 | 19 | A2 + A3 + 上线 | local_ci.ps1 + 服务器清理 + 全量回归 + git archive 部署 8090 + 生产验证 | 收尾批；上线必须在全部功能回归后 |
 
+## 执行状态（第二轮）
+
+| 批 | 状态 | commit | 回归证据 |
+|---|---|---|---|
+| 12.5 A2 本地 CI | ✅ | db83653 | local_ci.ps1 基线全绿 |
+| 13 D 方向失控 | ✅ | b5e9759 | 单测 69 + 8 E2E + 静态 + Playwright 全绿 |
+| 14 F 碰撞卡叠 | ✅ | 本 commit | 单测 79（+10 新例，旧码 9 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3） |
+| 15 C AI 吃水果 | ⬜ 下一批 | | |
+| 16 B+G 下拉暗色+死亡观战 | ⬜ | | |
+| 17 H 外墙偏转选项 | ⬜ | | |
+| 18 E 房间参数编辑 | ⬜ | | |
+| 19 A3+部署上线 | ⬜ | | |
+
+> 批14 踩坑记录：spawn 主路径 `_solid`→`occupied` 替换引入 OOB 回归（`occupied()` 无界检查，贴边出界 spawn 被 `_open_ahead` 高分开选中）→ P5 E2E 抓出（resume 位置复核 `RCONF oob` 插桩定位）→ 修法为 `occupied()` 顶部补「出界即占用」（其余 3 个调用点坐标恒界内，零行为变化）。诊断插桩已全部移除（grep RCONF clean）。
+
 ## 各批技术方案（要点）
 
 - **批12.5（A2 前移）**：`scripts/local_ci.ps1`——停服清库→起双服(28000/8090)→8 E2E→单测→停服清库→静态检查→起 8123→Playwright 3/3→汇总 Exit code。批13-18 每批跑它。

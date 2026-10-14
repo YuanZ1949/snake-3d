@@ -163,7 +163,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 > 批11 增量协议：服务端对 6 个静态字段做签名对比（`Room._field_sig`），变了才带；新订阅者（join/watch/resume）首帧为**全量帧**（6 字段齐全 + `full:1`，由 `Session.full_sent` 控制，`broadcast` 内补组）。稳态实测增量帧较全量帧省 ~31% 字节。协议级验收见 `test_delta_p1.py`（第 8 套 E2E）。
 
-**`players[]` 字段**：`id, name, skin, cells[], dir, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5；**批12 起客户端灰化渲染 + 名字 💤**）
+**`players[]` 字段**：`id, name, skin, cells[], dir, q, score, alive, tick, base_tick, inv, eff{shield,speed,ghost,magnet,double,rage,deflect}, user, cause, by, combo, ult, bot, off`（`off`=断线挂起中，批5；**批12 起客户端灰化渲染 + 名字 💤**；`q`=服务端转向队列长度，批13，客户端据此对账截断本地 dirQ）
 > `ult` 为大招蓄力（0–100），满 100 可按 `ult` 消息/点 HUD 按钮释放。
 
 **房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots, hasPass, persist`
@@ -199,6 +199,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `ITEM_LIFE` | 12000 | 道具在地上存活 ms；实际 = 基础 × `life_mult()`（批3，随地图放大） |
 | `EFFECT_MS` | 6000 | 道具效果持续 ms |
 | `MIN_LEN` | 2 | 被截断后蛇保留的最少格数 |
+| `STUCK_TICKS` | 2 | 同格对头僵持连续达到该 tick 数 → 确定性 tie-break 判死（批14） |
 | `BULLET_CUT` | 1 | 子弹命中截断的格数（按需求"不要太大"） |
 | `BITE_SCORE_PER_CELL` | 8 | 咬下对方每格得分 |
 | `COMBO_MS` | 3000 | 连击窗口：两次吃果间隔超此值连击重置 |
@@ -245,6 +246,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **观战切换（批8，新#8）**：观战时 ←/→（或 A/D）与触屏左右滑循环切换被观战者——`spectList()` 名单=存活蛇按分数降序（与「跟随领先者」同序），toast 显示「观战：名（i/N）」；相机优先跟随 `spectTarget`，失效（死亡/离场）自动回退领先者；进观战/入局/回主页重置目标。
 - **移动端压缩（批8，B4）**：`@media (max-width:760px)` 压缩标题/HUD chip/开始页文案/聊天与小地图尺寸、开始页可纵向滚动；转向操作已有触屏滑动 + 方向键面板（pointer 事件，含跟随模式左右键布局）覆盖。
 - **720p 短屏裁切修复（批9 附带）**：1280×720 下 `scrollH` 曾 768（dpad 第二行 ⚔ 越界 4px）。修复：`resize()` 对 `innerHeight<=760` 用系数 `.60`（其余 `.68`，画布 720p→432px）；`@media (max-height:720px)` 内 `body` 底 padding 44→16、`.dpad` 行 56→46/gap 8→6、`body.follow .dpad` 同步 46px。修复后 scrollH=720 零溢出（Playwright 实测）。
+- **方向输入可靠化（批13，D 方向失控）**：① 快照 `players[]` 带 `q`（服务端转向队列长度），客户端 `applyPlayers` 存入 `myEnt.q`，快照循环里超出 q 的本地 dirQ 尾部截断——以服务端为权威，覆盖 deflect/shield 清队、clash 清队、队满丢新项三类服务端清队不同步导致的**队头永久失步锁死**；② 回合切换（handleRound 变更分支）、`round` 事件、onWin else 分支强制 `dirQ=[]`（旧版新局开局携带陈旧队列整局锁死）；③ `setDir` 前置 `wsOpen` 门控（未发出的项不进本地队列）；④ `broadcast` 对订阅者发送失败改调 `leave_room(sess, hard=False)`（旧版仅置 `sess.room=None` 造成幽灵订阅+重连双蛇；新走挂起语义，`off_at`/`resumable` 全保留，10s 内重连 resume 命中同 id）。
+- **碰撞与出生加固（批14，F 碰撞卡叠）**：① **spawn** 主路径 `any(_solid(...))` → `any(occupied(...))`（额外避让食物/星星/道具；`occupied()` 顶部补**出界即占用**——旧 `_solid` 独有界检查，直接换函数会生成贴边 OOB 蛇身）；兜底分支弃「居中硬铺 3 格零检查」，改扫 `free_cells` 落四向开阔 ≥4 的安全点，仍失败才回退居中位（由破僵局保底）。② **保护期拦进入**：攻击者欲进出生无敌/护盾蛇的身体 → 本帧 `skip_move`（不插头不咬），不再穿身重叠。③ **对头破僵局**：同格对头连续 `STUCK_TICKS=2` tick → 确定性 tie-break（`str(id)` 大者判死 `cause='stuck'`，客户端文案「与对手僵持卡死」）；单帧内每蛇最多被强制右转一次（防双重右转反向自杀）；hstreak 按 tick 统一计数（不在 pair 循环内加，防三方同格误杀）、成功移动即清。④ **off_at 挂起蛇**：不再参与被咬与顶头强制右转（仍是地形/寻路障碍，`_solid`/`free_cells`/`check_win` 不变）；`resume()` 位置复核（出界/压地形/被活蛇穿入）→ 原地 `spawn_player(fresh_cells)` 重生，杜绝恢复出重叠死锁。⑤ **传送门**：出口被任意活蛇身体占 → 本帧不传送原地停留（`skip_move`）；出口选向打平时**延续进入方向**（旧版方向序首项恒偏东）。⑥ 尸体不阻挡保持不变（已按 alive 全面过滤）。回归：`test_game.py` 79 用例（本批 +10，旧码 9 红）、local_ci ALL GREEN。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -301,7 +304,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×67 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形） |
+| `test_game.py` | 单元 ×79 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |
@@ -315,6 +318,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 | `e2e/smoke.spec.js` | Playwright ×3 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
 | `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 8 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
+| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量：停服清库→起 28000/8090→8 套 E2E→单测→停服清库→静态检查→起 8123→Playwright 3/3→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 

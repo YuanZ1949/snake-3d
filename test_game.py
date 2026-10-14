@@ -1080,6 +1080,201 @@ def test_day_theme_in_pool():
     print("day theme pool OK:", r.theme, cfg)
 
 
+# ================= 批14 碰撞卡叠修复 =================
+def test_spawn_fallback_safe_point_avoids_food():
+    # 批14①：280 次随机全失败 → 兜底线性扫描安全点（不压食物/地形/蛇）。
+    # 旧版兜底在中央硬铺 3 格零检查 → 可能压 food，且同格同向死锁源
+    from unittest import mock
+    r = fresh(12)
+    r.food = {"id": 1, "x": 6, "y": 6, "score": 10, "color": "#fff"}
+    s = S()
+    p = serve.make_player(1, s, "A", 0)
+    r.players[1] = p
+    calls = [0]
+
+    def fake_randint(a, b):
+        calls[0] += 1
+        return 6 if calls[0] % 2 == 1 else 6      # 恒采样食物格 (6,6)
+
+    with mock.patch.object(serve.random, "randint", side_effect=fake_randint):
+        r.spawn_player(p)
+    assert p["alive"] and len(p["cells"]) == 3, p["cells"]
+    assert (6, 6) not in p["cells"], ("兜底 spawn 压住了食物", p["cells"])
+    for cx, cy in p["cells"]:
+        assert 0 <= cx < r.cols and 0 <= cy < r.rows, p["cells"]
+    print("spawn fallback avoids food OK ->", p["cells"])
+
+
+def test_spawn_main_path_avoids_food():
+    # 批14①主路径：落食物格的采样应被拒（旧版 _solid 不含 food → 直接压上）。
+    # 主循环不提前退出（280 次采满），用 cycle 供值；食物 (2,2) 开阔度 9 高于
+    # 填充格 (6,6) 的 6，旧版会把它选成 best（RED），新版恒拒之
+    from itertools import cycle
+    from unittest import mock
+    r = fresh(12)
+    r.food = {"id": 1, "x": 2, "y": 2, "score": 10, "color": "#fff"}
+    s = S()
+    p = serve.make_player(1, s, "A", 0)
+    r.players[1] = p
+    seq = cycle([6, 6, 2, 2])                    # 交替采样填充格 (6,6) 与食物格 (2,2)
+    with mock.patch.object(serve.random, "randint", side_effect=lambda a, b: next(seq)):
+        r.spawn_player(p)
+    assert (2, 2) not in p["cells"], ("主路径 spawn 压住了食物", p["cells"])
+    assert len(p["cells"]) == 3, p["cells"]
+    print("spawn main path avoids food OK ->", p["cells"])
+
+
+def test_protected_body_entry_skips_move():
+    # 批14②：进入受保护（出生无敌/护盾）蛇身体 → 本帧不移动（旧版直接插头穿身）
+    r = fresh(12)
+    now = serve.now_ms()
+    q = mk(r, 2, "Q", [(8, 10), (7, 10), (6, 10)], (1, 0))
+    q["inv"] = now + 99999                       # 保护期
+    q["last_move"] = now                         # q 本帧不动（非 due）
+    p = mk(r, 1, "P", [(5, 10), (5, 11), (5, 12)], (1, 0))  # 头将进入 (6,10)
+    r.step(0.05, now)
+    assert p["cells"][0] == (5, 10), ("受保护身体不可进入，p 不该插头", p["cells"])
+    assert len(q["cells"]) == 3 and q["cells"][0] == (8, 10), q["cells"]
+    assert p["alive"] and q["alive"]
+    print("protected body entry skip OK")
+
+
+def test_head_on_single_force_per_tick():
+    # 批14③：三方同格争顶每蛇只右转一次（旧版同帧双重右转 → 反向 → 咬颈自杀）
+    r = fresh(12)
+    a = mk(r, 1, "A", [(5, 5), (5, 4), (5, 3)], (1, 0))     # tent (6,5)
+    b = mk(r, 2, "B", [(6, 4), (6, 3), (6, 2)], (0, 1))     # tent (6,5)
+    c = mk(r, 3, "C", [(6, 6), (6, 7), (6, 8)], (0, -1))    # tent (6,5)
+    r.step(0.05, serve.now_ms())
+    # 每蛇恰好右转一次：(1,0)→(0,1)、(0,1)→(-1,0)、(0,-1)→(1,0)
+    # 旧版双转的 a 会变 (-1,0)、b 变 (0,-1)、c 变 (0,1)
+    assert a["dir"] == (0, 1), ("a 应只右转一次", a["dir"])
+    assert b["dir"] == (-1, 0), ("b 应只右转一次", b["dir"])
+    assert c["dir"] == (1, 0), ("c 应只右转一次", c["dir"])
+    assert a["alive"] and b["alive"] and c["alive"]
+    print("head_on single force per tick OK")
+
+
+def test_stuck_head_on_tiebreak():
+    # 批14④破僵局：同格同向卡死 ≥2 tick → 按 id 序留一死一（旧版永久右转死锁）
+    r = fresh(12)
+    a = mk(r, "a1", "A", [(4, 4), (4, 3), (4, 2)], (1, 0))
+    b = mk(r, "a2", "B", [(4, 4), (4, 3), (4, 2)], (1, 0))   # 同格同向
+    now = serve.now_ms()
+    r.step(0.05, now)
+    assert a["alive"] and b["alive"], "第1帧仅冻结不应判死"
+    r.step(0.05, now + 200)
+    dead = [p for p in (a, b) if not p["alive"]]
+    assert len(dead) == 1, ("第2帧应破僵局判死一个", a["alive"], b["alive"])
+    assert dead[0]["cause"] == "stuck", dead[0]["cause"]
+    assert dead[0]["id"] == "a2", ("按 id 序大者出局", dead[0]["id"])
+    print("stuck head_on tiebreak OK")
+
+
+def test_off_at_not_headblock():
+    # 批14⑤：挂起蛇头不再顶住活蛇（旧版 force_right 冻结 → 静止幽灵障碍）
+    r = fresh(12)
+    now = serve.now_ms()
+    q = mk(r, 2, "Q", [(8, 8), (8, 9), (8, 10)], (1, 0))
+    q["off_at"] = now - 1000                     # 挂起中（未超 RESUME_MS）
+    p = mk(r, 1, "P", [(7, 8), (7, 7), (7, 6)], (1, 0))      # tent = q 头 (8,8)
+    r.step(0.05, now)
+    assert p["cells"][0] == (8, 8), ("挂起蛇头不该顶住活蛇", p["cells"])
+    assert q["cells"][0] == (8, 8) and len(q["cells"]) == 3, q["cells"]
+    assert p["alive"]
+    print("off_at not headblock OK")
+
+
+def test_off_at_not_bitten():
+    # 批14⑤：挂起蛇不可被咬（旧版活蛇路过即可截断静止 10s 的幽灵蛇）
+    r = fresh(12)
+    now = serve.now_ms()
+    q = mk(r, 2, "Q", [(10, 9), (9, 9), (8, 9)], (1, 0))
+    q["off_at"] = now - 1000
+    p = mk(r, 1, "P", [(8, 8), (8, 7), (8, 6)], (0, 1))      # tent = q 身体 (8,9)
+    r.step(0.05, now)
+    assert len(q["cells"]) == 3, ("挂起蛇不该被咬", q["cells"])
+    assert p["cells"][0] == (8, 9), p["cells"]
+    print("off_at not bitten OK")
+
+
+def test_resume_position_conflict_fresh_spawn():
+    # 批14⑤：挂起期原位被活蛇穿入 → resume 不得原地恢复（重叠死锁），改重生
+    r = fresh(12)
+    now = serve.now_ms()
+    q = mk(r, 2, "Q", [(8, 8), (8, 9), (8, 10)], (1, 0))
+    q["off_at"] = now - 1000
+    p = mk(r, 1, "P", [(8, 8), (7, 8), (6, 8)], (1, 0))      # 已穿进 q 原位
+    s2 = S()
+    r.resume(s2, q)
+    assert "off_at" not in q, "resume 应清除挂起标记"
+    assert q["session"] is s2
+    overlap = set(q["cells"]) & set(p["cells"])
+    assert not overlap, ("位置冲突应重生避开", q["cells"], p["cells"])
+    assert len(q["cells"]) == 3, q["cells"]
+    print("resume conflict fresh spawn OK ->", q["cells"])
+
+
+def test_portal_exit_blocked_skip_move():
+    # 批14⑥：传送出口被占 → 本帧原地不动（旧版直接传进蛇身：叠体+咬）
+    r = fresh(12)
+    r.portals = [(5, 5), (9, 9)]
+    now = serve.now_ms()
+    q = mk(r, 2, "Q", [(9, 10), (9, 9), (9, 8)], (1, 0))
+    q["last_move"] = now                         # q 静止，出口持续被占
+    p = mk(r, 1, "P", [(4, 5), (3, 5), (2, 5)], (1, 0))      # 进 (5,5) 门 → 出 (9,9)
+    r.step(0.05, now)
+    assert p["cells"][0] == (4, 5), ("出口被占不该传送", p["cells"])
+    assert len(p["cells"]) == 3
+    assert p["dir"] == (1, 0), ("原地等待不应改向", p["dir"])
+    assert len(q["cells"]) == 3, ("不该被传送进来的蛇咬", q["cells"])
+    print("portal exit blocked skip OK")
+
+
+def test_portal_exit_prefers_arrival_dir_on_tie():
+    # 批14⑥复现：出口朝向打平时旧版固定偏东（(1,0) 首位 + 严格大于），应延续
+    # 进入方向。大图受 cap=24 制约东西向无法同时打满，故用岩石人工造三向
+    # 打平：东/南/西 o 各=1（1 格空后是岩石），北=0（紧贴岩石）
+    r = fresh(24)
+    r.portals = [(5, 5), (10, 10)]
+    r.rocks = [(12, 10), (10, 12), (8, 10), (10, 9)]
+    p = mk(r, 1, "A", [(5, 4), (5, 3), (5, 2)], (0, 1))     # 向南进 (5,5) 门 → 出 (10,10)
+    r.step(0.05, serve.now_ms())
+    assert p["cells"][0] == (10, 10), p["cells"]
+    assert p["dir"] == (0, 1), ("打平应延续进入方向而非固定偏东", p["dir"])
+    print("portal arrival dir tie OK ->", p["dir"])
+
+
+def test_bot_liveness_no_permanent_head_clash():
+    # 批14活性压力：7 bot 18x18 图 30s 模拟，任何同格对头 ≤2 tick（≥3=疑似死锁）
+    serve.random.seed(42)
+    r = fresh(16, bots=7)
+    r.place_food()
+    now = serve.now_ms()
+    clash_streak = {}
+    eaten_seen = 0
+    for _ in range(600):                         # 600 × 50ms = 30s
+        now += 50
+        r.step(0.05, now)
+        if r.win_pending:                        # 模拟 game_loop：结算即重开
+            r.win_pending = None
+            r.new_round()
+        eaten_seen = max(eaten_seen, r.fruits_eaten)
+        heads = {}
+        for p in r.players.values():
+            if p["alive"] and p["cells"]:
+                heads.setdefault(p["cells"][0], []).append(p["id"])
+        for cell, ids in heads.items():
+            if len(ids) > 1:
+                clash_streak[cell] = clash_streak.get(cell, 0) + 1
+                assert clash_streak[cell] <= 2, (
+                    "同格对头超过 2 tick（疑似永久死锁）", cell, ids, clash_streak[cell])
+            else:
+                clash_streak.pop(cell, None)
+    assert eaten_seen > 0, "30s 内 bot 一条水果都没吃到（疑似寻路失效）"
+    print("bot liveness OK: eaten_seen=%d" % eaten_seen)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1118,6 +1313,17 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_gc_holds_new_rooms_24h, test_gc_keeps_persist_rooms,
             test_persist_roundtrip, test_day_theme_in_pool,
             test_snapshot_carries_queue_len,
-            test_broadcast_send_fail_suspends_for_resume]:
+            test_broadcast_send_fail_suspends_for_resume,
+            test_spawn_fallback_safe_point_avoids_food,
+            test_spawn_main_path_avoids_food,
+            test_protected_body_entry_skips_move,
+            test_head_on_single_force_per_tick,
+            test_stuck_head_on_tiebreak,
+            test_off_at_not_headblock,
+            test_off_at_not_bitten,
+            test_resume_position_conflict_fresh_spawn,
+            test_portal_exit_blocked_skip_move,
+            test_portal_exit_prefers_arrival_dir_on_tie,
+            test_bot_liveness_no_permanent_head_clash]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
