@@ -79,13 +79,14 @@ def combo_mult(combo):
         if combo >= need:
             return m
     return 1.0
-THEMES = ('default', 'lava', 'ice', 'space')
+THEMES = ('default', 'lava', 'ice', 'space', 'day')
 # 主题参数：岩石密度倍率 / 是否生成传送门 / 固定墙块数量 / 配色（供前端参考）
 THEME_CFG = {
     'default': {'rock': 1.0, 'portal': True,  'walls': 0, 'accent': 0x7ee787},
     'lava':    {'rock': 1.7, 'portal': False, 'walls': 6, 'accent': 0xff6b3d},
     'ice':     {'rock': 0.5, 'portal': False, 'walls': 0, 'accent': 0x61b0ff},
     'space':   {'rock': 0.6, 'portal': True,  'walls': 4, 'accent': 0xb197fc},
+    'day':     {'rock': 0.8, 'portal': True,  'walls': 0, 'accent': 0x4dabf7},
 }
 
 # 地图尺寸档位 → 房间名（用于默认房间）

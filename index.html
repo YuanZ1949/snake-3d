@@ -479,6 +479,7 @@
                 <option value="lava">熔岩</option>
                 <option value="ice">冰原</option>
                 <option value="space">星空</option>
+                <option value="day">白天</option>
               </select>
             </label>
             <label><span>岩石</span>
@@ -603,7 +604,7 @@
   const finalScore = $('finalScore'), recordTip = $('recordTip'), btnPause = $('btnPause'), btnRestart = $('btnRestart');
 
   let COLS = 24, ROWS = 24;
-  const THEME_LABEL = {default: '常规', lava: '熔岩', ice: '冰原', space: '星空'};
+  const THEME_LABEL = {default: '常规', lava: '熔岩', ice: '冰原', space: '星空', day: '白天'};
   const BEST_KEY = 'snake-best', MUTE_KEY = 'snake-muted';
 
   const FRUITS = [
@@ -613,6 +614,14 @@
     {score: 15, color: 0xa78bfa},
     {score: 15, color: 0xffa94d},
   ];
+  // #9 屏外边缘提示：按水果实际种类出对应图标（不再一律 🍎）
+  const FRUIT_EMOJI = {
+    0xff5f5f: '🍎',  // 红苹果 +10
+    0xe74c3c: '🍒',  // 樱桃红 +15
+    0xff6b81: '🍓',  // 粉草莓 +20
+    0xa78bfa: '🍇',  // 紫葡萄 +15
+    0xffa94d: '🍊',  // 橙柑 +15
+  };
 
   let snake, lastCells, dir, food, bonus, score, best, state, lastTick;
   let particles = [], floaters = [], shake = 0, audio = null;
@@ -670,8 +679,17 @@
     lava:    {bg: 0x190d09, fog: 0x190d09, a: '#2a1410', b: '#1f0f0b', frame: 0xff8a3d, wall: 0xff6b3d},
     ice:     {bg: 0x081420, fog: 0x081420, a: '#152b3d', b: '#10222f', frame: 0x9ad0ff, wall: 0x61b0ff},
     space:   {bg: 0x0a0718, fog: 0x0a0718, a: '#1a1333', b: '#120d24', frame: 0xc9b0ff, wall: 0xb197fc},
+    day:     {bg: 0x9ecff2, fog: 0x9ecff2, a: '#e6f3fd', b: '#d2e7f8', frame: 0xffc94d, wall: 0x4dabf7},
   };
   let themeName = 'default';
+  // #10 主题下拉选项着各主题原始配色（与主页场景一致，不再一律默认色）
+  {
+    const sel = $('cTheme');
+    if (sel) sel.querySelectorAll('option').forEach(o => {
+      const tp = THEMES[o.value];
+      if (tp) o.style.color = '#' + tp.wall.toString(16).padStart(6, '0');
+    });
+  }
   const NAME_KEY = 'snake-name';
   let playerName = localStorage.getItem(NAME_KEY) || '';
   const _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _edgeV = new THREE.Vector3();
@@ -1683,6 +1701,7 @@
     const e = {
       id, name: '', skin: 0, alive: true, score: 0,
       cells: [], lastCells: [], spine: [], rotT: [], dir: {x: 1, y: 0},
+      moveAt: 0, moveDt: 150,   // #3 插值起点时刻与位移节奏（按观测间隔自适应）
       deathAt: 0, flashAt: 0, inv: 0, eff: {},
       bodyMat: new THREE.MeshStandardMaterial({roughness: .55, metalness: .05}),
       bodyMesh: null, head: null, tongue: null, skull: null, nameSp: null, nameText: '',
@@ -1760,7 +1779,15 @@
       } else {
         const wasAlive = e.alive;
         const nc = p.cells.map(c => ({x: c[0], y: c[1]}));
-        if (cellsChanged(nc, e.cells)) { e.lastCells = e.cells; e.cells = nc; }
+        if (cellsChanged(nc, e.cells)) {
+          // #3 丝滑移动：记录位移起点/节奏，渲染时在 prev→next 间按 tick 进度线性插值；
+          // 头部大跳变（传送门/出生点等 >6 格）不插值，直接贴到新位置避免滑图
+          const jump = Math.abs(nc[0].x - e.cells[0].x) + Math.abs(nc[0].y - e.cells[0].y) > 6;
+          e.lastCells = jump ? nc.map(c => ({...c})) : e.cells;
+          e.cells = nc;
+          e.moveDt = e.moveAt ? Math.min(400, Math.max(60, now - e.moveAt)) : 150;
+          e.moveAt = now;
+        }
         e.dir = {x: p.dir[0], y: p.dir[1]};
         e.score = p.score;
         e.inv = p.inv || 0;
@@ -2301,8 +2328,17 @@
     }
     spine.length = cells.length;
 
+    // #3 逻辑仍按格移动；渲染在 prev→next 格间按 phase（tick 进度）线性插值 → 丝滑
+    const ph = opts.phase === undefined ? 1 : opts.phase;
+    const from = opts.from;
     for (let i = 0; i < cells.length; i++) {
-      cw(cells[i].x, cells[i].y, _vb);
+      const c = cells[i], f = from && from[i];
+      if (f && (f.x !== c.x || f.y !== c.y)) {
+        _vb.set(f.x + (c.x - f.x) * ph - COLS / 2 + .5, SEG_H / 2 + .02,
+                f.y + (c.y - f.y) * ph - ROWS / 2 + .5);
+      } else {
+        cw(c.x, c.y, _vb);
+      }
       spine[i].lerp(_vb, kp);
       if (fall) spine[i].y -= i === 0 ? fall : fall * .5;
     }
@@ -2336,8 +2372,10 @@
       const dx = to.x - from.x, dy = to.y - from.y;
       e.rotT[i] = (dx || dy) ? Math.atan2(dx, dy) : (e.rotT[i - 1] != null ? e.rotT[i - 1] : e.rotT[0]);
     }
+    const ph = e.moveAt ? Math.min(1, Math.max(0, (now - e.moveAt) / (e.moveDt || 150))) : 1;
     syncBody(e.cells, e.spine, e.dir, e.rotT, e.bodyMesh, e.bodyMat, e.head, e.tongue, e.skull, {
       now, dead: !e.alive, deathAt: e.deathAt, headColor: SKINS[e.skin % SKINS.length].head,
+      from: e.lastCells, phase: ph,
     }, dt);
     if (e.name) {
       nameSprite(e, e.name);
@@ -2362,8 +2400,11 @@
   function syncSnake(dt) {
     const now = performance.now();
     updateMotionTargets();
+    // #3 演示蛇同样按 tick 进度线性插值（180ms 一格，phase 0→1 对应 prev→next）
+    const ph = Math.min(1, Math.max(0, (now - lastTick) / 180));
     syncBody(snake, spine, dir, rotT, bodyMesh, bodyMat, head, tongueMesh, skullMesh, {
       now, dead: false, deathAt: 0, headColor: SKINS[skinIdx].head,
+      from: lastCells, phase: ph,
     }, dt);
   }
 
@@ -2432,7 +2473,11 @@
   }
 
   function updateEdgeHints() {
-    placeEdge($('foodEdge'), food ? food.x : null, food ? food.y : null, null);
+    // #9 边缘提示跟随水果实际种类（颜色 → 图标），缺省回落 🍎
+    const fe = $('foodEdge');
+    const em = (food && FRUIT_EMOJI[food.color]) || '🍎';
+    if (fe.textContent !== em) fe.textContent = em;
+    placeEdge(fe, food ? food.x : null, food ? food.y : null, null);
     const blink = bonus
       ? (performance.now() - bonus.born) / 8000 > .7 && Math.floor(performance.now() / 180) % 2
       : undefined;
@@ -2457,7 +2502,7 @@
       if (!demoPaused) {
         let n = 0;
         while (now - lastTick >= 180 && n++ < 4) { lastTick += 180; step(); }
-        if (now - lastTick > 720) lastTick = now;
+        if (now - lastTick > 720) { lastTick = now; lastCells = snake.map(s => ({...s})); }
       }
       syncSnake(dt);
       syncFood(now);

@@ -33,7 +33,7 @@
 | 4 | AI蛇+单人模式 | A4 + 新#5 | ✅ | 单测 51/51 先红后绿；静态检查 ALL PASSED；4+1 E2E Exit 0（BOTS E2E：info/快照/AI 自主移动） |
 | 5 | 重连+聊天 | B2 + B3 | ✅ | 单测 61/61 先红后绿（含挂起蛇冻结）；静态检查 ALL PASSED (65ids/div32/css141)；6 E2E Exit 0（RECONNECT+CHAT：resumed 同 id/漂移1.0格/聊天送达+限速） |
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ✅ | 单测 66/66 先红后绿；静态检查 ALL PASSED (70ids/div33/css145)；7 E2E Exit 0（PASS+PERSIST 全 9 步；verify_rooms 证实断开后 r1 保留） |
-| 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ⬜ | |
+| 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ✅ | 单测 67/67 先红后绿（day 主题池）；静态检查 ALL PASSED (70ids/div33)；7 E2E Exit 0（顺带实证 default 房随机到 day 主题）；浏览器截图 BLOCKED（桌面浏览器未连接，视觉项以静态+单测+E2E 佐证） |
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ⬜ | |
 | 9 | CI/Playwright | C2 | ⬜ | |
 | 10 | three.min.js 升级 | C4 | ⬜ | |
@@ -94,3 +94,15 @@
 - **E2E**：新 **test_pass_p6.py** 第 7 套（9 步：弱口令拒/黑名单拒/合法建房 hasPass/无口令 join 拒/错口令拒/对口令进/watch 拒/persist 非创建者拒/创建者成 persist=true；首跑踩 `broadcast rooms 先于 created 到达被 recv吞` → 改收集双消息后过）；**verify_rooms.py 同步**（计划内需求变化）：`rid not in ids` 立即回收断言 → `rid in ids` 24h 保留断言 + info 字段加 hasPass/persist。
 - **验证**：静态 ALL PASSED（**70** ids / div 33 / css 145）；7 套 E2E 全 **Exit 0**；E2E 残留 `data/persist_rooms.json` 已清理（避免污染后续批次）。
 - **暴露的新工作**：无；**顺序调整**：无。
+
+
+### 批7 客户端视觉（新#3 + 新#4 + 新#9 + 新#10）✅
+- **#3 丝滑移动拍板**：逻辑仍按格（服务端零改动）；渲染在 prev→next 格间按 tick 进度线性插值。实体位移时记 `moveAt/moveDt`（观测间隔自适应，夹 60–400ms），`syncBody` 新收 `opts.from/opts.phase`，插值目标 = `lerp(prev, next, phase)` 再走原脊柱平滑；头部大跳变（>6 格：传送门/出生）不插值直接贴位。演示蛇按 `(now-lastTick)/180` 同理；掉帧兜底 `lastTick=now` 处同步 `lastCells` 防回退。
+- **#4 白天主题拍板**：服务端 `THEMES` + `day`、`THEME_CFG['day'] = {rock 0.8, portal True, walls 0, accent 0x4dabf7}`（随机池含 day）；客户端 `THEMES.day` 浅色天空 0x9ecff2 + 亮色棋盘格；`THEME_LABEL`/建房下拉加「白天」。
+- **#9 边缘图标拍板**：`FRUIT_EMOJI` 按水果颜色映射（红苹果/樱桃/草莓/葡萄/柑橘），`updateEdgeHints` 每帧同步 foodEdge 文本，缺省回落 🍎；星星 ⭐ 不变。
+- **#10 面板配色拍板**：建房主题下拉各 `<option>` 文字着该主题 `wall` 原始配色（`THEMES` 定义后立即批量设置），与主页场景一致。
+- **serve.py**：L82 THEMES + 'day'；THEME_CFG + day 条目。
+- **index.html**：THEME_LABEL/cTheme/THEMES.day/选项着色块；FRUIT_EMOJI + updateEdgeHints；makeEnt 加 moveAt/moveDt；applyPlayers 位移记录+跳变保护；syncBody 插值；syncEnt/syncSnake 传 from/phase；720ms 兜底同步 lastCells。
+- **test_game.py**：+1（test_day_theme_in_pool：池含 day、THEME_CFG 齐备、建房/地形/随机不炸），先红（AssertionError: THEMES 无 day）后绿 **67/67**。
+- **验证**：静态 ALL STATIC CHECKS PASSED (70ids/div33/css516)；停服清理后起双服，7 套 E2E 全 **Exit 0**（verify_rooms 实测 default 房随机到 theme=day）；E2E 残留 persist_rooms.json 已清理；HTTP / 200。
+- **暴露的新工作**：桌面浏览器未连接 → 截图视觉验收 BLOCKED（已记入 HANDOVER 主题节），批9 Playwright 落地后可补自动化截图。**顺序调整**：无。

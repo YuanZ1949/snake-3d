@@ -1020,6 +1020,24 @@ def test_resource_life_scales_with_map():
     print("resource life scale OK: 48x48 -> 4x")
 
 
+def test_day_theme_in_pool():
+    # 批7 #4：新增白天主题进主题池（TDD 红：当前 THEMES 无 day）
+    assert "day" in serve.THEMES, serve.THEMES
+    cfg = serve.THEME_CFG["day"]
+    assert isinstance(cfg["rock"], (int, float)) and isinstance(cfg["portal"], bool)
+    assert "walls" in cfg and "accent" in cfg
+    r = serve.Room("dayr", "白天", 24, theme_fixed="day")
+    assert r.theme == "day"
+    r.build_terrain()      # THEME_CFG[theme] 必须齐备，否则 KeyError
+    assert r.eff_rock() >= 0
+    assert isinstance(r.eff_portal(), bool)
+    # create 消息校验 theme in THEMES（L1540）随元组自动放行 day
+    r2 = serve.Room("dayr2", "随机", 24, theme_fixed=None)
+    r2.theme = serve.random.choice(serve.THEMES)   # 随机池含 day
+    r2.build_terrain()
+    print("day theme pool OK:", r.theme, cfg)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1056,6 +1074,6 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_offline_snake_frozen_until_resume,
             test_valid_room_pass, test_room_pass_field_not_leaked,
             test_gc_holds_new_rooms_24h, test_gc_keeps_persist_rooms,
-            test_persist_roundtrip]:
+            test_persist_roundtrip, test_day_theme_in_pool]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
