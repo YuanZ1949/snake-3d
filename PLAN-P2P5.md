@@ -61,8 +61,8 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 15 C AI 吃水果 | ✅ | 本 commit | 单测 83（+4 新例，旧码 4 红）+ local_ci ALL GREEN（8 E2E/静态/Playwright 3/3）；96×96 BFS 实测 11.1ms（断言 50ms，命中缓存 ~0） |
 | 16 B+G 下拉暗色+死亡观战 | ✅ | 6a496ac | Playwright 5/5（+2 新例，旧码双红：colorScheme=light / 观战按钮缺失）+ local_ci ALL GREEN（8 E2E/单测 83/静态） |
 | 17 H 外墙偏转选项 | ✅ | c036870 | 单测 87（+4 新例，旧码红：无 walldeflect 参数）+ persist 往返含 wd + local_ci ALL GREEN（8 E2E/静态/Playwright 5/5） |
-| 18 E 房间参数编辑 | ✅ | 本 commit | 单测 92（+5 新例，旧码红：roomcfg 无处理/无 owner_user）+ persist 往返含 ownerUser + local_ci ALL GREEN（8 E2E/静态 ids=82/Playwright 5/5） |
-| 19 A3+部署上线 | ⬜ | | |
+| 18 E 房间参数编辑 | ✅ | ecca0c0 | 单测 92（+5 新例，旧码红：roomcfg 无处理/无 owner_user）+ persist 往返含 ownerUser + local_ci ALL GREEN（8 E2E/静态 ids=82/Playwright 5/5） |
+| 19 A3+部署上线 | ✅ | 本 commit（纯文档） | 服务器清理（9 个 .bak + /tmp 探测脚本）→ 漂移核查零差异（sha256=5bca2cf）→ predeploy tar → git archive 部署 dev@ecca0c0 → active/200/新前端标记 15 处/journal 零错 → 生产增量协议实测 `first=full(698B) avg_delta=435B walls·portals 30/30` |
 
 > 批14 踩坑记录：spawn 主路径 `_solid`→`occupied` 替换引入 OOB 回归（`occupied()` 无界检查，贴边出界 spawn 被 `_open_ahead` 高分开选中）→ P5 E2E 抓出（resume 位置复核 `RCONF oob` 插桩定位）→ 修法为 `occupied()` 顶部补「出界即占用」（其余 3 个调用点坐标恒界内，零行为变化）。诊断插桩已全部移除（grep RCONF clean）。
 

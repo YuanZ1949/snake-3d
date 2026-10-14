@@ -376,34 +376,34 @@ $env:BASE='http://127.0.0.1:8123'; npx playwright test # 另开终端（npm inst
 | 端口 | 安全组仅放行 **22、8090**；`8091` 为 1Panel 仅监听 127.0.0.1 |
 | 访问 | 游戏 `http://193.112.172.83:8090/` |
 
-### 11.2 发布流程（标准动作）
+### 11.2 发布流程（批19 起的标准动作：git archive，不再产生 .bak）
 
 ```bash
-cd ~/snake-3d
-TS=$(date +%Y%m%d-%H%M%S)
-# 1) 远端备份
-ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py serve.py.bak-$TS && cp index.html index.html.bak-$TS"
-# 2) 上传
-scp serve.py index.html test_*.py tencent:/home/ubuntu/snake-3d/
-# 3) 重启（只有 serve.py 需要；index.html 每请求读盘，可不重启但浏览器要强刷）
-ssh tencent "sudo systemctl restart snake-3d"
-# 4) 验证
-ssh tencent "systemctl is-active snake-3d"
-md5sum serve.py index.html          # 与 ssh tencent "md5sum ..." 比对
-#   Windows PowerShell 的 PATH 里没有 md5sum，二选一：
-#     C:\MyFile\Program\Git\usr\bin\md5sum.exe serve.py index.html
-#     (Get-FileHash serve.py -Algorithm MD5).Hash.ToLower()
-#   ⚠️ 本机 core.autocrlf=true 落盘是 CRLF，裸 md5 与服务器天然不等（差的全是行尾）。比内容先归一化：
-#     python -c "import hashlib,io;print(hashlib.md5(io.open('serve.py','rb').read().replace(b'\r\n',b'\n')).hexdigest())"
-curl -s -o /dev/null -w '%{http_code}\n' http://193.112.172.83:8090/
-ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python verify_rooms.py"
+# 0) 部署前必查漂移（上次部署以来生产是否被手改过）
+git show <上次部署commit>:serve.py > /tmp/s.py && sha256sum /tmp/s.py
+ssh tencent "sha256sum /home/ubuntu/snake-3d/serve.py"   # 不一致 → 停下调查，别覆盖
+# 1) 部署前备份（回滚点，整个目录打包，排除 .venv/data/__pycache__）
+ssh tencent 'tar czf /home/ubuntu/snake-3d-predeploy-$(date +%Y%m%d-%H%M%S).tar.gz \
+  --exclude=.venv --exclude=data --exclude=__pycache__ -C /home/ubuntu snake-3d'
+# 2) 归档投放（本地 git archive 流式覆盖，无需 push；⚠️ PowerShell 下 $() 会被本地插值，远端命令一律单引号）
+git archive --format=tar -o $env:TEMP\deploy.tar dev
+scp $env:TEMP\deploy.tar tencent:/tmp/deploy.tar
+ssh tencent 'tar -xf /tmp/deploy.tar -C /home/ubuntu/snake-3d && rm /tmp/deploy.tar'
+# 3) 重启 + 验证
+ssh tencent 'sudo systemctl restart snake-3d && sleep 3 && systemctl is-active snake-3d'
+ssh tencent 'curl -s -o /dev/null -w "%{http_code} %{size_download}B\n" http://127.0.0.1:8090/'
+ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -iE "error|traceback"'
+#   E2E 探针：把 test_delta_p1.py 的 28000 换成 8090 后 scp 上去跑
+#   ⚠️ 服务器系统 python3 没装 websockets，必须用 /home/ubuntu/snake-3d/.venv/bin/python
 ```
 
 ### 11.3 回滚
 
 ```bash
-ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<时间戳> serve.py && cp index.html.bak-<时间戳> index.html && sudo systemctl restart snake-3d"
+ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
+
+当前生产版本：**dev@`ecca0c0`**（批1-18 全量，2026-10-15 06:29 部署；增量协议生产实测 `first=full(698B) avg_delta=435B`、journal 零错误）。回滚点：`snake-3d-predeploy-20261015-062936.tar.gz`（另有更早的 `20261015-020636` 一份）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 
@@ -414,7 +414,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && cp serve.py.bak-<时间戳> serve.py &&
   - **Termux 本机**：`dev`/`main` 已设上游跟踪，`git push` 不带参数即可同步。
   - **Windows 本机**：clone 得到的远端名叫 `origin`（`dev` 跟踪 `origin/dev`，`main` 只有 `origin/main`），已另补一个同址的 `server` 别名 —— 故 `git push server --all` 与 `git push` 都可用。
 - 服务器上查看/克隆历史：`git --git-dir=/home/ubuntu/snake-3d.git log dev` 或 `git clone /home/ubuntu/snake-3d.git ~/repo`
-- ⚠️ 生产目录 `/home/ubuntu/snake-3d/` **不是** git 仓库，它只是发布投放点（靠 `*.bak-*` 回滚），不要在里面执行 git 操作。
+- ⚠️ 生产目录 `/home/ubuntu/snake-3d/` **不是** git 仓库，它只是发布投放点（批19 起靠 predeploy **tar** 回滚，见 §11.3），不要在里面执行 git 操作。
 - 提交历史（新→旧）：
 
 ```
