@@ -35,7 +35,7 @@
 | 6 | 弱口令+房间保留/保存 | C3 + 新#11 | ✅ | 单测 66/66 先红后绿；静态检查 ALL PASSED (70ids/div33/css145)；7 E2E Exit 0（PASS+PERSIST 全 9 步；verify_rooms 证实断开后 r1 保留） |
 | 7 | 客户端视觉 | 新#3 丝滑移动 + 新#4 白天主题 + 新#9 边缘图标 + 新#10 面板风格 | ✅ | 单测 67/67 先红后绿（day 主题池）；静态检查 ALL PASSED (70ids/div33)；7 E2E Exit 0（顺带实证 default 房随机到 day 主题）；浏览器截图 BLOCKED（桌面浏览器未连接，视觉项以静态+单测+E2E 佐证） |
 | 8 | 小地图+观战切换+移动端 | B1 + 新#8 + B4 | ✅ | 纯前端批（无服务端改动）：单测 67/67 全绿维持；静态检查 ALL PASSED (68ids/div33/css156/js528)；7 E2E Exit 0；起服 / 200 |
-| 9 | CI/Playwright | C2 | ⬜ | |
+| 9 | CI/Playwright | C2 | ✅ | Playwright 3/3 passed（7.3s，首页/单人入局/观战；BASE=8123 外部起服）；单测 67/67 全绿；静态 ALL PASSED (71ids/dup0/div33/css159/js528)；7 套 E2E 全 Exit 0；YAML 校验 15 steps。附带修复 720p 底部 ⚔ 裁切 |
 | 10 | three.min.js 升级 | C4 | ⬜ | |
 | 11 | 快照增量协议 | C1（压轴） | ⬜ | |
 
@@ -113,3 +113,10 @@
 - **新#8 观战切换**：全局 `spectTarget`（null=跟随领先者）；keydown 观战时 ←/→/A/D → spectSwitch(±1) 循环（spectList=存活蛇按分数降序，与相机同序），toast「观战：名（i/N）」；触屏观战左右滑同效；相机优先 spectTarget、失效回退领先者；spectate/joinIn/goHome 重置。
 - **B4 移动端**：`@media (max-width:760px)` 压缩 h1/HUD chip/开始页 sub/聊天宽度/小地图尺寸、开始页 overflow-y:auto；转向已有触屏滑动+dpad pointer 覆盖，无需新增。
 - 浏览器截图仍 BLOCKED（批9 Playwright 落地后补视觉验收）。
+
+### 批9 CI/Playwright（C2）✅ + 720p 裁切修复
+- **拍板落地**：`e2e/smoke.spec.js` 3 用例（首页渲染 / 单人 guest 登录入局 / 观战切换），**外部起服模式**（无 webServer 自动化）：本地 `PORT=8123` 起服 → `BASE=http://127.0.0.1:8123 npx playwright test`。识别走带空格正则 `"t":\s*"snap"`，房间列表判据 `.roomItem`。截图落 `test-results/smoke-home.png` / `smoke-ingame.png`，供 observer 视觉验收。
+- **CI**：`.github/workflows/ci.yml`（push dev/main + PR + 手动），ubuntu：pip `websockets<16` → 单测 → 起 28000/8090 双服 → 7 套 python E2E（两轮）→ 停服清 persist → setup-node 20 + `npm ci` + `playwright install --with-deps chromium` → 起 8123 → `npx playwright test` → upload-artifact test-results/playwright-report（失败另传 /tmp/serve_*.log）。YAML safe_load 校验 15 steps（step name 含冒号需引号，已修）。
+- **附带修复（720p 底部 ⚔ 裁切）**：根因 `顶部102+画布(720×.68=490)+gap12+dpad120+底padding44=768>720`。修复①`resize()` 加 `vFactor = innerHeight<=760 ? .60 : .68`（画布 432px）；②`@media (max-height:720px)` 内 `body{padding-bottom:16px}`、`.dpad{grid-template-rows:repeat(3,46px);gap:6px}`、`body.follow .dpad{grid-template-rows:46px 46px}`。实测 1280×720：scrollH=720 零溢出、dpadBottom=644、atkVisible=true。
+- **验证**：Playwright 3/3 passed (7.3s)；单测 67/67 ALL PASSED；静态 ALL STATIC CHECKS PASSED (ids=71 dup=0 div=33/33 css=159/159 js=528/528)；7 套 E2E ALL PASSED；observer 视觉验收通过（day 主题浅色+金框为预期非缺陷）。
+- **暴露的新工作**：无；**顺序调整**：无。

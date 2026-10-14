@@ -1,0 +1,22 @@
+{
+  "name": "cloudserver",
+  "version": "1.0.0",
+  "description": "贪吃蛇 3D 冒烟测试（批9 C2）",
+  "main": "three.min.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:e2e": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "ssh://vmsz/home/ubuntu/snake-3d.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  },
+  "private": true
+}

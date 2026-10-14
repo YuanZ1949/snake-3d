@@ -54,8 +54,8 @@ snake-3d/
 | Python | 3.10 | 服务端唯一语言 |
 | websockets | **==13.1（锁定）** | `serve.py` 用旧版 `process_request(path, headers)` API；16.x 已移除该 API，升级会导致 HTTP 请求 500 |
 | 三方框架 | 无 | 单文件，`pip install websockets` 即可跑 |
-| Node.js | 仅用于 `node --check` 静态语法检查 | 不参与运行时 |
-| 浏览器 | 现代浏览器（需 WebGL） | 无自动化测试/截图手段 |
+| Node.js | 20（静态检查 `node --check` + Playwright 冒烟/CI） | 不参与游戏运行时 |
+| 浏览器 | 现代浏览器（需 WebGL） | **批9 起有 Playwright 自动化冒烟 + 截图**（`e2e/smoke.spec.js`，需外部起 8123 服）；720p 短屏已专项修复 |
 
 启动：
 
@@ -242,6 +242,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **小地图（批8，B1）**：右上角 150×150 canvas `#miniMap`（≤760px 屏 104×104），入局/观战才显示、每帧 `updateMinimap`：棋盘底+边框、墙块/岩石/传送门（交替紫/蓝，几何来自 `wallCells/portalCells` 缓存）、水果按实际颜色点、星星金点、道具按类型色点、玩家自己绿大点/他人红点（尸体不画）、观战目标白圈。
 - **观战切换（批8，新#8）**：观战时 ←/→（或 A/D）与触屏左右滑循环切换被观战者——`spectList()` 名单=存活蛇按分数降序（与「跟随领先者」同序），toast 显示「观战：名（i/N）」；相机优先跟随 `spectTarget`，失效（死亡/离场）自动回退领先者；进观战/入局/回主页重置目标。
 - **移动端压缩（批8，B4）**：`@media (max-width:760px)` 压缩标题/HUD chip/开始页文案/聊天与小地图尺寸、开始页可纵向滚动；转向操作已有触屏滑动 + 方向键面板（pointer 事件，含跟随模式左右键布局）覆盖。
+- **720p 短屏裁切修复（批9 附带）**：1280×720 下 `scrollH` 曾 768（dpad 第二行 ⚔ 越界 4px）。修复：`resize()` 对 `innerHeight<=760` 用系数 `.60`（其余 `.68`，画布 720p→432px）；`@media (max-height:720px)` 内 `body` 底 padding 44→16、`.dpad` 行 56→46/gap 8→6、`body.follow .dpad` 同步 46px。修复后 scrollH=720 零溢出（Playwright 实测）。
 
 ### 6.3 主题（`THEME_CFG`）
 
@@ -309,6 +310,8 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `test_pass_p6.py` | E2E | 批6：弱口令/黑名单口令建房被拒 → 合法口令建房 `hasPass` → 无口令/错口令 join 与 watch 被 `error` → 对口令进房 → persist 非创建者拒、创建者成且列表 `persist=true`（连 28000） |
 | `verify_rooms.py` | 生产 | HTTP 200 + 创建/进房 + **批6 后：creator 断开后新房间 24h 内保留**（info 带 hasPass/persist） |
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
+| `e2e/smoke.spec.js` | Playwright ×3 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
+| `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 7 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
@@ -335,6 +338,10 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python verify_rooms.py"
 
 # ── 前端静态检查 ── 本机 Node 即可
 node --check /path/to/extracted.js        # 从 index.html 抽 <script> 后检查
+
+# ── Playwright 冒烟 ── Windows 本机（批9；$env:PORT 必须在 Start-Process 之前设置）
+$env:PORT='8123'; .venv\Scripts\python.exe serve.py     # 占一个终端常驻
+$env:BASE='http://127.0.0.1:8123'; npx playwright test # 另开终端（npm install 后）；截图落 test-results/
 ```
 
 **前端静态检查清单**（无浏览器时的替代手段）：
@@ -432,7 +439,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 1 | ~~咬到"仅剩 2 格"的蛇不会淘汰对方~~ **✅ 已实现（P1）** | — | 已加规则：已是 `MIN_LEN` 再被咬 → 该蛇淘汰，`cause='bite'` |
 | 2 | 快照每 50ms **全量**广播（含 walls/portals/rocks/food/players） | 大地图 + 多人时带宽增长 | 静态地形改为进房时一次性下发，快照只发增量 |
 | 3 | 仓库远端只有服务器本身（与本机各一份），未托管 GitHub/Gitee | 两处同时损坏才会丢历史 | 加第三方远端，或定期 `git bundle create snake.bundle --all` 归档到别处 |
-| 4 | 无 CI、无浏览器自动化 | 前端只能靠静态检查 + 人工眼看 | 接入 Playwright 做冒烟 |
+| 4 | ~~无 CI、无浏览器自动化~~ | **批9 已解**：`.github/workflows/ci.yml`（单测+7 E2E+Playwright）+ `e2e/smoke.spec.js` 3 冒烟 | 尚未 push 触发过（仓库无远端），首个 push 时观察首跑 |
 | 5 | 密码强制 6 位数字 | 弱口令 | 定位为小游戏可接受；如需加强要同步改前端校验 |
 | 6 | `DEPLOY.md` 未随功能更新 | 部署章节仍准确，功能描述偏旧 | 以本文档为准 |
 | 7 | 用量数据仅两天左右积累 | 趋势分析样本少 | 可加"每小时在线曲线/房间热度"（**已提过，未被要求**） |
@@ -460,8 +467,8 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 ## 15. 后续可选方向
 
 - 需求方可能追加：蛇压到 2 格再被咬即淘汰；用量报表加小时曲线/房间热度。
-- 体验优化：（小地图、观战左右键切换、移动端压缩已随批8 完成；房间内聊天、断线重连"回到原房间原蛇"已随批5 完成）
-- 工程化：git 远端 + CI、Playwright 冒烟、快照增量协议、配置外置（JSON/TOML）。
+- 体验优化：（小地图、观战左右键切换、移动端压缩已随批8 完成；房间内聊天、断线重连"回到原房间原蛇"已随批5 完成；720p 短屏 ⚔ 裁切已随批9 修复）
+- 工程化：git 远端 + **真实 CI 首跑验证**（workflow 与 Playwright 已随批9 落地但未 push 过）、快照增量协议、配置外置（JSON/TOML）。
 
 ---
 

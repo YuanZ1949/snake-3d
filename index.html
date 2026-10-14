@@ -384,6 +384,10 @@
   @media (max-height: 720px) {
     .tips { display: none; }
     h1 { font-size: 20px; }
+    /* 短屏：压缩底部留白与 dpad 行高，保证 2 行 follow 布局（含 ⚔ 攻击按钮）完整落在视口内 */
+    body { padding-bottom: 16px; }
+    .dpad { grid-template-rows: repeat(3, 46px); gap: 6px; }
+    body.follow .dpad { grid-template-rows: 46px 46px; }
   }
   /* ---- 房间聊天（批5）：左下角消息流 + 输入框 ---- */
   .chatLog { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: 64%; z-index: 5; transition: bottom .15s; }
@@ -740,7 +744,9 @@
   const CAM = {h: 5.4};
 
   function resize() {
-    const s = Math.min(window.innerWidth * .96, window.innerHeight * .68, 860);
+    // 短屏（≤760 高）给 dpad 与底部留白让位：系数 .68 → .60，避免底部攻击按钮被裁出视口
+    const vFactor = window.innerHeight <= 760 ? .60 : .68;
+    const s = Math.min(window.innerWidth * .96, window.innerHeight * vFactor, 860);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     renderer.setSize(s, s);
     canvas.style.width = s + 'px';
