@@ -19,11 +19,13 @@ CYCLE = 0.05            # 主循环 50ms
 PROJ_SPEED = 22.0       # 弹药格/秒
 ATK_COOL = 800          # 攻击冷却 ms
 BONUS_LIFE = 8000
-EAT_KILL_SCORE = 100
 WIN_SCORE = 200
 SPAWN_INV = 2500        # 重生无敌保护 ms
 ITEM_LIFE = 12000       # 道具在地图上的存活时间
 EFFECT_MS = 6000        # 道具效果持续时间
+MIN_LEN = 2             # 蛇被截断后保留的最少格数
+BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
+BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost')
 THEMES = ('default', 'lava', 'ice', 'space')
 # 主题参数：岩石密度倍率 / 是否生成传送门 / 固定墙块数量 / 配色（供前端参考）
@@ -157,6 +159,7 @@ class Room:
         self.events = []
         self.next_bonus_id = 1
         self.next_item_id = 1
+        self.next_food_id = 1
         self.win_pending = None
         self.round_no = 0
         self.created = time.time()
@@ -231,6 +234,39 @@ class Room:
                 'round': self.round_no, 'over': self.win_pending is not None}
 
     # -------- 玩家生命周期 --------
+    def _solid(self, x, y, skip_pid=None):
+        """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）"""
+        if x < 0 or y < 0 or x >= self.cols or y >= self.rows:
+            return True
+        if (x, y) in self.rocks or (x, y) in self.walls or (x, y) in self.portals:
+            return True
+        for pid, q in self.players.items():
+            if pid == skip_pid or not q['alive']:
+                continue
+            if (x, y) in q['cells']:
+                return True
+        return False
+
+    def _open_ahead(self, x, y, d, skip_pid=None, cap=24):
+        n = 0
+        cx, cy = x + d[0], y + d[1]
+        while n < cap and not self._solid(cx, cy, skip_pid):
+            n += 1
+            cx += d[0]
+            cy += d[1]
+        return n
+
+    def _nearest_opp(self, x, y, skip_pid=None, cap=12):
+        best = cap
+        for pid, q in self.players.items():
+            if pid == skip_pid or not q['alive'] or not q['cells']:
+                continue
+            for (cx, cy) in q['cells']:
+                d = abs(cx - x) + abs(cy - y)
+                if d < best:
+                    best = d
+        return best
+
     def spawn_player(self, p, fresh_cells=True):
         base = p.get('base_tick', 150)
         p['tick'] = base
@@ -240,29 +276,42 @@ class Room:
         p['last_atk'] = 0
         p['inv'] = now_ms() + SPAWN_INV
         p['eff'] = {}
+        p['grow'] = 0
         if not fresh_cells and p.get('cells'):
             return
-        for _ in range(400):
+        pid = p.get('id')
+        dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        best = None
+        best_score = -1e9
+        for _ in range(280):
             x = random.randint(0, self.cols - 1)
             y = random.randint(0, self.rows - 1)
-            dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-            random.shuffle(dirs)
+            opp = self._nearest_opp(x, y, pid)
             for d in dirs:
                 cells = [(x, y), (x - d[0], y - d[1]), (x - 2 * d[0], y - 2 * d[1])]
-                if any(cx < 0 or cy < 0 or cx >= self.cols or cy >= self.rows for cx, cy in cells):
+                if any(self._solid(cx, cy, pid) for cx, cy in cells):
                     continue
-                if any(self.occupied(cx, cy) for cx, cy in cells):
+                ahead = self._open_ahead(x, y, d, pid)
+                if ahead < 4:
                     continue
-                fx, fy = x + 4 * d[0], y + 4 * d[1]
-                if not (0 <= fx < self.cols and 0 <= fy < self.rows):
-                    continue
-                p['cells'] = cells
-                p['dir'] = d
-                return
-        p['cells'] = [(self.cols // 2, self.rows // 2),
-                      (self.cols // 2 - 1, self.rows // 2),
-                      (self.cols // 2 - 2, self.rows // 2)]
-        p['dir'] = (1, 0)
+                # 前方越开阔越好（自然背对最近的外墙），且尽量远离其它蛇
+                score = ahead + opp * 3
+                if score > best_score:
+                    best_score = score
+                    best = (cells, d)
+        if best:
+            p['cells'], p['dir'] = best[0], best[1]
+            return
+        # 兜底：居中，并朝最开阔的方向
+        cx = max(2, min(self.cols - 3, self.cols // 2))
+        cy = max(2, min(self.rows - 3, self.rows // 2))
+        bd, ba = (1, 0), -1
+        for d in dirs:
+            a = self._open_ahead(cx, cy, d, pid)
+            if a > ba:
+                ba, bd = a, d
+        p['dir'] = bd
+        p['cells'] = [(cx, cy), (cx - bd[0], cy - bd[1]), (cx - 2 * bd[0], cy - 2 * bd[1])]
 
     def place_food(self):
         free = [(x, y) for x in range(self.cols) for y in range(self.rows)
@@ -272,7 +321,10 @@ class Room:
             return
         x, y = random.choice(free)
         s, c = random.choice(FRUITS)
-        self.food = {'x': x, 'y': y, 'score': s, 'color': c}
+        # 唯一 id：即使水果恰好刷在相同坐标/颜色，客户端也能识别为"新水果"并重建，
+        # 避免出现"吃了不消失"的观感问题
+        self.food = {'id': self.next_food_id, 'x': x, 'y': y, 'score': s, 'color': c}
+        self.next_food_id += 1
 
     def maybe_rocks(self):
         cfg = THEME_CFG[self.theme]
@@ -469,52 +521,38 @@ class Room:
                 dead.add(id(p))
                 p['cause'] = 'self'
 
-        # 5) 咬到其他蛇身体 → 对方淘汰（无敌/护盾免疫）
-        kills = {}
+        # 5) 咬到其他蛇身体 → 截断对方（对方至少保留 MIN_LEN 格，被截下的部分并入攻击者长度）
+        bites = {}   # victim_id -> (eater_id, index)
         for p in due:
-            if is_head_on(p) or id(p) in dead:
+            if is_head_on(p) or id(p) in dead or not p['alive']:
                 continue
+            cell = tent[id(p)]
             for q in self.players.values():
                 if q is p or not q['alive'] or not q['cells']:
                     continue
-                if tent[id(p)] in q['cells'][1:]:
-                    if q['id'] in kills:
-                        continue
+                if cell in q['cells'][1:]:
                     if self._protected(q, now):
                         continue
-                    kills[q['id']] = p['id']
-        both = [v for v, e in kills.items() if e in kills]
-        for v in both:
-            kills.pop(v)
-        for v in list(kills):
-            if kills[v] in both:
-                kills.pop(v)
-        for v in both:
-            vp = self.players[v]
-            if self._protected(vp, now):
+                    idx = q['cells'].index(cell)
+                    if q['id'] not in bites or idx < bites[q['id']][1]:
+                        bites[q['id']] = (p['id'], idx)
+        for vid, (eid, idx) in bites.items():
+            q = self.players.get(vid)
+            ep = self.players.get(eid)
+            if not q or not ep or not q['alive'] or not ep['alive']:
                 continue
-            if id(vp) in due:
-                dead.add(id(vp))
-                vp['cause'] = 'eaten'
-            else:
-                vp['alive'] = False
-                vp['cause'] = 'eaten'
-                self.ev('die', id=v, cause='eaten', by=None)
-        for v, e in kills.items():
-            vp, ep = self.players[v], self.players[e]
-            if id(vp) in due:
-                dead.add(id(vp))
-                vp['cause'] = 'eaten'
-                vp['by'] = e
-            else:
-                vp['alive'] = False
-                self.ev('die', id=v, cause='eaten', by=e)
-            ep['score'] += EAT_KILL_SCORE
-            self.ev('kill', eater=e, victim=v, name=ep['name'], bonus=EAT_KILL_SCORE)
+            keep = max(MIN_LEN, idx)
+            if keep >= len(q['cells']):
+                continue
+            cut = len(q['cells']) - keep
+            q['cells'] = q['cells'][:keep]
+            ep['grow'] = ep.get('grow', 0) + cut     # 截下部分并入攻击者，随后逐格增长
+            ep['score'] += BITE_SCORE_PER_CELL * cut
             if ep.get('user'):
                 store.inc(ep['user'], 'kills')
+            self.ev('bite', eater=eid, victim=vid, cut=cut, score=BITE_SCORE_PER_CELL * cut)
 
-        # 淘汰结算
+        # 淘汰结算（仅环境致死：撞墙/岩石/自己）
         for p in due:
             if id(p) in dead:
                 p['alive'] = False
@@ -552,7 +590,11 @@ class Room:
                 if (hx, hy) == (it['x'], it['y']):
                     eaten_items.add(it['id'])
                     self.apply_item(p, it, now)
-            if not ate:
+            if ate:
+                pass                              # 吃到东西本 tick 不缩尾（增长 1）
+            elif p.get('grow', 0) > 0:
+                p['grow'] -= 1                    # 被咬截断并入的长度逐步生长
+            else:
                 p['cells'].pop()
         if eaten_items:
             self.items = [it for it in self.items if it['id'] not in eaten_items]
@@ -576,10 +618,12 @@ class Room:
         self.items = [it for it in self.items if now - it['born'] <= ITEM_LIFE]
         if not self.win_pending and len(self.items) < 3 and random.random() < 0.0025:
             self.spawn_item(now)
-        self._step_projectiles(dt)
+        self._step_projectiles(dt, now)
         self.step(dt, now)
 
-    def _step_projectiles(self, dt):
+    def _step_projectiles(self, dt, now=None):
+        if now is None:
+            now = now_ms()
         rockset = set(self.rocks)
         for pr in self.projectiles[:]:
             pr['x'] += pr['dx'] * PROJ_SPEED * dt
@@ -594,6 +638,29 @@ class Room:
                 self.ev('rock', x=gx, y=gy, by=pr['owner'], score=5)
                 self.projectiles.remove(pr)
                 continue
+            # 命中其它蛇身体 → 小幅截短（不致死，最低 MIN_LEN 格；无敌/护盾免疫）
+            if 0 <= gx < self.cols and 0 <= gy < self.rows:
+                victim = None
+                for q in self.players.values():
+                    if q['id'] == pr['owner'] or not q['alive'] or not q['cells']:
+                        continue
+                    if (gx, gy) in q['cells'] and not self._protected(q, now):
+                        victim = q
+                        break
+                if victim is not None:
+                    cut = min(BULLET_CUT, max(0, len(victim['cells']) - MIN_LEN))
+                    if cut > 0:
+                        victim['cells'] = victim['cells'][:len(victim['cells']) - cut]
+                        shooter = self.players.get(pr['owner'])
+                        if shooter:
+                            shooter['score'] += 3 * cut
+                        self.ev('hit', x=gx, y=gy, by=pr['owner'], victim=victim['id'],
+                                cut=cut, score=3 * cut)
+                    else:
+                        self.ev('hit', x=gx, y=gy, by=pr['owner'], victim=victim['id'],
+                                cut=0, score=0)
+                    self.projectiles.remove(pr)
+                    continue
             if gx < -1 or gy < -1 or gx > self.cols or gy > self.rows:
                 self.projectiles.remove(pr)
 
@@ -630,10 +697,11 @@ class Room:
         return out
 
     async def broadcast(self):
+        now = now_ms()
+        snap = self.snapshot(now)      # 总是生成快照并清空事件，避免无人订阅时事件堆积
         if not self.subs:
             return
-        now = now_ms()
-        msg = json.dumps(self.snapshot(now), ensure_ascii=False)
+        msg = json.dumps(snap, ensure_ascii=False)
         dead = []
         for sess in self.subs:
             try:
@@ -708,7 +776,7 @@ def make_player(pid, sess, name, skin):
         'session': sess, 'id': pid, 'name': name or f'玩家{pid}', 'skin': skin,
         'cells': [], 'dir': (1, 0), 'queue': [], 'score': 0, 'alive': False,
         'tick': 150, 'base_tick': 150, 'last_move': 0, 'last_atk': 0,
-        'inv': 0, 'eff': {}, 'user': sess.user, 'cause': None, 'by': None,
+        'inv': 0, 'eff': {}, 'grow': 0, 'user': sess.user, 'cause': None, 'by': None,
     }
 
 
@@ -781,7 +849,7 @@ async def handle_msg(sess, m):
         rid = new_room_id()
         name = str(m.get('name') or f'房间{rid}')[:16]
         rooms[rid] = Room(rid, name, size)
-        await broadcast_rooms(sess)
+        await broadcast_rooms()
         return
 
     # -------- 房间进出 --------
@@ -835,7 +903,7 @@ async def handle_msg(sess, m):
         if p.get('user'):
             store.inc(p['user'], 'games')
         room.check_win(now_ms())
-        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user})
+        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user, 'id': pid})
         return
 
     # 其余消息需要已在房间中

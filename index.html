@@ -235,6 +235,40 @@
   .dpad .blank { visibility: hidden; }
   .dpad #btnAtk { font-size: 22px; }
 
+  /* ---- 账户 / 房间 / 排行榜 / 道具 UI ---- */
+  #startScreen {
+    position: fixed; inset: 0; border-radius: 0; z-index: 40;
+    justify-content: flex-start;
+    padding: 20px 14px 28px;
+    overflow-y: auto;
+  }
+  .acct, .roomRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  .nameIn.sm { width: 150px; padding: 7px 12px; font-size: 13px; }
+  #passIn { width: 124px; letter-spacing: 3px; }
+  select.nameIn { width: 210px; appearance: none; -webkit-appearance: none; text-align-last: center; }
+  .tiny { font-size: 11px; min-height: 14px; color: #9aa0c3; }
+  .tiny.err { color: #ff8787; }
+  .tiny.ok { color: #7ee787; }
+  .acctBadge { font-size: 12px; color: #7ee787; }
+  .lbRows {
+    width: min(430px, 88vw);
+    max-height: 52vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 4px;
+  }
+  .lbrow { display: flex; gap: 8px; align-items: center; padding: 5px 10px; border-radius: 8px; background: rgba(255,255,255,.05); font-size: 14px; }
+  .lbrow .rk { width: 24px; color: #7ee787; font-weight: 700; text-align: center; }
+  .lbrow .nm { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lbrow .st { color: #9aa0c3; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .effects { position: absolute; top: 8px; left: 8px; display: flex; flex-direction: column; gap: 5px; z-index: 5; pointer-events: none; }
+  .eff { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: rgba(8,10,20,.72); border: 1px solid rgba(255,255,255,.18); }
+  .eff.shield { color: #61d0ff; border-color: rgba(97,208,255,.5); }
+  .eff.speed  { color: #ffd166; border-color: rgba(255,209,102,.5); }
+  .eff.ghost  { color: #c9a6ff; border-color: rgba(201,166,255,.5); }
+  .eff.inv    { color: #7ee787; border-color: rgba(126,231,135,.5); }
+  .eff .track { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
+  .eff .bar { height: 100%; background: currentColor; width: 100%; }
+
   .tips { font-size: 12px; color: #6b7194; line-height: 1.7; text-align: center; }
   .tips kbd {
     background: #232848;
@@ -268,19 +302,41 @@
     <canvas id="game" width="560" height="560"></canvas>
     <div id="foodEdge" class="edgeHint hidden">🍎</div>
     <div id="bonusEdge" class="edgeHint hidden">⭐</div>
+    <div id="effects" class="effects"></div>
     <button id="btnJoinIn" class="hidden">入局</button>
 
     <div class="overlay" id="startScreen">
       <h2>贪吃蛇 3D</h2>
-      <div class="sub">共享棋盘多人对战：吃水果变长加速，⭐ +50<br>咬到别人的身子直接淘汰对方 (+100)<br>撞墙 / 岩石 / 自己会被淘汰，剩最后一人获胜 (+200)</div>
+      <div class="sub">共享棋盘多人对战：吃水果变长加速，⭐ +50<br>咬到别人的身子直接淘汰对方 (+100)<br>撞墙 / 岩石 / 自己会被淘汰，剩最后一人获胜 (+200)<br>🛡护盾 ⚡加速 👻穿墙 · 多种地图主题 · 重生 2.5s 无敌</div>
       <input class="nameIn" id="nameIn" maxlength="8" placeholder="昵称（可选）" autocomplete="off">
+      <div class="acct" id="acctBox">
+        <input class="nameIn sm" id="userIn" maxlength="12" placeholder="账号" autocomplete="username">
+        <input class="nameIn sm" id="passIn" maxlength="6" inputmode="numeric" placeholder="6位数字密码" autocomplete="current-password">
+        <button class="chip" id="btnLogin">登录</button>
+        <button class="chip" id="btnRegister">注册</button>
+        <button class="chip" id="btnLogout">退出</button>
+        <span class="acctBadge" id="acctBadge"></span>
+      </div>
+      <div class="tiny" id="acctTip"></div>
+      <div class="roomRow">
+        <select class="nameIn sm" id="roomSel" aria-label="选择房间"></select>
+        <button class="chip" id="btnRoomRefresh" title="刷新房间">↻</button>
+        <button class="chip" id="btnRoomCreate" title="创建房间">＋ 创建房间</button>
+      </div>
       <div class="sub" id="connTip">正在连接服务器…</div>
       <button class="primary" id="btnStart">开始游戏</button>
       <div class="startBtns">
         <button class="chip" id="btnMap">🗺 中</button>
         <button class="chip" id="btnSpectate">👁 观战</button>
+        <button class="chip" id="btnLeaderboard">🏆 排行榜</button>
         <a class="chip dl" href="/download">⬇ 下载程序</a>
       </div>
+    </div>
+
+    <div class="overlay hidden" id="lbScreen">
+      <h2>🏆 排行榜</h2>
+      <div class="lbRows" id="lbRows"></div>
+      <button class="primary" id="btnLbClose">返回</button>
     </div>
 
     <div class="overlay hidden" id="pauseScreen">
@@ -366,6 +422,27 @@
   let spectating = false;          // 观战模式（未入局但观看他人对局）
   let roundNo = -1;
   let demoPaused = false;
+  // ---- 账户 / 房间 / 道具 / 主题 ----
+  const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
+  let loggedUser = localStorage.getItem(USER_KEY) || '';
+  let authToken = localStorage.getItem(TOKEN_KEY) || '';
+  let myStats = null;
+  let roomList = [];
+  let curRoom = localStorage.getItem(ROOM_KEY) || 'a';
+  let myInv = 0, myEff = {};
+  const ITEMS = {
+    shield: {emoji: '🛡', color: 0x61d0ff, label: '护盾'},
+    speed:  {emoji: '⚡', color: 0xffd166, label: '加速'},
+    ghost:  {emoji: '👻', color: 0xc9a6ff, label: '穿墙'},
+  };
+  const ITEM_LIFE = 12000;
+  const THEMES = {
+    default: {bg: 0x0d1020, fog: 0x0d1020, a: '#181e38', b: '#141933', frame: 0xffd166, wall: 0x7ee787},
+    lava:    {bg: 0x190d09, fog: 0x190d09, a: '#2a1410', b: '#1f0f0b', frame: 0xff8a3d, wall: 0xff6b3d},
+    ice:     {bg: 0x081420, fog: 0x081420, a: '#152b3d', b: '#10222f', frame: 0x9ad0ff, wall: 0x61b0ff},
+    space:   {bg: 0x0a0718, fog: 0x0a0718, a: '#1a1333', b: '#120d24', frame: 0xc9b0ff, wall: 0xb197fc},
+  };
+  let themeName = 'default';
   const NAME_KEY = 'snake-name';
   let playerName = localStorage.getItem(NAME_KEY) || '';
   const _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _edgeV = new THREE.Vector3();
@@ -443,9 +520,10 @@
     const c = document.createElement('canvas');
     c.width = c.height = dim * cp;
     const g = c.getContext('2d');
+    const pal = THEMES[themeName] || THEMES.default;
     for (let y = 0; y < ROWS; y++)
       for (let x = 0; x < COLS; x++) {
-        g.fillStyle = (x + y) % 2 ? '#181e38' : '#141933';
+        g.fillStyle = (x + y) % 2 ? pal.a : pal.b;
         g.fillRect(x * cp, y * cp, cp, cp);
       }
     const floor = new THREE.Mesh(
@@ -489,6 +567,20 @@
     sun.shadow.camera.left = -half; sun.shadow.camera.right = half;
     sun.shadow.camera.top = half; sun.shadow.camera.bottom = -half;
     sun.shadow.camera.updateProjectionMatrix();
+  }
+
+  function applyTheme(name) {
+    if (!THEMES[name]) name = 'default';
+    if (name === themeName) return;
+    themeName = name;
+    const p = THEMES[name];
+    scene.background.setHex(p.bg);
+    if (scene.fog) scene.fog.color.setHex(p.fog);
+    goldMat.color.setHex(p.frame);
+    goldMat.emissive.setHex(p.frame);
+    wallMat.color.setHex(p.wall);
+    buildBoard();
+    document.body.dataset.theme = name;
   }
   buildBoard();
 
@@ -933,6 +1025,125 @@
     }
   }
 
+  // ---- 服务器地形：墙块 / 传送门 / 道具 ----
+  let wallPool = [], wallKey = '';
+  let portalMeshes = [], portalKey = '';
+  const itemMeshes = new Map();
+
+  function getWallMesh(i) {
+    if (!wallPool[i]) {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(.92, .9, .92),
+        new THREE.MeshStandardMaterial({color: 0x42355c, roughness: .5, metalness: .55, emissive: 0x140a22, emissiveIntensity: .6})
+      );
+      m.castShadow = true; m.receiveShadow = true;
+      m.visible = false;
+      scene.add(m);
+      wallPool[i] = m;
+    }
+    return wallPool[i];
+  }
+
+  function syncWalls(list) {
+    list = list || [];
+    const sig = list.map(r => r[0] + ',' + r[1]).join('|');
+    if (sig === wallKey) return;
+    wallKey = sig;
+    wallPool.forEach(m => { m.visible = false; });
+    list.forEach((r, i) => {
+      const m = getWallMesh(i);
+      const w = cellW(r[0], r[1]);
+      m.position.set(w.x, .45, w.z);
+      m.visible = true;
+    });
+  }
+
+  function syncPortals(list) {
+    list = list || [];
+    const sig = list.map(r => r[0] + ',' + r[1]).join('|');
+    if (sig === portalKey) return;
+    portalKey = sig;
+    portalMeshes.forEach(m => scene.remove(m));
+    portalMeshes = [];
+    list.forEach((r, i) => {
+      const w = cellW(r[0], r[1]);
+      const col = i % 2 ? 0x61d0ff : 0xb197fc;
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(.42, .07, 10, 24),
+        new THREE.MeshStandardMaterial({color: col, emissive: col, emissiveIntensity: .9, roughness: .3, metalness: .5})
+      );
+      ring.position.set(w.x, .55, w.z);
+      ring.rotation.x = Math.PI / 2;
+      const light = new THREE.PointLight(col, .55, 4.5);
+      light.position.y = .5;
+      ring.add(light);
+      scene.add(ring);
+      portalMeshes.push(ring);
+    });
+  }
+
+  function makeItemMesh(type) {
+    const info = ITEMS[type] || ITEMS.shield;
+    const g = new THREE.Group();
+    let m;
+    if (type === 'speed') {
+      m = new THREE.Mesh(new THREE.ConeGeometry(.24, .55, 4),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .85, roughness: .3, metalness: .4, flatShading: true}));
+    } else if (type === 'ghost') {
+      m = new THREE.Mesh(new THREE.SphereGeometry(.3, 14, 12),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .6, transparent: true, opacity: .62}));
+    } else {
+      m = new THREE.Mesh(new THREE.TorusGeometry(.26, .09, 10, 20),
+        new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: .85, roughness: .3, metalness: .5}));
+    }
+    m.position.y = .5;
+    g.add(m);
+    const halo = new THREE.PointLight(info.color, .6, 4);
+    halo.position.y = .6;
+    g.add(halo);
+    return g;
+  }
+
+  function syncItems(list) {
+    const seen = new Set();
+    for (const it of (list || [])) {
+      const k = String(it.id);
+      seen.add(k);
+      let e = itemMeshes.get(k);
+      if (!e || e.type !== it.type) {
+        if (e) scene.remove(e.mesh);
+        const mesh = makeItemMesh(it.type);
+        scene.add(mesh);
+        e = {mesh, type: it.type, x: it.x, y: it.y};
+        itemMeshes.set(k, e);
+      }
+      e.x = it.x; e.y = it.y;
+      const w = cellW(it.x, it.y);
+      e.mesh.position.set(w.x, 0, w.z);
+    }
+    for (const [k, e] of [...itemMeshes]) {
+      if (!seen.has(k)) { scene.remove(e.mesh); itemMeshes.delete(k); }
+    }
+  }
+
+  function updateWorldExtras(now) {
+    for (const e of itemMeshes.values()) {
+      e.mesh.position.y = .08 + Math.sin(now / 260 + e.x) * .08;
+      e.mesh.rotation.y = now / 500;
+    }
+    for (const m of portalMeshes) m.rotation.z = now / 700;
+  }
+
+  function clearWorldExtras() {
+    for (const [, e] of itemMeshes) scene.remove(e.mesh);
+    itemMeshes.clear();
+    wallPool.forEach(m => { m.visible = false; });
+    wallKey = '';
+    portalMeshes.forEach(m => scene.remove(m));
+    portalMeshes = [];
+    portalKey = '';
+  }
+
   function updateHud() {
     scoreEl.textContent = (joined && myEnt) ? myEnt.score : score;
     speedEl.textContent = SPEEDS[speedIdx].n;
@@ -956,7 +1167,10 @@
       wsOpen = true;
       setConn('● 已连接', 'ok');
       $('connTip').textContent = wantPlay ? '已连接，入局中…' : '已连接服务器';
+      if (authToken) send({t: 'authtoken', token: authToken});
+      send({t: 'rooms'});
       if (wantPlay) doJoin();
+      else if (spectating) send({t: 'watch', room: curRoom});
     };
     ws.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch (_) {} };
     ws.onclose = () => { ws = null; wsOpen = false; onDisconnect(); };
@@ -964,7 +1178,7 @@
   }
 
   function doJoin() {
-    send({t: 'join', name: playerName, skin: skinIdx, size: MAP_SIZES[mapSizeIdx].v});
+    send({t: 'join', room: curRoom, name: playerName, skin: skinIdx, size: MAP_SIZES[mapSizeIdx].v});
     send({t: 'speed', ms: SPEEDS[speedIdx].ms});
     if (state === 'idle' || state === 'over') state = 'joining';
   }
@@ -1035,6 +1249,7 @@
     bgmStart();
     spectating = true;
     wantPlay = false;
+    myId = null;
     state = 'joining';
     overScreen.classList.add('hidden');
     pauseScreen.classList.add('hidden');
@@ -1042,7 +1257,7 @@
     demoBodyShow(false);
     $('btnJoinIn').classList.remove('hidden');
     setConn('● 观战中', 'ok');
-    if (!wsOpen) connect();
+    if (!wsOpen) connect(); else send({t: 'watch', room: curRoom});
   }
 
   function joinIn() {
@@ -1153,7 +1368,7 @@
     const e = {
       id, name: '', skin: 0, alive: true, score: 0,
       cells: [], lastCells: [], spine: [], rotT: [], dir: {x: 1, y: 0},
-      deathAt: 0, flashAt: 0,
+      deathAt: 0, flashAt: 0, inv: 0, eff: {},
       bodyMat: new THREE.MeshStandardMaterial({roughness: .55, metalness: .05}),
       bodyMesh: null, head: null, tongue: null, skull: null, nameSp: null, nameText: '',
     };
@@ -1179,6 +1394,7 @@
   function clearEnts() {
     ents.forEach(e => removeEnt(e));
     ents.clear();
+    clearWorldExtras();
     demoBodyShow(true);
   }
 
@@ -1222,6 +1438,8 @@
         e.rotT = e.cells.map(() => Math.atan2(e.dir.x, e.dir.y));
         e.score = p.score;
         e.skin = p.skin;
+        e.inv = p.inv || 0;
+        e.eff = p.eff || {};
         paintEnt(e);
       } else {
         const wasAlive = e.alive;
@@ -1229,6 +1447,8 @@
         if (cellsChanged(nc, e.cells)) { e.lastCells = e.cells; e.cells = nc; }
         e.dir = {x: p.dir[0], y: p.dir[1]};
         e.score = p.score;
+        e.inv = p.inv || 0;
+        e.eff = p.eff || {};
         if (e.name !== p.name) e.name = p.name || '';
         if (e.skin !== p.skin) { e.skin = p.skin; paintEnt(e); }
         if (wasAlive && !p.alive) { e.deathAt = now; e.flashAt = now; }
@@ -1256,13 +1476,17 @@
     // 食物
     const f = s.food;
     if (f) {
-      const key = f.x + ',' + f.y + ',' + f.color;
+      // 优先用服务器下发的唯一 id 作键：即使新水果恰好刷在相同坐标/颜色也能识别为“新水果”，
+      // 避免出现“吃了不消失”的观感问题（老服务器无 id 时退回坐标+颜色）
+      const key = (f.id != null) ? ('f' + f.id) : (f.x + ',' + f.y + ',' + f.color);
       if (key !== foodKey) {
         foodKey = key;
         food = {x: f.x, y: f.y, score: f.score, color: f.color, born: now};
         clearMesh(foodMesh);
         foodMesh = makeFruit(food);
         scene.add(foodMesh);
+      } else if (food) {
+        food.x = f.x; food.y = f.y; food.score = f.score;
       }
     } else if (food) {
       food = null; foodKey = '';
@@ -1313,6 +1537,10 @@
       }
       rocks = next;
     }
+    // 墙块 / 传送门 / 道具
+    syncWalls(s.walls);
+    syncPortals(s.portals);
+    syncItems(s.items);
     // 弹药
     syncProjectiles(s.proj || []);
     return {round: s.round, win: s.win};
@@ -1376,15 +1604,87 @@
     }
   }
 
+  let effHudSig = '';
+  function updateEffectsHud(now) {
+    const box = $('effects');
+    const parts = [];
+    if (myEnt) {
+      const eff = myEnt.eff || {};
+      for (const k of ['shield', 'speed', 'ghost']) {
+        const left = eff[k] | 0;
+        if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, left: left, total: 6000});
+      }
+      if ((myEnt.inv | 0) > 0) parts.push({cls: 'inv', emoji: '🛡', left: myEnt.inv, total: 2500});
+    }
+    const sig = parts.map(p => p.cls).join(',');
+    if (sig !== effHudSig) {
+      effHudSig = sig;
+      box.textContent = '';
+      for (const p of parts) {
+        const d = document.createElement('div');
+        d.className = 'eff ' + p.cls;
+        const t = document.createElement('span');
+        t.textContent = p.emoji;
+        const tr = document.createElement('span');
+        tr.className = 'track';
+        const b = document.createElement('span');
+        b.className = 'bar';
+        tr.appendChild(b);
+        d.append(t, tr);
+        box.appendChild(d);
+      }
+    }
+    [...box.children].forEach((el, i) => {
+      const p = parts[i];
+      if (!p) return;
+      const bar = el.querySelector('.bar');
+      if (bar) bar.style.width = Math.max(0, Math.min(100, p.left / p.total * 100)) + '%';
+    });
+  }
+
   // ================= 消息与事件 =================
   function onMsg(m) {
-    if (m.t === 'welcome') {
-      myId = m.id;
-      return;
+    switch (m.t) {
+      case 'welcome':
+        if (m.rooms) renderRooms(m.rooms);
+        return;
+      case 'rooms':
+        renderRooms(m.list);
+        return;
+      case 'room-ok':
+        curRoom = m.room;
+        localStorage.setItem(ROOM_KEY, curRoom);
+        if (m.id != null) myId = m.id;
+        if (m.user) { loggedUser = m.user; updateAcctUI(); }
+        return;
+      case 'auth':
+        if (m.ok) {
+          loggedUser = m.user;
+          if (m.token) authToken = m.token;
+          myStats = m.stats || null;
+          localStorage.setItem(USER_KEY, loggedUser);
+          localStorage.setItem(TOKEN_KEY, authToken);
+          if (!playerName) {
+            playerName = loggedUser;
+            $('nameIn').value = playerName;
+            localStorage.setItem(NAME_KEY, playerName);
+          }
+          updateAcctUI();
+          acctTip('欢迎，' + loggedUser, 'ok');
+          $('passIn').value = '';
+        } else {
+          acctTip(m.err || '操作失败', 'err');
+        }
+        return;
+      case 'leaderboard':
+        renderLeaderboard(m.list);
+        return;
     }
     if (m.t === 'snap') {
       if (!wsOpen) return;
       const now = performance.now();
+      if (m.cols || m.rows) ensureBoard(m.cols, m.rows);
+      applyTheme(m.theme || 'default');
       applyPlayers(m.players, now);
       // 方向队列镜像：服务器已应用队首时出队
       if (myEnt && dirQ.length) {
@@ -1462,6 +1762,29 @@
         const p = e && e.cells[0] ? cellW(e.cells[0].x, e.cells[0].y) : null;
         if (p) floater(p.x, 1.5, p.z, '+' + ev.bonus);
         if (ev.eater === myId) sStar();
+        break;
+      }
+      case 'bite': {
+        // 咬断对方：对方被截短，攻击者获得并入的长度
+        const v = ents.get(ev.victim);
+        if (v && v.cells[0]) { const p = cellW(v.cells[0].x, v.cells[0].y); burst(p.x, .6, p.z, 0xffb4b4, 16); }
+        const e = ents.get(ev.eater);
+        if (e && e.cells[0]) { const p = cellW(e.cells[0].x, e.cells[0].y); floater(p.x, 1.5, p.z, '+' + ev.score); }
+        if (ev.eater === myId) { sStar(); shake = Math.max(shake, .45); }
+        else if (ev.victim === myId) { shake = Math.max(shake, .7); beep(200, .18, 'sawtooth', .13, -60); }
+        break;
+      }
+      case 'hit': {
+        // 子弹命中对方：小幅截短
+        const v = ents.get(ev.victim);
+        const p = w || (v && v.cells[0] ? cellW(v.cells[0].x, v.cells[0].y) : null);
+        if (p) burst(p.x, .5, p.z, 0xbfe0ff, 12);
+        if (ev.cut > 0) {
+          const e = ents.get(ev.by);
+          if (e && e.cells[0]) { const q = cellW(e.cells[0].x, e.cells[0].y); floater(q.x, 1.3, q.z, '+' + ev.score); }
+        }
+        if (ev.by === myId) sAtk();
+        else if (ev.victim === myId) shake = Math.max(shake, .5);
         break;
       }
       case 'die': {
@@ -1648,8 +1971,17 @@
       e.nameSp.position.y += 1.0;
       e.nameSp.visible = true;
     }
+    e.bodyMat.emissiveIntensity = 1;
+    const shielded = (e.eff && e.eff.shield > 0) || e.inv > 0;
+    const ghost = e.eff && e.eff.ghost > 0;
     if (now - e.flashAt < 300) e.bodyMat.emissive.setHex(0x7ee787);
-    else e.bodyMat.emissive.setHex(0x000000);
+    else if (shielded) {
+      e.bodyMat.emissive.setHex(0x3a86c8);
+      e.bodyMat.emissiveIntensity = .35 + .3 * Math.abs(Math.sin(now / 160));
+    } else if (ghost) {
+      e.bodyMat.emissive.setHex(0x6a4ea0);
+      e.bodyMat.emissiveIntensity = .3;
+    } else e.bodyMat.emissive.setHex(0x000000);
   }
 
   // 本地演示蛇（未入局背景）
@@ -1762,6 +2094,9 @@
       if (myEnt) updateHud();
     }
 
+    updateWorldExtras(now);
+    updateEffectsHud(now);
+
     updateFx();
 
     const atkBtn = $('btnAtk');
@@ -1804,6 +2139,95 @@
     camera.lookAt(camLook);
     renderer.render(scene, camera);
     updateEdgeHints();
+  }
+
+  // ================= 账户 / 房间 / 排行榜 =================
+  function acctTip(text, cls) {
+    const el = $('acctTip');
+    el.textContent = text || '';
+    el.className = 'tiny' + (cls ? ' ' + cls : '');
+  }
+
+  function updateAcctUI() {
+    $('acctBadge').textContent = loggedUser ? ('👤 ' + loggedUser) : '';
+    $('btnLogout').style.display = loggedUser ? '' : 'none';
+    if (loggedUser) {
+      $('userIn').value = loggedUser;
+      if (myStats) acctTip(`战绩：胜 ${myStats.wins} · 杀 ${myStats.kills} · 场 ${myStats.games} · 最高 ${myStats.best}`, 'ok');
+    }
+  }
+
+  function doLogin() {
+    const u = $('userIn').value.trim(), p = $('passIn').value.trim();
+    if (!u) { acctTip('请输入账号', 'err'); return; }
+    if (!/^\d{6}$/.test(p)) { acctTip('密码必须是 6 位数字', 'err'); return; }
+    send({t: 'login', user: u, pass: p});
+  }
+
+  function doRegister() {
+    const u = $('userIn').value.trim(), p = $('passIn').value.trim();
+    if (u.length < 2 || u.length > 12) { acctTip('账号需 2-12 个字符', 'err'); return; }
+    if (!/^\d{6}$/.test(p)) { acctTip('密码必须是 6 位数字', 'err'); return; }
+    send({t: 'register', user: u, pass: p});
+  }
+
+  function doLogout() {
+    send({t: 'logout'});
+    loggedUser = ''; authToken = ''; myStats = null;
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    updateAcctUI();
+    acctTip('已退出登录', '');
+  }
+
+  function renderRooms(list) {
+    roomList = list || [];
+    const sel = $('roomSel');
+    const prev = curRoom;
+    sel.textContent = '';
+    for (const r of roomList) {
+      const o = document.createElement('option');
+      o.value = r.id;
+      const th = {default: '常规', lava: '熔岩', ice: '冰原', space: '星空'}[r.theme] || r.theme;
+      o.textContent = `${r.name} · ${r.cols}×${r.rows} · ${th} · ${r.players}人` + (r.over ? ' · 结算' : '');
+      sel.appendChild(o);
+    }
+    if (roomList.some(r => r.id === prev)) curRoom = prev;
+    else if (roomList[0]) curRoom = roomList[0].id;
+    sel.value = curRoom;
+  }
+
+  function renderLeaderboard(list) {
+    const rows = $('lbRows');
+    rows.textContent = '';
+    if (!list || !list.length) {
+      const d = document.createElement('div');
+      d.className = 'lbrow';
+      d.textContent = '暂无记录，登录后开局即可上榜';
+      rows.appendChild(d);
+    } else {
+      list.forEach((r, i) => {
+        const div = document.createElement('div');
+        div.className = 'lbrow';
+        const rk = document.createElement('span');
+        rk.className = 'rk'; rk.textContent = i + 1;
+        const nm = document.createElement('span');
+        nm.className = 'nm';
+        nm.textContent = r.name + (r.name === loggedUser ? '（我）' : '');
+        const st = document.createElement('span');
+        st.className = 'st';
+        st.textContent = `最高${r.best} · 胜${r.wins} · 杀${r.kills} · 场${r.games}`;
+        div.append(rk, nm, st);
+        rows.appendChild(div);
+      });
+    }
+    $('lbScreen').classList.remove('hidden');
+    startScreen.classList.add('hidden');
+  }
+
+  function createRoom() {
+    const name = (prompt('房间名（可留空）') || '').slice(0, 16);
+    send({t: 'create', name: name, size: MAP_SIZES[mapSizeIdx].v});
   }
 
   // ================= 输入 =================
@@ -1863,6 +2287,23 @@
   $('btnStart').onclick = start;
   $('btnSpectate').onclick = spectate;
   $('btnJoinIn').onclick = joinIn;
+  $('btnLogin').onclick = doLogin;
+  $('btnRegister').onclick = doRegister;
+  $('btnLogout').onclick = doLogout;
+  $('btnRoomRefresh').onclick = () => send({t: 'rooms'});
+  $('btnRoomCreate').onclick = createRoom;
+  $('roomSel').onchange = () => {
+    curRoom = $('roomSel').value;
+    localStorage.setItem(ROOM_KEY, curRoom);
+  };
+  $('btnLeaderboard').onclick = () => send({t: 'leaderboard'});
+  $('btnLbClose').onclick = () => {
+    $('lbScreen').classList.add('hidden');
+    if (state === 'idle' || state === 'joining') startScreen.classList.remove('hidden');
+  };
+  $('passIn').addEventListener('input', () => {
+    $('passIn').value = $('passIn').value.replace(/\D/g, '').slice(0, 6);
+  });
   $('btnRestart').onclick = () => { if (winRound) sendReady(); else respawn(); };
   $('btnResume').onclick = togglePause;
   btnPause.onclick = togglePause;
@@ -1873,7 +2314,8 @@
     speedEl.textContent = SPEEDS[speedIdx].n;
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
-  ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnMap', 'btnSpectate', 'btnJoinIn'].forEach(id =>
+  ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnMap', 'btnSpectate', 'btnJoinIn',
+   'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {
     muted = !muted;
@@ -1904,6 +2346,7 @@
   state = 'idle';
   applySkin();
   reset();
+  updateAcctUI();
   document.body.classList.add('follow');
   $('btnMap').textContent = '🗺 ' + MAP_SIZES[mapSizeIdx].n;
   $('nameIn').value = playerName;
