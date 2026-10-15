@@ -75,7 +75,13 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 20+21 生产部署 | ✅ | — | `git -c core.autocrlf=false archive` 纯 LF 投放（sha256 与本地 HEAD blob 一致）、生产 venv 单测 93/93、线上限速探针 `THROTTLE PROBE OK`（10 败后第 11 次回「尝试过于频繁」）、journal 零 error；predeploy 回滚点 `snake-3d-predeploy-20261015-091402.tar.gz` |
 | 22 安全加固 6 项 | ✅ | 本 commit | 红检驱动：6 新用例旧码全红→全绿（RED_COUNT=0/6，含「正确口令绕过限速」实现 bug 被测试抓出后修闸序）；单测 99/99；local_ci ALL GREEN（8 E2E/静态 ids=82/Playwright 5/5）；H4 复现脚本裸 `respawn` 超时被拒（修复前 REPRO OK） |
 
-第三轮候选池排序：20 auth err（✅905e724）→ 21 登录防爆破限速（✅本 commit）→ ~~棋盘饱和度补偿~~（**移除**：批10 用户已拍板 r160 新默认零改动、不改 THEMES 配色，此条与拍板冲突）→ 匿名创建者断线失编辑权（评估结论：匿名无身份本质不可解，仅可加提示，低价值）→ `_deflect_dir` 未排除他人身体（批17 观察项，代码走查结论：落他人身体=正常咬合规则、落他人头=1 tick 重叠被批14 破僵局覆盖，**判定不修**，已记 HANDOVER 批17 INFO）→ ESM r161+（不推荐）→ push origin（运维决策待用户）→ CI 真实跑（BLOCKED：无远端 runner）。
+第三轮候选池排序：20 auth err（✅905e724）→ 21 登录防爆破限速（✅8ebb68f）→ ~~棋盘饱和度补偿~~（**移除**：批10 用户已拍板 r160 新默认零改动、不改 THEMES 配色，此条与拍板冲突）→ 匿名创建者断线失编辑权（**批23 P6 已解**：owner 凭据 `snake-owner-toks` 入 localStorage，匿名凭据恢复修改权）→ `_deflect_dir` 未排除他人身体（批17 观察项，代码走查结论：落他人身体=正常咬合规则、落他人头=1 tick 重叠被批14 破僵局覆盖，**判定不修**，已记 HANDOVER 批17 INFO）→ ESM r161+（不推荐）→ push origin（**已执行**：origin/server ssh 远端持续推送，批23 末 `5deb37c`）→ CI 真实跑（BLOCKED：无远端 runner，需 GitHub/Gitee 托管=用户决策）。
+
+## 执行状态（第四轮 · 批23 移动端体验与用户上报修复）
+
+| 批 | 状态 | commit | 回归证据 |
+|---|---|---|---|
+| 23 八项 N1/N2/P5/P2/P3/P6/P7/P4 | ✅ | `d9f075d`…`39bc6be` + 文档 `b7fe788`/`5deb37c` | 池 8/8 全清（详录 BACKLOG.md 回写日志）；单测 106；local_ci ALL GREEN×8 轮；浏览器探针 n1_card/n2_probe/p5_ui/p2_probe/p3_flicker/p6_probe/p4_quality 全绿；批末部署生产 8090（dev@`39bc6be`，回滚点 `predeploy-20261015-153153`，生产 venv 单测 106、P4 探针经 ssh 隧道 GREEN、journal 零 error）；双远端推送至 `5deb37c` |
 
 ## 各批技术方案（要点）
 
@@ -96,7 +102,7 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 
 ## 不做
 
-- 不 push（部署用本地 git archive，与前两轮一致——用户指令是"上线"即部署生产，push 未被要求）。
+- 不 push（部署用本地 git archive，与前两轮一致——用户指令是"上线"即部署生产，push 未被要求；**后续已实际执行**：origin/server ssh 双远端持续推送，批23 末 `5deb37c`）。
 - 不重构渲染/协议大结构；不做 ESM 改造（已拍板维持 r160 UMD）。
 - 方向失控的「服务端 dir 回执协议」（dir-rej 消息）不做——用快照 q 对账 + 客户端校准替代（改动面小，且 q 字段仅 1 字节不算消息协议）。
 - 已知限制（记录不修）：增量帧 1296/1469 丢失靠重连全量自愈；persist owner-sid 既有缺陷；磁铁 1151 可拉入不可达口袋；theme live 修改（下局生效）。
