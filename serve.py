@@ -2228,6 +2228,26 @@ async def handle_msg(sess, m):
         await broadcast_rooms()
         return
 
+    # -------- 删除房间（批24 O2）：完全放开——任何人可删空闲房（含常驻⭐）--------
+    # 默认房拒、有人/观战拒；persist 房重写盘（重启不再复活）；删后全体 rooms 广播
+    if t == 'delroom':
+        rid = m.get('room') or ''
+        room = rooms.get(rid)
+        if not room:
+            return                     # 已不存在：静默（幂等）
+        if rid in DEFAULT_ROOM_IDS:
+            await send(sess, {'t': 'error', 'err': '默认房间不能删除'})
+            return
+        if room.players or room.subs:
+            await send(sess, {'t': 'error', 'err': '房间里还有人，先清空再删除'})
+            return
+        del rooms[rid]
+        if room.persist:
+            save_persist_rooms()       # 常驻房落盘同步移除
+        await send(sess, {'t': 'delok', 'room': rid})
+        await broadcast_rooms()
+        return
+
     if t == 'leave':
         # 返回主页：把自己移出房间（旧客户端不发此消息，行为不变）
         left = sess.room.id if sess.room else None

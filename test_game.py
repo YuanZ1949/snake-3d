@@ -1577,6 +1577,55 @@ def test_persist_open_to_anyone():
         del serve.rooms['rc']
 
 
+def test_delroom_open_to_anyone():
+    """批24 O2：删除房间完全放开——陌生人可删任意空闲房；
+    有人/观战中的房拒；默认房拒；persist 房删后写盘不再复活"""
+    import asyncio
+    old_save = serve.save_persist_rooms
+    saved = []
+    serve.save_persist_rooms = lambda *a, **k: (saved.append(1), True)[1]   # 不落真实文件
+    try:
+        # 1) 空闲自定义房：任何人删 → 成功回执 + 房间消失
+        r = serve.Room('dz', 'dz', 10)
+        serve.rooms['dz'] = r
+        s = _cfg_sess(sid='stranger', user=None)
+        asyncio.run(serve.handle_msg(s, {'t': 'delroom', 'room': 'dz'}))
+        assert 'dz' not in serve.rooms, '空闲房应被删除'
+        assert any(x.get('t') == 'delok' and x.get('room') == 'dz' for x in s.ws.sent)
+        assert not any(x.get('t') == 'error' for x in s.ws.sent)
+
+        # 2) 有人的房：拒，房间仍在
+        r2 = serve.Room('busy', 'busy', 10)
+        r2.players[1] = {'alive': True, 'bot': False}
+        serve.rooms['busy'] = r2
+        s2 = _cfg_sess(sid='stranger2', user=None)
+        asyncio.run(serve.handle_msg(s2, {'t': 'delroom', 'room': 'busy'}))
+        assert 'busy' in serve.rooms, '有人房不能删'
+        assert any(x.get('t') == 'error' for x in s2.ws.sent)
+
+        # 3) 默认房：拒（哪怕空闲）
+        if serve.DEFAULT_ROOM_IDS:
+            did = next(iter(serve.DEFAULT_ROOM_IDS))
+            s3 = _cfg_sess(sid='stranger3', user=None)
+            asyncio.run(serve.handle_msg(s3, {'t': 'delroom', 'room': did}))
+            assert did in serve.rooms, '默认房不能删'
+            assert any(x.get('t') == 'error' for x in s3.ws.sent)
+
+        # 4) persist 房：删成功 + 落盘 + dump 不再含
+        r4 = serve.Room('ps', 'ps', 10)
+        r4.persist = True
+        serve.rooms['ps'] = r4
+        s4 = _cfg_sess(sid='stranger4', user=None)
+        asyncio.run(serve.handle_msg(s4, {'t': 'delroom', 'room': 'ps'}))
+        assert 'ps' not in serve.rooms, '常驻房可删'
+        assert saved, '删 persist 房必须重写 persist 文件'
+        assert all(d.get('id') != 'ps' for d in serve.persist_rooms_dump())
+    finally:
+        serve.save_persist_rooms = old_save
+        for k in ('dz', 'busy', 'ps'):
+            serve.rooms.pop(k, None)
+
+
 def test_roomcfg_bots_live_add_remove():
     """批18 必改7：bots live 增减（set_bots 显式补生成/摘除）"""
     import asyncio
@@ -2015,6 +2064,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_created_issues_owner_tok,
             test_roomcfg_open_to_anyone,
             test_persist_open_to_anyone,
+            test_delroom_open_to_anyone,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
             test_roomcfg_extended_fields_unified,

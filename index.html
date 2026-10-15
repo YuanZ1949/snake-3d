@@ -2173,6 +2173,10 @@
         // 批18 E：房间参数编辑回执（变更已随 broadcast_rooms 刷新）
         showToast(m.changed ? '房间设置已更新' : '设置无变化');
         return;
+      case 'delok':
+        // 批24 O2：删除成功回执（列表已随 broadcast_rooms 刷新）
+        showToast('房间已删除');
+        return;
       case 'error':
         // 服务端拒绝（口令错误/非法口令/非创建者保存等）：浮层提示 + 入局失败退回主页
         showToast(m.err || '操作失败');
@@ -2987,6 +2991,20 @@
         gb.setAttribute('role', 'button');
         gb.onclick = e => { e.stopPropagation(); openCfg(r); };
         top.appendChild(gb);
+      }
+      if (r.id !== 'a' && r.id !== 'b' && r.id !== 'c') {   // 批24 O2：a/b/c 为默认房（与服务端 DEFAULT_ROOMS 对齐）
+        // 批24 O2：房间删除完全放开——非默认房显示🗑（任何人可删空闲房，含常驻）
+        const dl = document.createElement('span');
+        dl.className = 'saveBtn';
+        dl.textContent = '🗑 删除';
+        dl.setAttribute('role', 'button');
+        dl.onclick = e => {
+          e.stopPropagation();
+          if (confirm('删除房间「' + r.name + '」？' + (r.persist ? '（常驻房，删除后不再保留）' : ''))) {
+            send({t: 'delroom', room: r.id});
+          }
+        };
+        top.appendChild(dl);
       }
       btn.append(top, meta);
       btn.onclick = () => selectRoom(r.id);

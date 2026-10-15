@@ -10,7 +10,8 @@
 
 | # | 项 | 大小 | 依赖/依据 | 状态 |
 | --- | --- | --- | --- | --- |
-| O1 | 房间设置权限完全放开：roomcfg/persist 删鉴权，⚙/⭐ 全员可见可点 | 中 | 用户拍板「完全放开」；设计获批 m0177；`can_edit_room` 函数保留以备收紧 | ✅ 完成：服务端 roomcfg/persist 移除 `can_edit_room` 检查（批24 注释）；客户端卡片两处无条件显示；单测 4 例翻转（stranger_allowed/open_to_anyone×2/owner_survives_reconnect 断言翻转）106 全过；E2E `test_pass_p6.py` 第 7 步翻转（非创建者 persist 放行回执 rooms persist=true）；探针 `p24_open.js` GREEN（陌生人见⚙/⭐→改名→双端广播生效 errors=0）；local_ci ALL GREEN |
+| O1 | 房间设置权限完全放开：roomcfg/persist 删鉴权，⚙/⭐ 全员可见可点 | 中 | 用户拍板「完全放开」；设计获批 m0177；`can_edit_room` 函数保留以备收紧 | ✅ 完成：服务端 roomcfg/persist 移除 `can_edit_room` 检查（批24 注释）；客户端卡片两处无条件显示；单测 4 例翻转（stranger_allowed/open_to_anyone×2/owner_survives_reconnect 断言翻转）106 全过；E2E `test_pass_p6.py` 第 7 步翻转（非创建者 persist 放行回执 rooms persist=true）；探针 `p24_open.js` GREEN（陌生人见⚙/⭐→改名→双端广播生效 errors=0）；local_ci ALL GREEN；commit `6e0376b` 已部署生产+推送 |
+| O2 | 房间删除：卡片🗑按钮 + `delroom` 消息，任意空闲房（含常驻⭐）任何人可删 | 中 | 用户「房间无法删除」→ 拍板「任意空闲房，含常驻」→ 设计获批 m0254；默认房/有人房拒 | ✅ 完成：服务端 `delroom` 分支（默认房拒/有人观战拒/persist 重写盘/delok+broadcast_rooms）；客户端非默认房（id a/b/c）显示🗑+confirm+`delok` toast；TDD 单测 `test_delroom_open_to_anyone` 先红（空闲房应被删除）后绿，**单测 107**；探针 `p25_del.js` GREEN（默认房无按钮/自建房删除+toast errors=0）；静态 js=581；local_ci ALL GREEN |
 
 来源：用户上报「手机端访问体验不好」五项 + 后续追加指令。
 流程：`tamako-flow-backlog-sprint` —— 一次取一项，做完回写本文件。
