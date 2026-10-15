@@ -126,7 +126,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `t` | 字段 | 说明 |
 |---|---|---|
 | `register` | `user, pass` | 注册（`user` 即账号，**也是昵称来源**；`pass` 为 6 位数字） |
-| `login` | `user, pass` | 登录，成功回 `token` |
+| `login` | `user, pass` | 登录，成功回 `token`；**批21 防爆破**：同 (ip, 用户) 5 分钟窗连续失败 10 次后直接拒绝（明细记"限速拒绝"） |
 | `authtoken` | `token` | 断线重连恢复登录态（不需要带 user） |
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
@@ -236,6 +236,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
   丢人（drop_player）同样走 `check_win`。参数校验：`winMode` 非 last/score 回退 last；`limit` 夹 0–3600；`respawn` 必须布尔；limit=0 时 score→300s、respawn→120s 兜底（score 优先）。
 - **碰外墙折返（批17，H）**：`create` 带 `wd:1`（布尔，非法回退 False）→ `Room.walldeflect`——全员常驻「仅边界墙折返」（与 deflect 道具同语义：step §4 折返 guard 放行，方向由 `_deflect_dir()` 取垂直两向中空间最大者，仍无路可折照死 `cause='wall'`）。**边界**：正面撞岩石/墙块照死（`cause='rock'`）、撞自己照死、2 格被咬照常整条淘汰（折返不救被咬）；`rooms` 列表项带 `wd`，房间卡片 meta 显示「↩︎碰墙折返」；建房面板「碰墙」下拉（关闭·撞墙即死 / 碰外墙折返）；`wd` 随 persist 持久化往返。
 - **房间参数 live 编辑（批18，E）**：新消息 `roomcfg`（见 §5 协议表）——创建者可改 `winMode/limit/respawn/wd/bots`，**live 生效不重开局**。归属：`Room.owner_user`（create 时记 `sess.user`，随 persist 往返）；`can_edit_room()` 双轨鉴权（账号跨重连 / 在线 sid）。客户端：房间卡片「⚙ 设置」（`myCreated` 才显示，服务端二次鉴权）→ `cfgScreen` 面板（五个下拉 + 保存）→ `cfgapplied` toast；面板 select 同享批16 暗色。**已知限制**：匿名创建者断线（sid 失效）后失去编辑权；地形类参数（size/theme/rock/portal）不进编辑面。
+- **登录防爆破限速（批21）**：同 `(ip, 用户)` 在 `AUTH_FAIL_WIN=300s` 窗内连续登录失败满 `AUTH_FAIL_MAX=10` 次 → 直接拒绝**不再查库**（回执 err「尝试过于频繁，请稍后再试」，usage 明细记 `err='限速拒绝'` 供报表排查）；登录成功/窗口过期自动复位；内存 dict 每次计数时顺手清过期键防撑爆（重启清零可接受）。注册/authtoken 不限（注册失败是格式校验非爆破面、token 32 位不可猜）。单测 `test_auth_login_throttle` 全覆盖；失败原因明细见批20。
 - **AI 蛇（批4，A4）**：`create` 带 `bots`(0–7) 建房即生成；条目与普通玩家同结构但 `bot:true`、pid 为负数、名字 `AI-N`、`session=None`。**决策**：step 中该 AI 移动到期且转向队列空时 `_bot_think()`——候选不回头且界内可走；打分 `(是否绝路, 离目标距离, -目标方向对齐度, -前方开阔)`；**目标取 food/bonus 中距离更近者（等距优先星星，批15③**，不再星星无条件压过近处水果**）**，直达被挡时按对齐度绕行而非 DIRS4 定序偏航（批15②），无目标时以最开阔方向为准。AI **视为永远 ready**（只等真人 ready 触发新局）、常驻 `round_ids` 参与胜负计数、死亡/复活/新局逻辑与真人共用。**最后一个真人离开房间时 AI 全部清掉**（否则 AI 占位导致空房永不回收）。
 - **单人练习（批4，新#5）**：主页「🐍 单人练习」→ 建房 `{size:24, bots:3}` → `created` 自动入局（断线重连 onopen 补建房）；建房面板「AI蛇」下拉 0/1/2/3/5/7；房间卡片 meta 显示 `🤖AI×N`。
 - **断线恢复（批5，B2）**：断线时若房内**还有其他真人** → 原蛇置 `off_at` 挂起（原地冻结、不移动不参与转向）等待 `RESUME_MS=10s`；单人房/无其他真人则立即清房（保空房回收语义）。重连（同账号精确匹配；匿名仅当恰一个无账户挂起者）走原 `join` → `room-ok` 带 `resumed:true`，**原 id/身体/分数全保留不重新出生**；超 10s 未归 → drop（含清 AI）。客户端本有的自动重连（onDisconnect→2s→join）自动命中新路径。挂起者对 `maybe_start_round` 视为 ready。

@@ -31,6 +31,8 @@ LIMIT_MAX = 3600        # 战场限时上限（秒）
 RESUME_MS = 10000       # 断线宽限：原蛇原地保留等待重连 ms
 CHAT_COOL = 1000        # 聊天发送冷却 ms
 CHAT_MAX = 80           # 聊天内容长度上限（字符）
+AUTH_FAIL_MAX = 10      # 批21：同 (ip, 用户) 窗内连续登录失败上限，超限直接拒绝（防爆破）
+AUTH_FAIL_WIN = 300     # 批21：失败计数窗口（秒），过期自动复位
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
@@ -64,6 +66,31 @@ def valid_room_pass(p):
     if not p.isalnum() or p.isdigit() or p.isalpha():
         return False                      # 必须字母与数字混合（纯字母/纯数字都不行）
     return p.lower() not in WEAK_PASSES
+
+
+auth_fails = {}         # 批21：(ip, user) -> [window_start, fail_count]
+
+
+def auth_throttle_ok(ip, user, now):
+    """登录防爆破闸门：窗口内连续失败达 AUTH_FAIL_MAX 则拒绝；窗口过期自动复位"""
+    rec = auth_fails.get((ip, user))
+    if rec is None:
+        return True
+    if now - rec[0] > AUTH_FAIL_WIN:
+        auth_fails.pop((ip, user), None)
+        return True
+    return rec[1] < AUTH_FAIL_MAX
+
+
+def auth_fail_bump(ip, user, now):
+    """登录失败 +1；顺手清理过期条目，防攻击者用海量用户名撑爆字典"""
+    for k in [k for k, v in list(auth_fails.items()) if now - v[0] > AUTH_FAIL_WIN]:
+        auth_fails.pop(k, None)
+    rec = auth_fails.get((ip, user))
+    if rec is None:
+        auth_fails[(ip, user)] = [now, 1]
+    else:
+        rec[1] += 1
 
 
 def chat_throttle(src, now):
@@ -1762,11 +1789,19 @@ async def handle_msg(sess, m):
         usage.auth('register', ok, uname, sess.ip, err=err)
         return
     if t == 'login':
+        # 批21：防爆破——同 (ip, 用户) 窗内连续失败超限直接拒绝（不查库），
+        # 明细记"限速拒绝"供报表排查；成功/窗口过期自动复位
+        if not auth_throttle_ok(sess.ip, uname, time.time()):
+            await send(sess, {'t': 'auth', 'ok': False, 'err': '尝试过于频繁，请稍后再试'})
+            usage.auth('login', False, uname, sess.ip, err='限速拒绝')
+            return
         ok, err = store.login(m.get('user'), m.get('pass'))
         if ok:
+            auth_fails.pop((sess.ip, uname), None)
             sess.user = uname
             await send(sess, auth_payload(sess.user))
         else:
+            auth_fail_bump(sess.ip, uname, time.time())
             await send(sess, {'t': 'auth', 'ok': False, 'err': err})
         usage.auth('login', ok, uname, sess.ip, err=err)
         return

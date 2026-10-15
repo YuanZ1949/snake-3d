@@ -627,6 +627,57 @@ def test_usage_log():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_auth_login_throttle():
+    """批21：登录防爆破——同 (ip, 用户) 窗内连续失败超限直接拒绝（不查库，
+    明细记"限速拒绝"），窗口过期或成功后计数复位；不同 ip/用户互不影响"""
+    import tempfile, shutil, asyncio, json as _json
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix="snake-authlim-"))
+    old_store, old_usage, old_tokens = serve.store, serve.usage, serve.tokens
+    old_win = serve.AUTH_FAIL_WIN
+    try:
+        serve.store = serve.Store(d / "store.json")
+        serve.usage = serve.Usage(d / "usage.log", d / "usage.json")
+        serve.tokens = {}
+        serve.auth_fails.clear()
+
+        async def run():
+            s = _cfg_sess(sid="s1", user=None)
+            s.ip = "9.8.7.6"
+            await serve.handle_msg(s, {"t": "register", "user": "brt", "pass": "246810"})
+            assert s.ws.sent[-1]["ok"] is True, s.ws.sent[-1]
+            # 连续失败达上限：正常回执密码错误
+            for _ in range(serve.AUTH_FAIL_MAX):
+                await serve.handle_msg(s, {"t": "login", "user": "brt", "pass": "111111"})
+                assert s.ws.sent[-1]["ok"] is False and s.ws.sent[-1].get("err") == "密码错误", s.ws.sent[-1]
+            # 已锁定：正确密码也被拒（不查库），err 含"频繁"
+            await serve.handle_msg(s, {"t": "login", "user": "brt", "pass": "246810"})
+            assert s.ws.sent[-1]["ok"] is False and "频繁" in s.ws.sent[-1]["err"], s.ws.sent[-1]
+            # 窗口过期 → 放行；正确密码成功且计数复位
+            serve.AUTH_FAIL_WIN = 0
+            await serve.handle_msg(s, {"t": "login", "user": "brt", "pass": "246810"})
+            assert s.ws.sent[-1]["ok"] is True, s.ws.sent[-1]
+            # 复位验证：恢复窗口后同账号再错一次 = 重新计数（不残留锁）
+            serve.AUTH_FAIL_WIN = old_win
+            await serve.handle_msg(s, {"t": "login", "user": "brt", "pass": "111111"})
+            assert s.ws.sent[-1].get("err") == "密码错误", s.ws.sent[-1]
+            # 键隔离：同 ip 不同用户不受他人的锁影响
+            s2 = _cfg_sess(sid="s2", user=None)
+            s2.ip = "9.8.7.6"
+            await serve.handle_msg(s2, {"t": "login", "user": "other", "pass": "111111"})
+            assert s2.ws.sent[-1].get("err") == "用户不存在", s2.ws.sent[-1]
+            lines = [_json.loads(x) for x in (d / "usage.log").read_text("utf-8").splitlines()]
+            lim = [x for x in lines if x.get("e") == "auth" and x.get("err") == "限速拒绝"]
+            assert len(lim) == 1, lim
+        asyncio.run(run())
+        print("auth login throttle OK")
+    finally:
+        serve.store, serve.usage, serve.tokens = old_store, old_usage, old_tokens
+        serve.AUTH_FAIL_WIN = old_win
+        serve.auth_fails.clear()
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_speed_change_instant():
     # 速度档位切换立即生效：调慢当场变慢、调快当场变快
     r = fresh(24)
@@ -1492,6 +1543,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
            test_room_custom_config, test_speed_change_instant,
            test_free_cells_big_map, test_usage_log,
+           test_auth_login_throttle,
            test_combo_increments_and_expires, test_combo_multiplier_tiers,
            test_double_item_doubles_score, test_magnet_pulls_food,
            test_rage_halves_cooldown_and_speeds_bullet,

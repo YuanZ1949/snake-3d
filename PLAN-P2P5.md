@@ -70,9 +70,10 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 
 | 批 | 状态 | commit | 回归证据 |
 |---|---|---|---|
-| 20 auth 失败原因入明细 | ✅ | 本 commit | test_usage_log 扩 err 断言（旧码红 `TypeError: unexpected keyword argument 'err'`，新码 92/92 绿）+ local_ci ALL GREEN（8 E2E/单测/静态/Playwright 5/5 13.8s）+ 报表实跑出现 `login:密码错误×1`、`register:用户名已存在×3` 等原因细分（旧历史行仍兜底 `:fail`，usage_report 零改动——L168 本就读 `o.get('err')`） |
+| 20 auth 失败原因入明细 | ✅ | 905e724 | test_usage_log 扩 err 断言（旧码红 `TypeError: unexpected keyword argument 'err'`，新码 92/92 绿）+ local_ci ALL GREEN（8 E2E/单测/静态/Playwright 5/5 13.8s）+ 报表实跑出现 `login:密码错误×1`、`register:用户名已存在×3` 等原因细分（旧历史行仍兜底 `:fail`，usage_report 零改动——L168 本就读 `o.get('err')`） |
+| 21 登录防爆破限速 | ✅ | 本 commit | test_auth_login_throttle（+1 新例，旧码红 `AttributeError: AUTH_FAIL_WIN`；连续 10 败后正确密码也拒、窗口过期复位、成功复位、同 ip 异用户隔离、明细记"限速拒绝"恰好 1 条）+ 单测 93/93 + local_ci ALL GREEN（8 E2E/静态/Playwright 5/5 11.3s） |
 
-第三轮候选池排序：20 auth err（✅）→ 棋盘饱和度补偿（批10 遗留，下一项）→ 匿名创建者断线失编辑权 → ESM r161+（已评估不推荐）→ push origin（运维决策待用户）→ CI 真实跑（BLOCKED：远端无 runner）。
+第三轮候选池排序：20 auth err（✅905e724）→ 21 登录防爆破限速（✅本 commit）→ ~~棋盘饱和度补偿~~（**移除**：批10 用户已拍板 r160 新默认零改动、不改 THEMES 配色，此条与拍板冲突）→ 匿名创建者断线失编辑权（评估结论：匿名无身份本质不可解，仅可加提示，低价值）→ `_deflect_dir` 未排除他人身体（批17 观察项，代码走查结论：落他人身体=正常咬合规则、落他人头=1 tick 重叠被批14 破僵局覆盖，**判定不修**，已记 HANDOVER 批17 INFO）→ ESM r161+（不推荐）→ push origin（运维决策待用户）→ CI 真实跑（BLOCKED：无远端 runner）。
 
 ## 各批技术方案（要点）
 
