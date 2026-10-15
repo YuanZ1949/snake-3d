@@ -269,6 +269,57 @@ class Store:
         return True
 
 
+# ---- 批25 抽卡：卡池与纯函数（概率/保底/50-50，不碰 Store/全局） ----
+
+GACHA_POOL = {3: [5, 6, 7, 8, 9, 10], 4: [11, 12, 13], 'up': 15, 'std': 14}
+GACHA_P5 = 0.016      # 5★ 基础概率
+GACHA_P4 = 0.146      # 4★ 基础概率（含 5★ 之后的判定，即 13% 名义）
+GACHA_PITY5 = 89      # 90 抽硬保底（0 基计数：第 90 抽必出，即 pity5==89 触发）
+GACHA_PITY4 = 9       # 10 抽必出 4★
+
+
+def gacha_roll(rng, lose5050, pity5, pity4):
+    """单抽纯函数。判定顺序写死：硬保底5★ > 基础5★ > 4★保底 > 基础4★ > 3★。
+    计数转移：出5★→双清零；出4★→pity4=0 且 pity5+=1；3★→双双+1。
+    50/50：出5★时若 lose5050=True → 必 UP 并复位；否则掷骰，歪则置 lose5050=True。"""
+    pity5, pity4 = int(pity5), int(pity4)
+    if pity5 >= GACHA_PITY5:
+        star = 5
+    else:
+        r = rng.random()
+        if r < GACHA_P5:
+            star = 5
+        elif pity4 >= GACHA_PITY4:
+            star = 4
+        elif r < GACHA_P4:
+            star = 4
+        else:
+            star = 3
+    if star == 5:
+        pity5, pity4 = 0, 0
+        if lose5050:
+            up, lose5050 = True, False
+        else:
+            up = rng.random() < 0.5
+            if not up:
+                lose5050 = True
+    elif star == 4:
+        pity4, pity5 = 0, pity5 + 1
+        up = False
+    else:
+        pity4, pity5 = pity4 + 1, pity5 + 1
+        up = False
+    return {'star': star, 'up': up, 'pity5': pity5, 'pity4': pity4, 'lose5050': bool(lose5050)}
+
+
+def pool_pick(rng, star, up):
+    """同星内均匀取皮肤 id。5★ 由 up 决定 UP/常驻。"""
+    if star == 5:
+        return GACHA_POOL['up'] if up else GACHA_POOL['std']
+    lst = GACHA_POOL[star]
+    return lst[int(rng.random() * len(lst)) % len(lst)]
+
+
 store = Store(STORE_PATH)
 
 # 登录令牌（内存级，服务重启后需重新登录）

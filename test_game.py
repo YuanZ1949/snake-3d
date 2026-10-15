@@ -640,6 +640,99 @@ def test_store_gacha_fields():
     print("store gacha fields OK")
 
 
+class _FakeRng:
+    """定点 rng：按序返回给定值，耗尽后恒 0.5"""
+    def __init__(self, vals):
+        self.vals = list(vals)
+
+    def random(self):
+        return self.vals.pop(0) if self.vals else 0.5
+
+
+def test_gacha_probability_boundaries():
+    # 批25 T2: 概率边界定点（0.016 / 0.146）
+    assert serve.gacha_roll(_FakeRng([0.015]), False, 0, 0)["star"] == 5
+    assert serve.gacha_roll(_FakeRng([0.0159]), False, 0, 0)["star"] == 5
+    assert serve.gacha_roll(_FakeRng([0.02]), False, 0, 0)["star"] == 4
+    assert serve.gacha_roll(_FakeRng([0.1459]), False, 0, 0)["star"] == 4
+    assert serve.gacha_roll(_FakeRng([0.15]), False, 0, 0)["star"] == 3
+    print("gacha boundaries OK")
+
+
+def test_gacha_pity90_hard():
+    r = serve.gacha_roll(_FakeRng([]), False, 89, 5)
+    assert r["star"] == 5, r
+    assert r["pity5"] == 0 and r["pity4"] == 0, r   # 出 5★ 双计数清零
+    print("gacha pity90 OK")
+
+
+def test_gacha_pity10_four():
+    # FakeRng 恒 0.5：基础随机必落 3★ 分支 → 4★ 保底强制出货
+    r = serve.gacha_roll(_FakeRng([0.5]), False, 0, 9)
+    assert r["star"] == 4, r
+    assert r["pity4"] == 0 and r["pity5"] == 1, r
+    print("gacha pity10 four OK")
+
+
+def test_gacha_pity_order():
+    # 双保底同触：5★ 优先
+    r = serve.gacha_roll(_FakeRng([0.5]), False, 89, 9)
+    assert r["star"] == 5, r
+    print("gacha pity order OK")
+
+
+def test_gacha_5050_guarantee():
+    # 保底强制出 5★ 驱动 50/50（不依赖 1.6% 命中）
+    loss = serve.gacha_roll(_FakeRng([0.6]), False, 89, 0)   # up 掷骰 0.6 → 歪
+    assert loss["star"] == 5 and loss["up"] is False and loss["lose5050"] is True, loss
+    win = serve.gacha_roll(_FakeRng([0.3]), False, 89, 0)    # 0.3 → 中
+    assert win["up"] is True and win["lose5050"] is False, win
+    gtd = serve.gacha_roll(_FakeRng([]), True, 89, 0)        # 大保底必 UP，不耗 rng
+    assert gtd["up"] is True and gtd["lose5050"] is False, gtd
+    print("gacha 5050 OK")
+
+
+def test_gacha_ten_pull_pity_carry():
+    rng = serve.random.Random(7)
+    p5 = p4 = 0
+    for i in range(10):
+        r = serve.gacha_roll(rng, False, p5, p4)
+        if r["star"] == 5:
+            assert r["pity5"] == 0 and r["pity4"] == 0, (i, r)
+        elif r["star"] == 4:
+            assert r["pity4"] == 0 and r["pity5"] == p5 + 1, (i, r)
+        else:
+            assert r["pity5"] == p5 + 1 and r["pity4"] == p4 + 1, (i, r)
+        p5, p4 = r["pity5"], r["pity4"]
+    print("gacha ten pull carry OK")
+
+
+def test_pool_pick_uniform():
+    seen3, seen4 = set(), set()
+    for i in range(6):
+        seen3.add(serve.pool_pick(_FakeRng([i / 6.0]), 3, False))
+    for i in range(3):
+        seen4.add(serve.pool_pick(_FakeRng([i / 3.0]), 4, False))
+    assert seen3 == {5, 6, 7, 8, 9, 10}, seen3
+    assert seen4 == {11, 12, 13}, seen4
+    assert serve.pool_pick(_FakeRng([]), 5, True) == 15
+    assert serve.pool_pick(_FakeRng([]), 5, False) == 14
+    print("pool pick uniform OK")
+
+
+def test_gacha_dist_smoke():
+    rng = serve.random.Random(42)
+    cnt = {3: 0, 4: 0, 5: 0}
+    p5 = p4 = 0
+    for _ in range(10000):
+        r = serve.gacha_roll(rng, False, p5, p4)
+        cnt[r["star"]] += 1
+        p5, p4 = r["pity5"], r["pity4"]
+    assert 80 <= cnt[5] <= 260, cnt          # 1.6% + 90 硬保底
+    assert 1250 <= cnt[4] <= 1750, cnt      # 13% + 10 技保底（计数清零语义）
+    print("gacha dist smoke OK:", cnt)
+
+
 def test_room_custom_config():
     # 尺寸 / 主题 / 岩石 / 传送门 可自由组合
     r = serve.Room("x", "自定义", 40, theme_fixed="lava", rock_mult=0.0, portal_on=True)
@@ -2215,6 +2308,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
             test_store_gacha_fields,
+            test_gacha_probability_boundaries, test_gacha_pity90_hard, test_gacha_pity10_four,
+            test_gacha_pity_order, test_gacha_5050_guarantee, test_gacha_ten_pull_pity_carry,
+            test_pool_pick_uniform, test_gacha_dist_smoke,
            test_room_custom_config, test_speed_change_instant,
            test_free_cells_big_map, test_usage_log,
            test_auth_login_throttle,
