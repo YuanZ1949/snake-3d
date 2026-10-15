@@ -1620,9 +1620,36 @@ def test_delroom_open_to_anyone():
         assert 'ps' not in serve.rooms, '常驻房可删'
         assert saved, '删 persist 房必须重写 persist 文件'
         assert all(d.get('id') != 'ps' for d in serve.persist_rooms_dump())
+
+        # 5) 纯 AI 房（仅 bot 占位、无人类玩家/观战）→ 可删（批24 O4 修复：
+        #    原实现把 bot 也算「有人」导致 AI 房删不掉）
+        r5 = serve.Room('ai', 'ai', 10)
+        r5.set_bots(3)
+        assert r5.players and all(q.get('bot') for q in r5.players.values())
+        serve.rooms['ai'] = r5
+        s5 = _cfg_sess(sid='stranger5', user=None)
+        asyncio.run(serve.handle_msg(s5, {'t': 'delroom', 'room': 'ai'}))
+        assert 'ai' not in serve.rooms, '纯 AI 房应可删除'
+        assert any(x.get('t') == 'delok' for x in s5.ws.sent)
+
+        # 6) AI 房但有真人观战 → 仍拒
+        r6 = serve.Room('aiw', 'aiw', 10)
+        r6.set_bots(2)
+        class _FakeWs:
+            sent = []
+            async def send(self, *_a, **_k):
+                pass
+        class _FakeSess:
+            ws = _FakeWs()
+        r6.subs.add(_FakeSess())
+        serve.rooms['aiw'] = r6
+        s6 = _cfg_sess(sid='stranger6', user=None)
+        asyncio.run(serve.handle_msg(s6, {'t': 'delroom', 'room': 'aiw'}))
+        assert 'aiw' in serve.rooms, '有真人观战的 AI 房不能删'
+        assert any(x.get('t') == 'error' for x in s6.ws.sent)
     finally:
         serve.save_persist_rooms = old_save
-        for k in ('dz', 'busy', 'ps'):
+        for k in ('dz', 'busy', 'ps', 'ai', 'aiw'):
             serve.rooms.pop(k, None)
 
 

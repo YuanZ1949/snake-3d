@@ -2238,7 +2238,9 @@ async def handle_msg(sess, m):
         if rid in DEFAULT_ROOM_IDS:
             await send(sess, {'t': 'error', 'err': '默认房间不能删除'})
             return
-        if room.players or room.subs:
+        # 批24 O4：「有人」只算真人——纯 AI 占位（bot）不算，可直接删；
+        # subs 是人类观战 session 集合（bot 不会观战），非空仍拒
+        if any(not q.get('bot') for q in room.players.values()) or room.subs:
             await send(sess, {'t': 'error', 'err': '房间里还有人，先清空再删除'})
             return
         del rooms[rid]
