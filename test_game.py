@@ -1011,6 +1011,9 @@ def test_ult_fruit_and_star_charge():
     r.food = {"id": 1, "x": 3, "y": 5, "score": 10, "color": "#fff"}
     r.step(0.05, now)
     assert p["ult"] == serve.ULT_FRUIT, p.get("ult")
+    # 批23 P7：吃果触发的 place_food() 随机补粒，恰落蛇头下一步 (4,5) 时
+    # 第二步与 bonus 一步双吃 → 35≠25（约 1.5% flaky）。夹具把补粒钉到远格消除随机
+    r.food = {"id": 2, "x": 0, "y": 9, "score": 10, "color": "#fff"}
     r.bonus = {"id": 9, "x": 4, "y": 5, "score": 50, "born": now}
     r.step(0.05, now + 200)
     assert p["ult"] == serve.ULT_FRUIT + serve.ULT_STAR, p.get("ult")
