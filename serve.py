@@ -2004,9 +2004,9 @@ async def handle_msg(sess, m):
         if not room:
             await send(sess, {'t': 'error', 'err': '房间不存在'})
             return
-        if not can_edit_room(sess, room, m.get('otok')):   # 批23 P6：第三轨 owner 凭据
-            await send(sess, {'t': 'error', 'err': '仅房间创建者可修改设置'})
-            return
+        # 批24：房间设置完全放开——身份门槛移除（任何人可改任何房间），
+        # 口令格式等业务校验保留在下方；can_edit_room 函数保留以备日后收紧。
+        # （批23 P6 曾在此做 otok 三轨鉴权）
         # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
         new_pass = m.get('pass')
         if 'pass' in m and new_pass not in (None, ''):
@@ -2220,10 +2220,8 @@ async def handle_msg(sess, m):
         room = rooms.get(m.get('room') or '')
         if not room:
             return
-        # 批23 P6：从「仅在线 sid」扩为 can_edit_room 三轨（账号/在线 sid/owner 凭据）
-        if not can_edit_room(sess, room, m.get('otok')):
-            await send(sess, {'t': 'error', 'err': '仅创建者可保存房间'})
-            return
+        # 批24：保存房间同步放开——身份门槛移除（任何人可保存常驻）。
+        # （批23 P6 曾在此做 can_edit_room 三轨鉴权）
         if not room.persist:
             room.persist = True
             save_persist_rooms()

@@ -1465,15 +1465,16 @@ def _cfg_room(sess):
     return r
 
 
-def test_roomcfg_stranger_denied():
-    """非创建者改设置 → error 且房间参数不变"""
+def test_roomcfg_stranger_allowed():
+    """批24：房间设置完全放开——非创建者改设置也生效（原批18 拒绝语义已废弃）"""
     import asyncio
     r = _cfg_room(_cfg_sess(sid='s1', user='u1'))
-    evil = _cfg_sess(sid='s2', user='u2', room=r)
-    asyncio.run(serve.handle_msg(evil, {'t': 'roomcfg', 'room': 'rc',
-                                        'winMode': 'score', 'wd': True}))
-    assert any(x.get('t') == 'error' for x in evil.ws.sent)
-    assert r.win_mode == 'last' and r.walldeflect is False
+    other = _cfg_sess(sid='s2', user='u2', room=r)
+    asyncio.run(serve.handle_msg(other, {'t': 'roomcfg', 'room': 'rc',
+                                         'winMode': 'score', 'wd': True}))
+    assert not any(x.get('t') == 'error' for x in other.ws.sent)
+    assert r.win_mode == 'score' and r.walldeflect is True
+    assert any(x.get('t') == 'cfgapplied' for x in other.ws.sent)
     del serve.rooms['rc']
 
 
@@ -1496,7 +1497,8 @@ def test_roomcfg_creator_edits_live_without_restart():
 
 
 def test_roomcfg_account_owner_survives_reconnect():
-    """批18 必改7：账号归属跨会话有效（owner==sid 重连即失效的替代）"""
+    """批18 必改7：账号归属跨会话有效（owner==sid 重连即失效的替代）；
+    批24 后身份门槛整体放开，u2 亦可改——保留本例验证账号轨道仍生效不回归"""
     import asyncio
     r = serve.Room('rc', 'rc', 10)
     r.owner = 'oldsid'          # 旧会话已断开
@@ -1508,7 +1510,7 @@ def test_roomcfg_account_owner_survives_reconnect():
     assert any(x.get('t') == 'cfgapplied' for x in s2.ws.sent)
     s3 = _cfg_sess(sid='x', user='u2')
     asyncio.run(serve.handle_msg(s3, {'t': 'roomcfg', 'room': 'rc', 'bots': 5}))
-    assert r.bots == 2
+    assert r.bots == 5   # 批24：陌生人同样放行（原断言 2 = 拒绝语义已废弃）
     del serve.rooms['rc']
 
 
@@ -1531,34 +1533,32 @@ def test_created_issues_owner_tok():
         serve.rooms.update(orig)
 
 
-def test_roomcfg_owner_tok_recovers_anonymous():
-    """批23 P6：匿名创建者断线（sid 失效、无账号）凭 owner 凭据恢复编辑；
-    无凭据/错凭据拒绝且参数不变"""
+def test_roomcfg_open_to_anyone():
+    """批24：房间设置完全放开——任何会话（匿名、无凭据、非创建者）可改任何房间；
+    口令格式等业务校验保留（非法口令仍整条原子拒绝）"""
     import asyncio
     r = serve.Room('rc', 'rc', 10)
     r.owner = 'oldsid'
     r.owner_user = None
     r.owner_tok = 'a' * 32
     serve.rooms['rc'] = r
-    s2 = _cfg_sess(sid='newsid', user=None)     # 匿名新连接
-    asyncio.run(serve.handle_msg(s2, {'t': 'roomcfg', 'room': 'rc',
-                                      'otok': 'a' * 32, 'bots': 2}))
-    assert r.bots == 2
-    assert any(x.get('t') == 'cfgapplied' for x in s2.ws.sent)
-    s3 = _cfg_sess(sid='x', user=None)          # 错凭据 → 拒
-    asyncio.run(serve.handle_msg(s3, {'t': 'roomcfg', 'room': 'rc',
-                                      'otok': 'b' * 32, 'bots': 5}))
-    assert r.bots == 2
-    s4 = _cfg_sess(sid='y', user=None)          # 无凭据 → 拒
+    s3 = _cfg_sess(sid='x', user=None)          # 陌生人（无凭据、非创建者）→ 放行
+    asyncio.run(serve.handle_msg(s3, {'t': 'roomcfg', 'room': 'rc', 'bots': 5}))
+    assert r.bots == 5
+    assert any(x.get('t') == 'cfgapplied' for x in s3.ws.sent)
+    s4 = _cfg_sess(sid='y', user=None)          # 另一陌生人 → 同样放行
     asyncio.run(serve.handle_msg(s4, {'t': 'roomcfg', 'room': 'rc', 'bots': 7}))
-    assert r.bots == 2
+    assert r.bots == 7
+    # 业务校验不随身份门槛一起放开：非法口令仍原子拒绝
+    asyncio.run(serve.handle_msg(s4, {'t': 'roomcfg', 'room': 'rc',
+                                      'pass': 'weak', 'bots': 3}))
+    assert r.bots == 7 and r.passw is None
     assert any(x.get('t') == 'error' for x in s4.ws.sent)
     del serve.rooms['rc']
 
 
-def test_persist_owner_tok_grants_save():
-    """批23 P6：persist 从「仅在线 sid」扩为 can_edit_room 三轨——
-    匿名断线重连凭 otok 仍可保存常驻；无凭据非创建者拒"""
+def test_persist_open_to_anyone():
+    """批24：persist 同步放开——陌生人（无凭据、非创建者）也可保存常驻"""
     import asyncio
     old_save = serve.save_persist_rooms
     serve.save_persist_rooms = lambda *a, **k: True   # 不落真实 data/ 文件
@@ -1570,11 +1570,8 @@ def test_persist_owner_tok_grants_save():
     try:
         s = _cfg_sess(sid='newsid', user=None)
         asyncio.run(serve.handle_msg(s, {'t': 'persist', 'room': 'rc'}))
-        assert r.persist is False, '无凭据非创建者不可保存'
-        assert any(x.get('t') == 'error' for x in s.ws.sent)
-        asyncio.run(serve.handle_msg(s, {'t': 'persist', 'room': 'rc',
-                                         'otok': 'c' * 32}))
-        assert r.persist is True
+        assert r.persist is True, '任何人可保存房间'
+        assert not any(x.get('t') == 'error' for x in s.ws.sent)
     finally:
         serve.save_persist_rooms = old_save
         del serve.rooms['rc']
@@ -2012,12 +2009,12 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_walldeflect_room_no_escape_dies,
             test_walldeflect_room_rock_front_still_dies,
             test_walldeflect_bite_min_len_still_dies,
-            test_roomcfg_stranger_denied,
+            test_roomcfg_stranger_allowed,
             test_roomcfg_creator_edits_live_without_restart,
             test_roomcfg_account_owner_survives_reconnect,
             test_created_issues_owner_tok,
-            test_roomcfg_owner_tok_recovers_anonymous,
-            test_persist_owner_tok_grants_save,
+            test_roomcfg_open_to_anyone,
+            test_persist_open_to_anyone,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
             test_roomcfg_extended_fields_unified,

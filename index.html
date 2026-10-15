@@ -2970,8 +2970,8 @@
       meta.className = 'meta';
       meta.textContent = roomMeta(r);
       top.append(nm, cnt);
-      if (isMine(r.id) && !r.persist) {
-        // 创建者可「保存」房间：persist → 常驻不回收、重启后重建（新#11）
+      if (!r.persist) {
+        // 批24：房间设置完全放开——任何房间显示「保存」（原仅创建者）
         const sv = document.createElement('span');
         sv.className = 'saveBtn';
         sv.textContent = '⭐ 保存';
@@ -2979,8 +2979,8 @@
         sv.onclick = e => { e.stopPropagation(); send({t: 'persist', room: r.id, otok: otokOf(r.id)}); };
         top.appendChild(sv);
       }
-      if (isMine(r.id)) {
-        // 批18 E：创建者可 live 编辑参数（服务端二次鉴权；批23 P6 凭据跨刷新）
+      {
+        // 批24：房间设置完全放开——所有房间显示⚙（原仅创建者 isMine；服务端同步去鉴权）
         const gb = document.createElement('span');
         gb.className = 'saveBtn';
         gb.textContent = '⚙ 设置';

@@ -75,14 +75,18 @@ async def main():
     assert '口令' in err.get('err', ''), err
     print('7 watch without pass rejected:', err['err'])
 
-    # 7) 保存：非创建者拒、创建者成功且列表 persist=true
+    # 7) 保存：批24 完全放开——非创建者也能保存，回执 rooms persist=true（原：非创建者拒）
     await ws2.send(json.dumps({'t': 'persist', 'room': rid}))
-    err = await recv_until(ws2, lambda m: m.get('t') == 'error')
-    assert '创建者' in err.get('err', ''), err
-    print('8 persist by non-owner rejected:', err['err'])
+    rooms = await recv_until(ws2, lambda m: m.get('t') == 'rooms'
+                              and any(r.get('persist') for r in m.get('list', [])))
+    info = [r for r in rooms['list'] if r['id'] == rid][0]
+    assert info['persist'] is True, info
+    print('8 persist by non-owner allowed: persist=%s' % info['persist'])
+    # 创建者再保存（幂等，无报错）仍回 rooms persist=true
     await ws1.send(json.dumps({'t': 'persist', 'room': rid}))
     rooms = await recv_until(ws1, lambda m: m.get('t') == 'rooms'
-                              and any(r.get('persist') for r in m.get('list', [])))
+                              and any(r.get('persist') and r.get('id') == rid
+                                      for r in m.get('list', [])))
     info = [r for r in rooms['list'] if r['id'] == rid][0]
     assert info['persist'] is True, info
     print('9 owner persisted: %s persist=%s' % (rid, info['persist']))

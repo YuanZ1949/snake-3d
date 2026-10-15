@@ -3,6 +3,15 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批24（2026-10-15 起）
+
+来源：用户「房间的设置我咋没看到 还是说权限太严了 我觉得房间直接支持修改吧」→ 范围拍板「完全放开（推荐）」→ 设计获批。
+流程：`tamako-flow-backlog-sprint`。
+
+| # | 项 | 大小 | 依赖/依据 | 状态 |
+| --- | --- | --- | --- | --- |
+| O1 | 房间设置权限完全放开：roomcfg/persist 删鉴权，⚙/⭐ 全员可见可点 | 中 | 用户拍板「完全放开」；设计获批 m0177；`can_edit_room` 函数保留以备收紧 | ✅ 完成：服务端 roomcfg/persist 移除 `can_edit_room` 检查（批24 注释）；客户端卡片两处无条件显示；单测 4 例翻转（stranger_allowed/open_to_anyone×2/owner_survives_reconnect 断言翻转）106 全过；E2E `test_pass_p6.py` 第 7 步翻转（非创建者 persist 放行回执 rooms persist=true）；探针 `p24_open.js` GREEN（陌生人见⚙/⭐→改名→双端广播生效 errors=0）；local_ci ALL GREEN |
+
 来源：用户上报「手机端访问体验不好」五项 + 后续追加指令。
 流程：`tamako-flow-backlog-sprint` —— 一次取一项，做完回写本文件。
 取证结论与根因链见 PLAN-P2P5.md 批23 记录及本文件各条。
