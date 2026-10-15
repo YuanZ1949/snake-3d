@@ -386,8 +386,9 @@ ssh tencent "sha256sum /home/ubuntu/snake-3d/serve.py"   # 不一致 → 停下�
 # 1) 部署前备份（回滚点，整个目录打包，排除 .venv/data/__pycache__）
 ssh tencent 'tar czf /home/ubuntu/snake-3d-predeploy-$(date +%Y%m%d-%H%M%S).tar.gz \
   --exclude=.venv --exclude=data --exclude=__pycache__ -C /home/ubuntu snake-3d'
-# 2) 归档投放（本地 git archive 流式覆盖，无需 push；⚠️ PowerShell 下 $() 会被本地插值，远端命令一律单引号）
-git archive --format=tar -o $env:TEMP\deploy.tar dev
+# 2) 归档投放（本地 git archive 流式覆盖，无需 push；⚠️ PowerShell 下 $() 会被本地插值，远端命令一律单引号；
+#    ⚠️ Windows core.autocrlf=true 会把 LF 转成 CRLF，必须加 -c core.autocrlf=false 得纯 LF，否则服务器 sha256 对不上）
+git -c core.autocrlf=false archive --format=tar -o $env:TEMP\deploy.tar dev
 scp $env:TEMP\deploy.tar tencent:/tmp/deploy.tar
 ssh tencent 'tar -xf /tmp/deploy.tar -C /home/ubuntu/snake-3d && rm /tmp/deploy.tar'
 # 3) 重启 + 验证
@@ -404,7 +405,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`ecca0c0`**（批1-18 全量，2026-10-15 06:29 部署；增量协议生产实测 `first=full(698B) avg_delta=435B`、journal 零错误）。回滚点：`snake-3d-predeploy-20261015-062936.tar.gz`（另有更早的 `20261015-020636` 一份）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`。
+当前生产版本：**dev@`8ebb68f`**（批1-21 全量，2026-10-15 09:14 部署，纯 LF；服务器 sha256 与本地 HEAD blob 一致、生产 venv 单测 93/93、限速探针 `THROTTLE PROBE OK`（10 败后第 11 次登录回「尝试过于频繁」）、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-091402.tar.gz`（另有 `062936`、`020636` 两份更早的）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py` 跑完已删。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 
@@ -474,6 +475,8 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 9. **房间回收的测试要区分"创建者在线/离线"** —— 否则会误判为 bug。
 
 10. **`data/` 永不入库** —— 里面是账户 `store.json` 与用量 `usage.json`/`usage.log`，`.gitignore` 已加 `data/`。本地跑 E2E 会生成测试账号属正常，`git status` 不再显示 `?? data/`。
+
+11. **Windows 上 `git archive` 输出 CRLF** —— 本机 `core.autocrlf=true`（仓库无 `.gitattributes`）会把 blob 的 LF 转成 CRLF，导致部署到 Linux 后 sha256 与 `git show <commit>:` 不一致（曾被误判为"生产被手改"，实为纯换行差异 2231 行）。**部署命令必须写 `git -c core.autocrlf=false archive ...`**（见 §11.2）。
 
 ---
 
