@@ -272,6 +272,7 @@ class Store:
 # ---- 批25 抽卡：卡池与纯函数（概率/保底/50-50，不碰 Store/全局） ----
 
 GACHA_POOL = {3: [5, 6, 7, 8, 9, 10], 4: [11, 12, 13], 'up': 15, 'std': 14}
+GACHA_PRICE = 160          # 批25：单抽星尘价（十连 = 10×，无折扣，spec §4.3）
 GACHA_P5 = 0.016      # 5★ 基础概率
 GACHA_P4 = 0.146      # 4★ 基础概率（含 5★ 之后的判定，即 13% 名义）
 GACHA_PITY5 = 89      # 90 抽硬保底（0 基计数：第 90 抽必出，即 pity5==89 触发）
@@ -1035,11 +1036,11 @@ class Room:
             if len(leaders) == 1:
                 w = self.players[leaders[0]]
                 w['score'] += WIN_SCORE
-                self.win_pending = {'winner': leaders[0]}
+                _set_win_pending(self, {'winner': leaders[0]})
                 self.ev('win', id=leaders[0], name=w['name'], bonus=WIN_SCORE, reason='time')
                 self._credit_win(w)
             else:
-                self.win_pending = {'winner': None}
+                _set_win_pending(self, {'winner': None})
                 self.ev('win', id=None, name=None, bonus=0, reason='time')
             return
         # 2) 复活模式：淘汰不结算，只等限时
@@ -1053,22 +1054,22 @@ class Room:
                 if len(leaders) == 1:
                     w = self.players[leaders[0]]
                     w['score'] += WIN_SCORE
-                    self.win_pending = {'winner': leaders[0]}
+                    _set_win_pending(self, {'winner': leaders[0]})
                     self.ev('win', id=leaders[0], name=w['name'], bonus=WIN_SCORE, reason='score')
                     self._credit_win(w)
                 else:
-                    self.win_pending = {'winner': None}
+                    _set_win_pending(self, {'winner': None})
                     self.ev('win', id=None, name=None, bonus=0, reason='score')
             return
         # 4) 死斗（默认）：最后一人获胜，全灭平局
         if len(alive) == 1:
             w = self.players[alive[0]]
             w['score'] += WIN_SCORE
-            self.win_pending = {'winner': alive[0]}
+            _set_win_pending(self, {'winner': alive[0]})
             self.ev('win', id=alive[0], name=w['name'], bonus=WIN_SCORE)
             self._credit_win(w)
         elif len(alive) == 0:
-            self.win_pending = {'winner': None}
+            _set_win_pending(self, {'winner': None})
             self.ev('win', id=None, name=None, bonus=0)
 
     def _credit_win(self, p):
@@ -1125,6 +1126,8 @@ class Room:
         self.ready.discard(pid)
         if p and p.get('user'):
             store.record_best(p['user'], p['score'])
+        if p:
+            settle_dust(p)              # 批25：离房并账当场星尘（幂等，防与死亡/局末双计）
         # 最后一个真人离开 → 清掉全部 AI（否则 AI 占位导致空房永远不回收）
         if not any(not q.get('bot') for q in self.players.values()):
             for bid in [bid for bid, q in self.players.items() if q.get('bot')]:
@@ -1446,6 +1449,7 @@ class Room:
                     store.inc(q['user'], 'deaths')
                 self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
                 self.ev('die', id=vid, cause='bite', by=eid)
+                settle_dust(q)          # 批25：死亡并账当场星尘
                 continue
             keep = max(MIN_LEN, idx)
             if keep >= len(q['cells']):
@@ -1466,6 +1470,7 @@ class Room:
                 self.ev('die', id=p['id'], cause=p.get('cause', 'wall'), by=p.get('by'))
                 if p.get('user'):
                     store.inc(p['user'], 'deaths')
+                settle_dust(p)          # 批25：死亡并账当场星尘
 
         # 6) 存活者移动 + 进食 + 拾取道具
         eaten_items = set()
@@ -1493,6 +1498,7 @@ class Room:
                         combo=p['combo'], mult=mult)
                 self.fruits_eaten += 1
                 p['ult'] = min(ULT_MAX, p.get('ult', 0) + ULT_FRUIT)
+                p['dust'] = p.get('dust', 0) + 10        # 批25：吃果当场星尘+10
                 if p.get('user'):
                     store.inc(p['user'], 'food')
                 self.maybe_rocks()
@@ -1504,6 +1510,7 @@ class Room:
                 ate = True
                 gained = self.score_gain(p, self.bonus['score'], now)
                 p['ult'] = min(ULT_MAX, p.get('ult', 0) + ULT_STAR)
+                p['dust'] = p.get('dust', 0) + 10        # 批25：星星同样当场星尘+10
                 self.ev('star', id=p['id'], x=hx, y=hy, score=gained)
                 self.bonus = None
             for it in self.items:
@@ -1951,6 +1958,30 @@ def room_live(room):
     return any(not q.get('bot') for q in room.players.values())
 
 
+def settle_dust(p):
+    """批25：局内当场星尘并入账号总账。幂等——无条件清零，死亡/离房/局末多点调用不双计。
+    settle 后 best-effort 推 gachainfo 刷新客户端余额（同步上下文如单测直接调用时跳过推送）。"""
+    name = p.get('user')
+    dust = p.get('dust', 0)
+    if name and dust > 0:
+        store.add_stardust(name, dust)
+    p['dust'] = 0
+    sess = p.get('session')
+    if name and sess is not None and getattr(sess, 'user', None) == name:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return                      # 同步调用（单测/无事件循环）：只并账不推送
+        loop.create_task(send(sess, gacha_state(sess)))
+
+
+def _set_win_pending(room, info):
+    """批25：置位结算窗口时统一并账当场星尘（胜/平局全部分支，含平局）"""
+    room.win_pending = info
+    for q in room.players.values():
+        settle_dust(q)
+
+
 def make_player(pid, sess, name, skin, bot=False):
     return {
         'session': sess, 'id': pid, 'name': name or f'玩家{pid}', 'skin': skin,
@@ -1960,6 +1991,7 @@ def make_player(pid, sess, name, skin, bot=False):
         'inv': 0, 'eff': {}, 'grow': 0, 'cause': None, 'by': None,
         'combo': 0, 'combo_at': 0,
         'ult': 0, 'last_ult': 0,
+        'dust': 0,      # 批25：局内当场星尘（吃果+10，死亡/离房/局末并入账号总账）
     }
 
 
@@ -1995,6 +2027,84 @@ def tokens_inv(name):
     tokens[tok] = name
     token_at[tok] = now
     return tok
+
+
+GACHA_REFUND = {3: 10, 4: 50, 5: 200}    # 批25：重复皮肤返还（spec §4.3）
+
+
+def gacha_state(sess):
+    """批25：抽卡状态回包（未登录回零值占位，防客户端卡死）。
+    dust 取当前房当场星尘（不在局内=0）"""
+    name = sess.user
+    if not name:
+        return {'t': 'gachainfo', 'balance': 0, 'dust': 0, 'skins': [],
+                'p5': 0, 'p4': 0, 'lose': False}
+    u = store.users.get(name) or {}
+    room = sess.room
+    p = room.players.get(sess.pid) if (room is not None and sess.pid is not None) else None
+    return {'t': 'gachainfo', 'balance': store.stardust(name),
+            'dust': p.get('dust', 0) if p else 0,
+            'skins': store.skins_of(name),
+            'p5': u.get('gacha_p5', 0), 'p4': u.get('gacha_p4', 0),
+            'lose': u.get('gacha_lose', False)}
+
+
+async def handle_gacha(sess, m):
+    """批25：抽卡消息处理。n 白名单→登录→身份一致→余额→扣减→逐抽→回包。
+    检查→扣减→保底字段→save 之间无 await（同账号双开会话无法在关键区穿插）"""
+    n = m.get('n')
+    if n not in (1, 10):                     # n=-1 会变加币，白名单外一律拒
+        await send(sess, {'t': 'error', 'err': '无效的抽数'})
+        return
+    name = sess.user
+    if not name:
+        await send(sess, {'t': 'error', 'err': '抽卡需要先登录'})
+        return
+    u = store.users.get(name)
+    if u is None:
+        await send(sess, {'t': 'error', 'err': '账号不存在'})
+        return
+    # 身份一致性：入局玩家与登录账号必须一致（防中途换号跨账号搬资产）
+    room = sess.room
+    p = room.players.get(sess.pid) if (room is not None and sess.pid is not None) else None
+    if p is not None and p.get('user') != name:
+        await send(sess, {'t': 'error', 'err': '身份不一致，请重新登录'})
+        return
+    dust = p.get('dust', 0) if p else 0      # 大厅（p=None）→ dust=0，余额够即可
+    total = store.stardust(name)
+    need = GACHA_PRICE * n
+    if total + dust < need:
+        await send(sess, {'t': 'error', 'err': '星尘不足'})
+        return
+    # 扣减：先总账后当场
+    pay_total = min(total, need)
+    pay_dust = need - pay_total
+    if pay_total:
+        store.add_stardust(name, -pay_total)
+    if pay_dust and p is not None:
+        p['dust'] -= pay_dust
+    # 逐抽：gacha_roll 与皮肤选取共用同一 rng
+    rng = random.Random()
+    items = []
+    gained = 0
+    for _ in range(n):
+        r5 = gacha_roll(rng, u.get('gacha_lose', False),
+                        u.get('gacha_p5', 0), u.get('gacha_p4', 0))
+        u['gacha_p5'], u['gacha_p4'] = r5['pity5'], r5['pity4']
+        u['gacha_lose'] = r5['lose5050']
+        skin = pool_pick(rng, r5['star'], r5['up'])
+        dup = not store.grant_skin(name, skin)
+        refund = GACHA_REFUND.get(r5['star'], 0) if dup else 0
+        if refund:
+            store.add_stardust(name, refund)
+            gained += refund
+        items.append({'skin': skin, 'star': r5['star'], 'up': r5['up'],
+                      'dup': dup, 'refund': refund})
+    store.save()
+    await send(sess, {'t': 'gachares', 'items': items,
+                      'balance': store.stardust(name),
+                      'dust': p.get('dust', 0) if p else 0,
+                      'gained': gained})
 
 
 def can_edit_room(sess, room, otok=None):
@@ -2074,6 +2184,13 @@ async def handle_msg(sess, m):
                     token_at.pop(tok, None)
         sess.user = None
         await send(sess, {'t': 'auth', 'ok': False, 'err': '已退出'})
+        return
+    if t == 'gacha':
+        # 批25：抽卡（大厅也可用——未入局 dust=0，见 handle_gacha）
+        await handle_gacha(sess, m)
+        return
+    if t == 'gachainfo':
+        await send(sess, gacha_state(sess))
         return
     if t == 'leaderboard':
         await send(sess, {'t': 'leaderboard', 'list': store.leaderboard()})
@@ -2350,7 +2467,13 @@ async def handle_msg(sess, m):
             pname = sess.user
         else:
             pname = None
-        skin = int(m.get('skin', 0) or 0) % 5
+        # 批25：join 皮肤先归一化（16 款）；越界/未拥有静默回退 0（可降级展示，不拒入局）
+        try:
+            skin = int(m.get('skin', 0) or 0) % 16
+        except (TypeError, ValueError):
+            skin = 0
+        if skin >= 5 and skin not in store.skins_of(sess.user or ''):
+            skin = 0
         # 第一个入局者决定房间尺寸（空房间时生效）
         if not room.round_ids and m.get('size'):
             sz = max(MAP_MIN, min(MAP_MAX, int(m.get('size', 24))))
@@ -2481,7 +2604,16 @@ async def handle_msg(sess, m):
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
     elif t == 'skin':
-        p['skin'] = int(m.get('i', 0)) % 5
+        # 批25：皮肤扩至 16 款——先归一化再鉴权（负数/越界不绕过拥有检查）
+        try:
+            i = int(m.get('i', 0) or 0)
+        except (TypeError, ValueError):
+            i = 0
+        i %= 16
+        if i >= 5 and i not in store.skins_of(sess.user or ''):
+            await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
+        else:
+            p['skin'] = i
     elif t == 'respawn':
         # 批22 H4：手动复活仅限复活房且须过 RESPAWN_MS 延迟（与自动复活同门禁）——
         # 否则死斗/积分房可裸发本消息无限自我复活（已复现：respawn=False 房死亡后立即复活）

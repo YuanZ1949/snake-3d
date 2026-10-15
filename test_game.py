@@ -733,6 +733,316 @@ def test_gacha_dist_smoke():
     print("gacha dist smoke OK:", cnt)
 
 
+# ---- 批25 Task3：gacha/gachainfo 消息 + 星尘结算 + 皮肤鉴权 ----
+def _gacha_setup(user='alice'):
+    """临时账号库：注册 user，返回 (d, old_store) 供还原"""
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-gacha-'))
+    old = serve.store
+    serve.store = serve.Store(d / 'store.json')
+    ok, err = serve.store.register(user, '246810')
+    assert ok, err
+    return d, old
+
+
+def _gacha_teardown(d, old):
+    import shutil
+    serve.store = old
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def _stub_roll(star=3, up=False):
+    """打桩 gacha_roll：固定星级（消除 1.6% 随机对断言的干扰）"""
+    old = serve.gacha_roll
+
+    def fake(rng, lose5050, pity5, pity4):
+        return {'star': star, 'up': up,
+                'pity5': 0 if star == 5 else pity5 + 1,
+                'pity4': 0 if star >= 4 else pity4 + 1,
+                'lose5050': lose5050}
+    serve.gacha_roll = fake
+    return old
+
+
+def _stub_pool(skin_id):
+    """打桩 pool_pick：恒返回指定皮肤"""
+    old = serve.pool_pick
+    serve.pool_pick = lambda rng, star, up: skin_id
+    return old
+
+
+def test_gacha_invalid_n_rejected():
+    """批25 T3：n 不在 (1,10) 白名单 → error 零副作用（n=-1 加币攻击等）"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        s = _cfg_sess(sid='g1', user='alice')
+        s.ip = '3.3.3.3'
+        for n in (0, -1, 5, 'abc', 10 ** 9):
+            asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': n}))
+            last = s.ws.sent[-1]
+            assert last.get('t') == 'error', (n, last)
+        u = serve.store.users['alice']
+        assert u['stardust'] == 0 and u['skins'] == []
+        assert u['gacha_p5'] == 0 and u['gacha_p4'] == 0 and u['gacha_lose'] is False
+    finally:
+        _gacha_teardown(d, old)
+    print('gacha invalid n OK')
+
+
+def test_gacha_requires_login():
+    """批25 T3：未登录抽卡 → error 含「登录」"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        s = _cfg_sess(sid='g2', user=None)
+        s.ip = '3.3.3.4'
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'error' and '登录' in last.get('err', ''), last
+    finally:
+        _gacha_teardown(d, old)
+    print('gacha requires login OK')
+
+
+def test_gacha_identity_mismatch_rejected():
+    """批25 T3：入局玩家与登录账号不一致（中途换号）→ error 防跨账号搬资产"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        ok, err = serve.store.register('bob', '135792')
+        assert ok, err
+        serve.store.add_stardust('alice', 1600)
+        serve.store.add_stardust('bob', 1600)
+        r = fresh(10)
+        p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        p['user'] = 'alice'
+        s = _cfg_sess(sid='g3', user='bob', room=r)
+        s.ip = '3.3.3.5'
+        s.pid = 1
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'error', last
+        assert serve.store.stardust('alice') == 1600, 'alice 余额不动'
+        assert serve.store.stardust('bob') == 1600, 'bob 余额不动'
+    finally:
+        _gacha_teardown(d, old)
+    print('gacha identity mismatch OK')
+
+
+def test_gacha_in_lobby_works_with_zero_dust():
+    """批25 T3：大厅（无房间）可抽卡——dust=0、余额够即可，不卡死无回包"""
+    import asyncio
+    d, old = _gacha_setup()
+    old_roll, old_pick = _stub_roll(), _stub_pool(5)
+    try:
+        serve.store.add_stardust('alice', 160)
+        s = _cfg_sess(sid='g4', user='alice')
+        s.ip = '3.3.3.6'
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'gachares', last
+        assert last['dust'] == 0 and last['balance'] == 0, last
+        assert len(last['items']) == 1 and last['items'][0]['skin'] == 5, last
+    finally:
+        serve.gacha_roll, serve.pool_pick = old_roll, old_pick
+        _gacha_teardown(d, old)
+    print('gacha lobby OK')
+
+
+def test_gacha_insufficient_balance_no_side_effect():
+    """批25 T3：余额不足 → error 且库存/保底零变化"""
+    import asyncio
+    d, old = _gacha_setup()
+    old_roll, old_pick = _stub_roll(), _stub_pool(5)
+    try:
+        s = _cfg_sess(sid='g5', user='alice')
+        s.ip = '3.3.3.7'
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'error', last
+        u = serve.store.users['alice']
+        assert u['skins'] == [] and u['gacha_p5'] == 0 and u['gacha_p4'] == 0
+    finally:
+        serve.gacha_roll, serve.pool_pick = old_roll, old_pick
+        _gacha_teardown(d, old)
+    print('gacha insufficient OK')
+
+
+def test_gacha_deduct_and_result():
+    """批25 T3：扣 160 出 3★；重复皮肤返还 10（净扣 150）"""
+    import asyncio
+    d, old = _gacha_setup()
+    old_roll, old_pick = _stub_roll(), _stub_pool(5)
+    try:
+        serve.store.add_stardust('alice', 1600)
+        s = _cfg_sess(sid='g6', user='alice')
+        s.ip = '3.3.3.8'
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'gachares' and len(last['items']) == 1, last
+        it = last['items'][0]
+        assert it['star'] == 3 and it['skin'] == 5 and it['dup'] is False and it['refund'] == 0, it
+        assert serve.store.stardust('alice') == 1440, '扣 160'
+        assert 5 in serve.store.skins_of('alice')
+        # 重复皮肤 → 返还 10（净扣 150）
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 1}))
+        last = s.ws.sent[-1]
+        it = last['items'][0]
+        assert it['dup'] is True and it['refund'] == 10, it
+        assert last['balance'] == 1440 - 160 + 10 and last['gained'] == 10, last
+    finally:
+        serve.gacha_roll, serve.pool_pick = old_roll, old_pick
+        _gacha_teardown(d, old)
+    print('gacha deduct/result OK')
+
+
+def test_gacha_ten_pull():
+    """批25 T3：十连扣 1600、回 10 张卡、9 张重复各返 10"""
+    import asyncio
+    d, old = _gacha_setup()
+    old_roll, old_pick = _stub_roll(), _stub_pool(5)
+    try:
+        serve.store.add_stardust('alice', 3200)
+        s = _cfg_sess(sid='g7', user='alice')
+        s.ip = '3.3.3.9'
+        asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': 10}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'gachares' and len(last['items']) == 10, last
+        assert last['items'][0]['dup'] is False and last['items'][1]['dup'] is True
+        assert last['gained'] == 90, last['gained']
+        assert serve.store.stardust('alice') == 3200 - 1600 + 90, '扣 1600 返 90'
+        assert last['balance'] == 1690, last['balance']
+    finally:
+        serve.gacha_roll, serve.pool_pick = old_roll, old_pick
+        _gacha_teardown(d, old)
+    print('gacha ten pull OK')
+
+
+def test_settle_dust_idempotent():
+    """批25 T3：当场星尘并账幂等——并账后 dust 清零，重复 settle 不双计；无账号只清零"""
+    d, old = _gacha_setup()
+    try:
+        r = fresh(10)
+        p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        p['user'] = 'alice'
+        p['dust'] = 7
+        serve.settle_dust(p)
+        assert serve.store.stardust('alice') == 7 and p['dust'] == 0
+        serve.settle_dust(p)
+        assert serve.store.stardust('alice') == 7, '重复 settle 不双计'
+        q = mk(r, 2, 'B', [(8, 8), (7, 8)], (1, 0))
+        q['user'] = None
+        q['dust'] = 5
+        serve.settle_dust(q)
+        assert q['dust'] == 0 and serve.store.stardust('alice') == 7
+    finally:
+        _gacha_teardown(d, old)
+    print('settle dust idempotent OK')
+
+
+def test_stardust_grant_on_win_and_tie():
+    """批25 T3：吃果当场星尘 +10；胜局与平局局末都并账入总账"""
+    d, old = _gacha_setup()
+    try:
+        now = serve.now_ms()
+        # (a) 胜局：A 吃果得 dust=10 且分高 → check_win 并账
+        r = fresh(10, limit=10)
+        p1 = mk(r, 1, 'A', [(4, 4), (3, 4), (2, 4)], (1, 0))
+        p2 = mk(r, 2, 'B', [(7, 7), (6, 7), (5, 7)], (1, 0))
+        p1['user'] = 'alice'
+        p1['score'], p2['score'] = 50, 30
+        r.foods = [{'id': 1, 'x': 5, 'y': 4, 'score': 1}]
+        p1['last_move'] = 0
+        r.step(0.05, now - 5000)
+        assert p1['dust'] == 10, p1.get('dust')   # 吃果 +10 星尘
+        r.round_started = now - 11000
+        r.check_win(now)
+        assert r.win_pending == {'winner': 1}
+        assert serve.store.stardust('alice') == 10 and p1['dust'] == 0, '胜局并账'
+        # (b) 平局：时间到同分 → winner None 也并账
+        r2 = fresh(10, limit=10)
+        q1 = mk(r2, 1, 'C', [(4, 4), (3, 4)], (1, 0))
+        q2 = mk(r2, 2, 'D', [(7, 7), (6, 7)], (1, 0))
+        q1['user'] = 'alice'
+        q1['score'] = q2['score'] = 40
+        q1['dust'] = 3
+        r2.round_started = now - 11000
+        r2.check_win(now)
+        assert r2.win_pending == {'winner': None}
+        assert serve.store.stardust('alice') == 13 and q1['dust'] == 0, '平局也并账'
+    finally:
+        _gacha_teardown(d, old)
+    print('stardust grant win/tie OK')
+
+
+def test_skin_normalize_and_auth():
+    """批25 T3：skin 先归一化再鉴权——负数/越界不绕过拥有检查"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        r = fresh(10)
+        p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        s = _cfg_sess(sid='g10', user='alice', room=r)
+        s.ip = '3.3.3.10'
+        s.pid = 1
+        # -1 → 15（辉夜 5★ 未拥有）→ error 且 skin 不变
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -1}))
+        assert s.ws.sent[-1].get('t') == 'error' and p['skin'] == 0, s.ws.sent[-1]
+        # -16 → 0（免费档）→ 生效不报错
+        n0 = len(s.ws.sent)
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -16}))
+        assert p['skin'] == 0 and not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), \
+            s.ws.sent[n0:]
+        # 21 → 5（4★ 未拥有）→ error
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 21}))
+        assert s.ws.sent[-1].get('t') == 'error' and p['skin'] == 0, s.ws.sent[-1]
+        # 拥有 15 后生效
+        serve.store.grant_skin('alice', 15)
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 15}))
+        assert p['skin'] == 15, p['skin']
+        # 免费档 2 生效
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 2}))
+        assert p['skin'] == 2, p['skin']
+        # 'abc' → 回退 0 不炸
+        n0 = len(s.ws.sent)
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 'abc'}))
+        assert p['skin'] == 0 and not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), \
+            s.ws.sent[n0:]
+    finally:
+        _gacha_teardown(d, old)
+    print('skin normalize/auth OK')
+
+
+def test_join_skin_fallback_no_reject():
+    """批25 T3：join 带未拥有皮肤 → 静默回退 0 正常入局；拥有后 join 生效"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        r = serve.Room('ja', 'ja', 10, bots=0)
+        serve.rooms['ja'] = r
+        try:
+            s = _cfg_sess(sid='g11', user='alice')
+            s.ip = '3.3.3.11'
+            s.joins = 0
+            asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 'ja', 'skin': 15}))
+            assert s.ws.sent[-1].get('t') == 'room-ok', s.ws.sent
+            assert r.players[s.pid]['skin'] == 0, r.players[s.pid]['skin']
+            # 拥有后 join 生效
+            serve.store.grant_skin('alice', 15)
+            s2 = _cfg_sess(sid='g12', user='alice')
+            s2.ip = '3.3.3.12'
+            s2.joins = 0
+            asyncio.run(serve.handle_msg(s2, {'t': 'join', 'room': 'ja', 'skin': 15}))
+            assert r.players[s2.pid]['skin'] == 15, r.players[s2.pid]['skin']
+        finally:
+            del serve.rooms['ja']
+    finally:
+        _gacha_teardown(d, old)
+    print('join skin fallback OK')
+
+
 def test_room_custom_config():
     # 尺寸 / 主题 / 岩石 / 传送门 可自由组合
     r = serve.Room("x", "自定义", 40, theme_fixed="lava", rock_mult=0.0, portal_on=True)
@@ -2311,6 +2621,13 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_gacha_probability_boundaries, test_gacha_pity90_hard, test_gacha_pity10_four,
             test_gacha_pity_order, test_gacha_5050_guarantee, test_gacha_ten_pull_pity_carry,
             test_pool_pick_uniform, test_gacha_dist_smoke,
+            test_gacha_invalid_n_rejected, test_gacha_requires_login,
+            test_gacha_identity_mismatch_rejected,
+            test_gacha_in_lobby_works_with_zero_dust,
+            test_gacha_insufficient_balance_no_side_effect,
+            test_gacha_deduct_and_result, test_gacha_ten_pull,
+            test_settle_dust_idempotent, test_stardust_grant_on_win_and_tie,
+            test_skin_normalize_and_auth, test_join_skin_fallback_no_reject,
            test_room_custom_config, test_speed_change_instant,
            test_free_cells_big_map, test_usage_log,
            test_auth_login_throttle,
