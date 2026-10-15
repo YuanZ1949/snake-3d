@@ -406,7 +406,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`8ebb68f`**（批1-21 全量，2026-10-15 09:14 部署，纯 LF；服务器 sha256 与本地 HEAD blob 一致、生产 venv 单测 93/93、限速探针 `THROTTLE PROBE OK`（10 败后第 11 次登录回「尝试过于频繁」）、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-091402.tar.gz`（另有 `062936`、`020636` 两份更早的）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py` 跑完已删。
+当前生产版本：**dev@`7beab3b`**（批1-22 全量，2026-10-15 11:36 部署，纯 LF；服务器 sha256 与本地 HEAD blob 一致 `5272bb48…`、生产 venv 单测 99/99、H4 裸 respawn 复现探针在生产超时被拒（修复前 REPRO OK）、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-113629.tar.gz`（另有 `091402`、`062936`、`020636` 三份更早的）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py`、批22 探针 `/tmp/repro_respawn.py` 跑完已删。批22 注册/建房/口令限速以单测 6 用例 + local_ci 为证据（未在生产做破坏性探针，避免污染生产 store/usage 数据）。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 
