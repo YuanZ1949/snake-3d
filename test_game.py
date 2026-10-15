@@ -1834,6 +1834,52 @@ def test_room_info_humans_vs_bots():
     print('info humans OK')
 
 
+def test_win_pending_timeout_forces_new_round():
+    """批23 P5②：结算滞留超时强制开新局——在场但不点准备的挂机者/晚加入者不再无限冻结世界。
+    win_at 在 win_pending 的首个 step 帧锚定；非 dict 哨兵（如 "t"）不参与超时逻辑"""
+    r = fresh(12)
+    mk(r, 1, 'A', [(4, 4), (4, 5)], (1, 0))
+    mk(r, 2, 'B', [(8, 8), (8, 7)], (1, 0))
+    r.win_pending = {"winner": 1}
+    now = serve.now_ms()
+    r.step(0.05, now)                                   # 首帧锚定滞留起点
+    r.step(0.05, now + serve.WIN_PENDING_MAX_MS - 1)
+    assert r.win_pending is not None, "窗口内不得强制重开"
+    n0 = r.round_no
+    r.step(0.05, now + serve.WIN_PENDING_MAX_MS)
+    assert r.win_pending is None, "滞留超时应强制开新局"
+    assert r.round_no == n0 + 1
+    # 既有测试用的非 dict 哨兵不参与超时（防御未来把强制重开写进无差别分支）
+    r.win_pending = "t"
+    r.step(0.05, now + 10 * serve.WIN_PENDING_MAX_MS)
+    assert r.win_pending == "t", "非 dict 哨兵不得被强制重开"
+    print('win pending timeout OK')
+
+
+def test_late_join_starts_round_when_all_ready():
+    """批23 P5①：全员就绪（挂起者视为 ready）时，晚加入者的 join 必须立即触发
+    maybe_start_round——否则所有人只能等一个永远不会来的 ready 消息（复现脚本 v2 的第二层根因）"""
+    import asyncio
+    r = fresh(12)
+    a = mk(r, 1, 'A', [(4, 4), (4, 5)], (1, 0))
+    b = mk(r, 2, 'B', [(8, 8), (8, 7)], (1, 0))
+    a['off_at'] = serve.now_ms()                        # 原班人马挂起 → 视为 ready
+    b['off_at'] = serve.now_ms()
+    a['off_ip'] = b['off_ip'] = '9.9.9.9'               # 防 join 走 resume 分支抢蛇（异 IP 拒）
+    r.win_pending = {"winner": 1}
+    serve.rooms['t'] = r
+    s = _cfg_sess(sid='p5j')
+    s.ip = '1.1.1.1'
+    s.joins = 0
+    try:
+        asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 't', 'name': 'Late'}))
+        assert s.ws.sent[-1].get('t') == 'room-ok', s.ws.sent[-1]
+        assert r.win_pending is None, "全员就绪时 join 应立即开新局"
+    finally:
+        serve.rooms.pop('t', None)
+    print('late join start OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1905,6 +1951,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_room_pass_bruteforce_throttle,
             test_anonymous_resume_ip_bound,
             test_token_ttl_expired,
-            test_room_info_humans_vs_bots]:
+            test_room_info_humans_vs_bots,
+            test_win_pending_timeout_forces_new_round,
+            test_late_join_starts_round_when_all_ready]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

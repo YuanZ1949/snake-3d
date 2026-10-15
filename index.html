@@ -2212,7 +2212,26 @@
       if (myEnt && myEnt.alive && state !== 'playing') state = 'playing';
       lastTick = performance.now();
     }
-    if (meta.over) winRound = true;
+    if (meta.over) {
+      winRound = true;
+      // 批23 P5③：晚加入者/重连者只收到 over 快照、错过 win 事件（ev 只随当次快照下发）→ 补出准备屏
+      if (joined && state === 'joining') {
+        state = 'win';
+        if (meta.win == null) {
+          $('overTitle').textContent = '平局';
+          $('overSub').textContent = '本局已结束　·　点击准备进入下一局';
+        } else if (meta.win === myId) {
+          $('overTitle').textContent = '🏆 你赢了！';
+          $('overSub').textContent = '点击准备进入下一局';
+        } else {
+          const we = ents.get(meta.win);
+          $('overTitle').textContent = '🏆 ' + (we ? we.name : '对手') + ' 获胜';
+          $('overSub').textContent = '点击准备进入下一局';
+        }
+        finalScore.textContent = myEnt ? myEnt.score : 0;
+        showReadyScreen();
+      }
+    }
   }
 
   function applyEvent(ev) {

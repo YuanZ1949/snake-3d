@@ -21,11 +21,12 @@
 | --- | --- | --- | --- | --- |
 | N1 | 房间人数区分 AI（卡片计数分真人/AI） | 小 | 用户 m0798；serve info() + renderRooms cnt 行 | ✅ 完成：`info()['humans']` 新字段（TDD 先红 KeyError→绿）；卡片 `2AI`→入局 `1人+2AI` 探针 EXIT=0；单测 100/100；静态 js=543 全过 |
 | N2 | 创建房间设置与⚙房间设置统一：点设置直接展开、复用创建房间视图代码 | 中 | 用户 m0798+m0802 已指定实现方向；拍板：尺寸可改下局生效、口令可改+清除 | ✅ 完成：删 cfgScreen 全套，openCfg 复用 #createPanel 预填；roomcfg 扩 name/theme/rock/portal/size(pending)/pass(+clearPass 原子拒绝)；新用例 `test_roomcfg_extended_fields_unified` 先红后绿；单测 101、静态 ids=77 全过；n2_probe/n1_card 双 EXIT=0 |
-| P5 | 修复「开局不动」（root cause 确凿 + 用户授权按排查修） | 中 | 根因三层：join/resume 不触发 maybe_start_round；在线滞留者永挡；晚加入者无准备 UI。复现 repro_round_stuck v2 | 待做 |
+| P5 | 修复「开局不动」（root cause 确凿 + 用户授权按排查修） | 中 | 根因三层：join/resume 不触发 maybe_start_round；在线滞留者永挡；晚加入者无准备 UI。复现 repro_round_stuck v2 | ✅ 完成：三层一次修齐（见回写日志 P5 条）；单测 103/103、repro v3 verdict 三 true、p5_ui 探针 EXIT=0、local_ci ALL GREEN |
 | P2 | 移动端小地图遮挡 HUD 按钮（CSS 布局） | 小 | `.miniMap` fixed top:66px 压 `.hud` 多行后排 | 待做 |
 | P3 | 白天场景闪烁 | 中 | 线索「白天易闪」；已证伪 resize 清屏假说（readPixels no-op）；剩余候选：真机 GPU/阴影/主题光照，需连帧 diff 探针复现 | 待做 |
 | P6 | 常驻房修改权：owner 凭据下发+校验（匿名可恢复） | 中 | 用户拍板「匿名也能恢复」；myCreated 内存 Set + can_edit_room 只认 sid/账号 | 待做 |
 | P4 | 卡顿动态自适应画质 | 大 | 用户拍板；帧耗时采样→pixelRatio/阴影/小地图频率降级与恢复 | 待做 |
+| P7 | 修 `test_ult_fruit_and_star_charge` 随机 flaky（约 1.5%） | 小 | P5 的 local_ci 抓到：吃果后 `place_food()` 随机补粒恰落 (4,5)（蛇头下一步+星星同格）→ 一步双吃 10+15+10=35 ≠ 期望 25；既有问题与 P5 无关 | 待做（建议：测试里锁定补粮位置或断言改区间） |
 
 排序依据（按流程四规则）：① N1/N2 = 用户最新显式要求、成本收益最高；② P5 = 已确证的玩法级阻塞（严重但用户未催，授权已在手）；③ P2 = 成本极低；④ P3 = 已有主题线索可复现；⑤ P6 = 协议设计需多想一步；⑥ P4 = 成本最高放最后。
 
@@ -42,3 +43,4 @@
 - 2026-10-15：建池（P1 完成结论落档）。用户追加 N1、N2（含实现方向）与 P3 线索，插入队首/队中。
 - 2026-10-15：**N1 ✅**。TDD：`test_room_info_humans_vs_bots` 先红（KeyError 'humans'）后绿，单测 100/100、静态 ALL PASS、探针 `test-results/n1_card.js` 双态断言过（未入局 `2AI` / 入局 `1人+2AI`，零 console error）。顺带发现（不扩散，留作事实）：回主页=离房、离房后无真人时 AI 被清（serve.py L1022），故卡片断言须在局内读。下一项：N2。
 - 2026-10-15：**N2 ✅**。用户拍板：尺寸可改（下局生效 pending_size）、口令可改+清除。实现：删 cfgScreen 整块（HTML/CSS/JS 引用零残留），openCfg 预填 #createPanel（pendingSize 优先、rockCustom/portalCustom 精确回填），btnCreateGo 按 cfgRoomId 分流 create/roomcfg，收起/取消即退出编辑态；服务端 roomcfg 扩 6 字段（口令先验、非法整条原子拒绝），Room 补 `self.size`（原只存 cols/rows，RED 抓出）、new_round 开头消费 pending_size 重建坐标系；info 加 rockCustom/portalCustom/pendingSize。RED（r.name 断言失败）→ GREEN 101 用例；静态 ids 82→77 全过；n2_probe（同视图/预填/保存改名即时/卡片尺寸仍旧=pending 下局生效）与 n1_card 回归双 EXIT=0。踩坑：①⚙ 是 `<span role=button>` 非 `<button>`（选择器改 .saveBtn）；②Room('rc','rc',10) 被 MAP_MIN=12 夹到 12（改测试期望）；③无全局 `.hidden` CSS，新控件补作用域规则。下一项：P5。
+- 2026-10-15：**P5 ✅（「开局不动」三层根因一次修齐）**。实现：① 服务端 join 分支 `ready.add` 后补调 `maybe_start_round()`（全员就绪含挂起视 ready 时晚加入者立刻开新局）；② `step` 头结算滞留超时 `WIN_PENDING_MAX_MS=20000`：win_pending 为 dict 时首帧锚定 `win_at`、超时强制 `new_round()`（**只对 dict 生效**——`"t"` 哨兵与 `=={"winner":1}` 等式断言不受影响；new_round/drop/step 三处复位锚点）；③ 客户端 `handleRound`：`joined && state==='joining' && meta.over` → 补出准备屏（overTitle 按 win∈{平局/我/对手} 三态 + showReadyScreen）——晚加入者不再零 UI。TDD：`test_win_pending_timeout_forces_new_round`（RED=AttributeError WIN_PENDING_MAX_MS 特征正确）+ `test_late_join_starts_round_when_all_ready`（RED=join 后 win_pending 未清）→ GREEN **103 用例**；静态 js=552 全过。服务端 E2E `repro_round_stuck_v3.py`：**verdict 三 true**（前 8s 冻结 / 全程零 ready 下 round 0→1、28 蛇头坐标恢复 / over+20s 超时模型）；客户端 E2E `p5_ui.js`：三页（p1+p2 over 屏装死 + p3 晚加入）EXIT=0（p3 overVisible+「准备」+enabled，errors=[]——修复前 overScreen 隐藏零 UI）。门禁：local_ci **ALL GREEN**（8 E2E + 103 单测 + 静态 + Playwright 5）。踩坑：local_ci 首跑单测红 1 个 = `test_ult_fruit_and_star_charge` **既有随机 flaky**（吃果后 place_food 随机补粒落蛇头下一步+星星同格 → 35≠25，约 1.5%），与 P5 无关（未触碰吃食/充能路径，直跑复绿、重跑 local_ci 全绿）→ 记池 P7。下一项：P2。

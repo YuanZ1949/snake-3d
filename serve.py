@@ -29,6 +29,7 @@ STUCK_TICKS = 2         # 批14④：同格对头僵持 N tick 即破僵局（�
 RESPAWN_MS = 3000       # 复活模式：死亡后延迟复活 ms
 LIMIT_MAX = 3600        # 战场限时上限（秒）
 RESUME_MS = 10000       # 断线宽限：原蛇原地保留等待重连 ms
+WIN_PENDING_MAX_MS = 20000  # 批23 P5②：结算滞留上限 ms——到点强制开新局（在线挂机者不点准备不再冻结世界）
 CHAT_COOL = 1000        # 聊天发送冷却 ms
 CHAT_MAX = 80           # 聊天内容长度上限（字符）
 AUTH_FAIL_MAX = 10      # 批21：同 (ip, 用户) 窗内连续登录失败上限，超限直接拒绝（防爆破）
@@ -451,6 +452,7 @@ class Room:
         self.next_item_id = 1
         self.next_food_id = 1
         self.win_pending = None
+        self.win_at = None              # 批23 P5②：结算滞留起点（step 首帧锚定，超时强制重开）
         self.round_no = 0
         self.created = time.time()
         self.last_step = None
@@ -999,6 +1001,7 @@ class Room:
 
     def new_round(self):
         self.win_pending = None
+        self.win_at = None              # 批23 P5②：新局重置滞留锚点
         self.ready.clear()
         self.fruits_eaten = 0
         self.projectiles = []
@@ -1041,6 +1044,7 @@ class Room:
         self.check_win(now_ms())
         if self.win_pending and not any(i in self.players for i in self.round_ids):
             self.win_pending = None
+            self.win_at = None          # 批23 P5②：空房清结算同步清锚点
             self.ready.clear()
         else:
             self.maybe_start_round()
@@ -1097,7 +1101,16 @@ class Room:
 
     def step(self, dt, now):
         if self.win_pending:
+            # 批23 P5②：结算滞留超时——在线挂机者/不点准备的在场者不再无限冻结新局。
+            # 只对 dict 生效（既有测试哨兵如 "t" 不参与）；win_at 在首个 step 帧锚定。
+            if isinstance(self.win_pending, dict):
+                if self.win_at is None:
+                    self.win_at = now
+                elif now - self.win_at >= WIN_PENDING_MAX_MS:
+                    self.win_at = None
+                    self.new_round()
             return
+        self.win_at = None              # 无结算在途 → 清残留锚点（防跨结算误计时）
         due = [p for p in self.players.values()
                if p['alive'] and not p.get('off_at')
                and now - p['last_move'] >= self.tick_of(p, now)]
@@ -2178,6 +2191,7 @@ async def handle_msg(sess, m):
         room.ev('join', id=pid, name=p['name'])
         if room.win_pending:
             room.ready.add(pid)
+            room.maybe_start_round()    # 批23 P5①：全员就绪（含挂起视为 ready）时 join 立即开新局
         if p.get('user'):
             store.inc(p['user'], 'games')
         room.check_win(now_ms())
