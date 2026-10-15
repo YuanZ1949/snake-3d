@@ -12,6 +12,8 @@
 | --- | --- | --- | --- | --- |
 | O1 | 房间设置权限完全放开：roomcfg/persist 删鉴权，⚙/⭐ 全员可见可点 | 中 | 用户拍板「完全放开」；设计获批 m0177；`can_edit_room` 函数保留以备收紧 | ✅ 完成：服务端 roomcfg/persist 移除 `can_edit_room` 检查（批24 注释）；客户端卡片两处无条件显示；单测 4 例翻转（stranger_allowed/open_to_anyone×2/owner_survives_reconnect 断言翻转）106 全过；E2E `test_pass_p6.py` 第 7 步翻转（非创建者 persist 放行回执 rooms persist=true）；探针 `p24_open.js` GREEN（陌生人见⚙/⭐→改名→双端广播生效 errors=0）；local_ci ALL GREEN；commit `6e0376b` 已部署生产+推送 |
 | O2 | 房间删除：卡片🗑按钮 + `delroom` 消息，任意空闲房（含常驻⭐）任何人可删 | 中 | 用户「房间无法删除」→ 拍板「任意空闲房，含常驻」→ 设计获批 m0254；默认房/有人房拒 | ✅ 完成：服务端 `delroom` 分支（默认房拒/有人观战拒/persist 重写盘/delok+broadcast_rooms）；客户端非默认房（id a/b/c）显示🗑+confirm+`delok` toast；TDD 单测 `test_delroom_open_to_anyone` 先红（空闲房应被删除）后绿，**单测 107**；探针 `p25_del.js` GREEN（默认房无按钮/自建房删除+toast errors=0）；静态 js=581；local_ci ALL GREEN |
+| O4 | 纯 AI 房可直接删除 | 小 | 用户报「AI房无法直接删除」→ 根因 = O2 `delroom` 用 `room.players` 判"有人"（含 bot 占位）→ 改 `any(not q.get('bot') ...) or room.subs` | ✅ 完成：单测第 5/6 段先红（纯 AI 房应可删除）后绿，单测 107；local_ci ALL GREEN；commit `251a933` 已部署生产+push（生产 sha 6cefab54 核对，隔离单测 ALL PASS） |
+| O3 | 只剩 AI 自动停：纯 AI 房整房冻结（不 step 不 broadcast），真人回来自动恢复 | 小 | 用户挂起项「挂起项继续」放行；设计 = `room_live(room)`（subs 有人类 或 players 有非 bot）+ 从 `game_loop` 拆出可测 `game_cycle`，冻结时仍刷 `last_step` 防恢复大 dt 跳跃 | ✅ 完成：TDD `test_room_live_and_ai_freeze` 先红（`AttributeError: room_live`）后绿，单测 **108**；静态 js=581；local_ci ALL GREEN（8 E2E+单测+静态+Playwright 5/5）；不删/不回收纯 AI 房、不改 UI、不动 drop_player 清 AI 级联与 gc |
 
 来源：用户上报「手机端访问体验不好」五项 + 后续追加指令。
 流程：`tamako-flow-backlog-sprint` —— 一次取一项，做完回写本文件。

@@ -1577,6 +1577,60 @@ def test_persist_open_to_anyone():
         del serve.rooms['rc']
 
 
+def test_room_live_and_ai_freeze():
+    """批24 O3：纯 AI 房自动停止——room_live 三态判定 + game 循环对纯 AI 房
+    跳过 step/broadcast（last_step 仍刷新），有真人/观战照常推进"""
+    import asyncio
+
+    # 1) room_live 三态
+    r = serve.Room('fr', 'fr', 10)
+    r.set_bots(3)
+    assert all(q.get('bot') for q in r.players.values())
+    assert serve.room_live(r) is False, '纯 AI 房应判定不 live'
+
+    class _FakeSess:
+        pass
+    r.subs.add(_FakeSess())          # 有人类观战 → live
+    assert serve.room_live(r) is True, '真人观战应判定 live'
+    r.subs.clear()
+
+    class _FakeWs:
+        async def send(self, *_a, **_k):
+            pass
+    class _HumanSess:
+        user = None
+        ws = _FakeWs()
+    r.players[1] = serve.make_player(1, _HumanSess(), '真人', 0, bot=False)
+    assert serve.room_live(r) is True, '有真人玩家应判定 live'
+
+    # 2) game 循环：纯 AI 房不 step、有真人房 step（step_wrapper 打桩计数）
+    old_rooms = serve.rooms
+    try:
+        calls = []
+
+        async def _no_bc():
+            return None
+        r2 = serve.Room('fr2', 'fr2', 10)
+        r2.set_bots(2)
+        r2.step_wrapper = lambda dt, n: calls.append(('ai', dt))
+        r2.broadcast = _no_bc
+        r.players[1]['session'] = _HumanSess()
+        r.step_wrapper = lambda dt, n: calls.append(('human', dt))
+        r.broadcast = _no_bc
+        serve.rooms = {'fr2': r2, 'fr': r}
+        t0 = time.monotonic()
+        asyncio.run(serve.game_cycle(t0, 123456))
+        assert not any(c[0] == 'ai' for c in calls), '纯 AI 房应跳过 step'
+        assert any(c[0] == 'human' for c in calls), '有真人房应照常 step'
+        assert r2.last_step is not None, '冻结房 last_step 仍须刷新（防恢复大 dt 跳跃）'
+        # 3) 纯 AI 房（唯一成员）也冻结
+        serve.rooms = {'fr2': r2}
+        asyncio.run(serve.game_cycle(t0 + 1, 123457))
+        assert len([c for c in calls if c[0] == 'ai']) == 0
+    finally:
+        serve.rooms = old_rooms
+
+
 def test_delroom_open_to_anyone():
     """批24 O2：删除房间完全放开——陌生人可删任意空闲房；
     有人/观战中的房拒；默认房拒；persist 房删后写盘不再复活"""
@@ -2092,6 +2146,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_roomcfg_open_to_anyone,
             test_persist_open_to_anyone,
             test_delroom_open_to_anyone,
+            test_room_live_and_ai_freeze,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
             test_roomcfg_extended_fields_unified,

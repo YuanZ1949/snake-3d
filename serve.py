@@ -1763,20 +1763,37 @@ def now_ms():
     return int(time.monotonic() * 1000)
 
 
+async def game_cycle(now, n):
+    """单轮房间推进（批24 O3 拆出可测）：纯 AI 房（无人类玩家/观战）整房冻结——
+    跳过 step 与 broadcast 归零 CPU；last_step 仍刷新，真人回来下一循环自然恢复
+    且无大 dt 跳跃。"""
+    for room in list(rooms.values()):
+        prev = room.last_step or now
+        dt = now - prev
+        room.last_step = now
+        if not room_live(room):
+            continue
+        try:
+            room.step_wrapper(dt, n)
+            await room.broadcast()
+        except Exception:
+            traceback.print_exc()
+
+
 async def game_loop():
     while True:
         await asyncio.sleep(CYCLE)
         now = time.monotonic()
         n = now_ms()
-        for room in list(rooms.values()):
-            prev = room.last_step or now
-            dt = now - prev
-            room.last_step = now
-            try:
-                room.step_wrapper(dt, n)
-                await room.broadcast()
-            except Exception:
-                traceback.print_exc()
+        await game_cycle(now, n)
+
+
+def room_live(room):
+    """批24 O3：房内有人类（非 bot 玩家，或人类观战 session）才推进；
+    纯 AI 房冻结。subs 只含 Session（bot 的 session=None 不入集，见 Room.subs 注释）。"""
+    if room.subs:
+        return True
+    return any(not q.get('bot') for q in room.players.values())
 
 
 def make_player(pid, sess, name, skin, bot=False):
