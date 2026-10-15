@@ -962,13 +962,32 @@
   // ================= 蛇（连续管状身体 + 皮肤） =================
   const SEG_H = .52;
   const SKINS = [
-    {name: '翠野', base: '#2f9e44', dark: '#1b5e2a', belly: '#d8f5a2', head: 0x9dffb5, pattern: 'diamond', metal: .05},
-    {name: '金鳞', base: '#f59f00', dark: '#b07000', belly: '#fff3bf', head: 0xffd43b, pattern: 'diamond', metal: .4},
-    {name: '蓝焰', base: '#1c7ed6', dark: '#124a91', belly: '#d0ebff', head: 0x74c0fc, pattern: 'wave', metal: .1},
-    {name: '紫雾', base: '#9c36b5', dark: '#5b21a0', belly: '#eebefa', head: 0xd0bfff, pattern: 'spot', metal: .1},
-    {name: '熔岩', base: '#495057', dark: '#1a1d21', belly: '#ff8787', head: 0xff6b6b, pattern: 'crack', metal: .25},
+    // 免费 5 款（批25 T4：补 star 字段，循环集合恒含）
+    {name: '翠野', base: '#2f9e44', dark: '#1b5e2a', belly: '#d8f5a2', head: 0x9dffb5, pattern: 'diamond', metal: .05, star: 3},
+    {name: '金鳞', base: '#f59f00', dark: '#b07000', belly: '#fff3bf', head: 0xffd43b, pattern: 'diamond', metal: .4, star: 3},
+    {name: '蓝焰', base: '#1c7ed6', dark: '#124a91', belly: '#d0ebff', head: 0x74c0fc, pattern: 'wave', metal: .1, star: 3},
+    {name: '紫雾', base: '#9c36b5', dark: '#5b21a0', belly: '#eebefa', head: 0xd0bfff, pattern: 'spot', metal: .1, star: 3},
+    {name: '熔岩', base: '#495057', dark: '#1a1d21', belly: '#ff8787', head: 0xff6b6b, pattern: 'crack', metal: .25, star: 3},
+    // 3★ 卡池 6 款（id 5-10，换色系复用现有纹理语言）
+    {name: '赤霞', base: '#e8590c', dark: '#9c2f00', belly: '#ffe8cc', head: 0xff9b6b, pattern: 'diamond', metal: .05, star: 3},
+    {name: '青岚', base: '#0b7285', dark: '#05495c', belly: '#c5f6fa', head: 0x66d9e8, pattern: 'wave', metal: .1, star: 3},
+    {name: '墨影', base: '#343a40', dark: '#101214', belly: '#ced4da', head: 0x868e96, pattern: 'spot', metal: .1, star: 3},
+    {name: '鎏银', base: '#adb5bd', dark: '#5c636a', belly: '#f1f3f5', head: 0xe9ecef, pattern: 'diamond', metal: .55, star: 3},
+    {name: '樱粉', base: '#f06595', dark: '#c2255c', belly: '#ffe3ec', head: 0xffa8c5, pattern: 'spot', metal: .05, star: 3},
+    {name: '沙金', base: '#c9a227', dark: '#7d5a17', belly: '#f8efc4', head: 0xe8d26a, pattern: 'wave', metal: .45, star: 3},
+    // 4★ 卡池 3 款（id 11-13，新图案 + 轻金属反光）
+    {name: '星河', base: '#1b2a6b', dark: '#0c1440', belly: '#a5b4fc', head: 0x74c0fc, pattern: 'star', metal: .3, star: 4},
+    {name: '雷纹', base: '#2b2f3a', dark: '#14161f', belly: '#ffe066', head: 0xffe066, pattern: 'bolt', metal: .35, star: 4},
+    {name: '霜纹', base: '#4dabf7', dark: '#1864ab', belly: '#e7f5ff', head: 0xa5d8ff, pattern: 'frost', metal: .3, star: 4},
+    // 5★ 2 款（id 14 常驻 / 15 UP，glow=emissive 色，蛇身脉动发光）
+    {name: '白金圣蛇', base: '#e9ecef', dark: '#868e96', belly: '#ffffff', head: 0xffffff, pattern: 'diamond', metal: .7, star: 5, glow: 0xfff3c4},
+    {name: '辉夜', base: '#2b2118', dark: '#0c0805', belly: '#ffd43b', head: 0xffd43b, pattern: 'diamond', metal: .6, star: 5, glow: 0xffc94d},
   ];
   let skinIdx = Number(localStorage.getItem('snake-skin') || 0);
+  if (!(skinIdx >= 0 && skinIdx < SKINS.length)) skinIdx = 0;   // 批25 T4：越界钳制（存量脏值/未来缩池）
+  // 已拥有皮肤集合：免费 5 款恒含，登录后由 gachainfo.skins 填充卡池款
+  let ownedSkins = new Set([0, 1, 2, 3, 4]);
+  let skinPending = null;   // 乐观生效待确认：{prev, next, at}，服务端 error 时回滚
   const skinTexCache = {};
 
   function makeSkinTexture(s) {
@@ -1020,6 +1039,49 @@
         g.stroke();
       }
       g.shadowBlur = 0;
+    } else if (s.pattern === 'star') {
+      // 批25 T4 4★「星河」：深空底 + 随机星点亮斑 + 一条斜向银河带
+      const night = g.createLinearGradient(0, 0, 256, 64);
+      night.addColorStop(0, s.base); night.addColorStop(1, s.dark);
+      g.fillStyle = night; g.fillRect(0, 0, 256, 64);
+      for (let i = 0; i < 140; i++) {
+        g.fillStyle = `rgba(255,255,255,${.25 + Math.random() * .75})`;
+        g.beginPath(); g.arc(Math.random() * 256, Math.random() * 64, .5 + Math.random() * 1.3, 0, Math.PI * 2);
+        g.fill();
+      }
+      const band = g.createLinearGradient(0, 64, 256, 0);
+      band.addColorStop(.35, 'rgba(165,180,252,0)');
+      band.addColorStop(.5, 'rgba(165,180,252,.35)');
+      band.addColorStop(.65, 'rgba(165,180,252,0)');
+      g.fillStyle = band; g.fillRect(0, 0, 256, 64);
+    } else if (s.pattern === 'bolt') {
+      // 批25 T4 4★「雷纹」：竖向闪电折线，亮于底色
+      g.strokeStyle = s.belly; g.lineWidth = 1.8;
+      g.shadowColor = s.belly; g.shadowBlur = 5;
+      for (let i = 0; i < 14; i++) {
+        let x = Math.random() * 256, y = Math.random() * 16;
+        g.beginPath(); g.moveTo(x, y);
+        while (y < 68) { x += (Math.random() - .5) * 16; y += 6 + Math.random() * 6; g.lineTo(x, y); }
+        g.stroke();
+      }
+      g.shadowBlur = 0;
+    } else if (s.pattern === 'frost') {
+      // 批25 T4 4★「霜纹」：六出冰晶（短杆+分叉），霜白描线
+      g.strokeStyle = s.belly; g.lineWidth = 1;
+      for (let i = 0; i < 26; i++) {
+        const cx = Math.random() * 256, cy = Math.random() * 64, r = 4 + Math.random() * 5;
+        for (let k = 0; k < 6; k++) {
+          const a = k / 6 * Math.PI * 2;
+          const ex = cx + Math.cos(a) * r, ey = cy + Math.sin(a) * r;
+          g.beginPath(); g.moveTo(cx, cy); g.lineTo(ex, ey);
+          const m1x = cx + Math.cos(a) * r * .55, m1y = cy + Math.sin(a) * r * .55;
+          g.moveTo(m1x, m1y);
+          g.lineTo(m1x + Math.cos(a + .9) * r * .35, m1y + Math.sin(a + .9) * r * .35);
+          g.moveTo(m1x, m1y);
+          g.lineTo(m1x + Math.cos(a - .9) * r * .35, m1y + Math.sin(a - .9) * r * .35);
+          g.stroke();
+        }
+      }
     }
     const gr = g.createLinearGradient(0, .5 * 64, 0, 1.05 * 64);
     gr.addColorStop(0, 'rgba(0,0,0,0)');
@@ -1111,7 +1173,11 @@
     bodyMat.metalness = s.metal;
     bodyMat.needsUpdate = true;
     skullMesh.material.color.setHex(s.head);
-    if (myEnt) { myEnt.skin = skinIdx; paintEnt(myEnt); send({t: 'skin', i: skinIdx}); }
+    if (myEnt) {
+      myEnt.skin = skinIdx; paintEnt(myEnt);
+      skinPending = {prev: skinIdx, at: performance.now()};   // 批25 T4：局内生效须服务端鉴权确认
+      send({t: 'skin', i: skinIdx});
+    }
   }
 
   function makeHeadGroup() {
@@ -1357,6 +1423,15 @@
   }
   // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
   window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
+  // 批25 T4 探针钩子：直接发 skin 消息 / 读 SKINS 结构与拥有集（同 __foodsDbg 先例）
+  window.__skinDbg = i => { send({t: 'skin', i}); };
+  window.__skinsDbg = () => ({
+    len: SKINS.length, idx: skinIdx,
+    mySkin: myEnt ? myEnt.skin : null,   // 服务端鉴权后经 snap 回放的实际皮肤
+    owned: [...ownedSkins].sort((a, b) => a - b),
+    stars: SKINS.map(s => s.star),
+    glows: SKINS.map(s => !!s.glow),
+  });
 
   function maybeBonus(now) {
     if (bonus && now - bonus.born > 8000) {
@@ -2205,6 +2280,12 @@
       case 'error':
         // 服务端拒绝（口令错误/非法口令/非创建者保存等）：浮层提示 + 入局失败退回主页
         showToast(m.err || '操作失败');
+        // 批25 T4：皮肤鉴权被拒（未拥有等）→ 回滚乐观生效
+        if (skinPending && m.err && m.err.indexOf('皮肤') >= 0 && performance.now() - skinPending.at < 3000) {
+          skinIdx = skinPending.prev;
+          skinPending = null;
+          applySkin();
+        }
         if (m.err && m.err.indexOf('口令') >= 0) delete roomPasss[curRoom];
         if (state === 'joining') {
           state = 'idle';
@@ -2234,6 +2315,7 @@
           updateAcctUI();          // 输入框填成账号并置为只读
           acctTip('欢迎，' + loggedUser, 'ok');
           $('passIn').value = '';
+          send({t: 'gachainfo'});   // 批25 T4：拉取已拥有皮肤/星尘（Task5 祈愿面板也用）
         } else if (authReq === 'authtoken') {
           // 本地保存的登录态已失效：清掉并解锁输入框，避免被只读输入框卡死
           loggedUser = ''; authToken = ''; myStats = null;
@@ -2249,6 +2331,15 @@
         return;
       case 'leaderboard':
         renderLeaderboard(m.list);
+        return;
+      case 'gachainfo':
+        // 批25 T4：回填已拥有皮肤集合（免费 5 款恒含）；当前皮肤被收回时回退 0
+        ownedSkins = new Set([0, 1, 2, 3, 4].concat(Array.isArray(m.skins) ? m.skins : []));
+        if (!ownedSkins.has(skinIdx)) {
+          skinIdx = 0;
+          localStorage.setItem('snake-skin', 0);
+          applySkin();
+        }
         return;
     }
     if (m.t === 'snap') {
@@ -2619,7 +2710,14 @@
     } else if (ghost) {
       e.bodyMat.emissive.setHex(0x6a4ea0);
       e.bodyMat.emissiveIntensity = .3;
-    } else e.bodyMat.emissive.setHex(0x000000);
+    } else {
+      // 批25 T4：5★ 皮肤 emissive 正弦脉动（辉夜/白金圣蛇）
+      const gs = SKINS[e.skin % SKINS.length];
+      if (gs.glow) {
+        e.bodyMat.emissive.setHex(gs.glow);
+        e.bodyMat.emissiveIntensity = .22 + .18 * Math.abs(Math.sin(now / 900));
+      } else e.bodyMat.emissive.setHex(0x000000);
+    }
   }
 
   // 本地演示蛇（未入局背景）
@@ -3348,12 +3446,16 @@
     $('btnCam').textContent = camFollow ? '🎥跟随' : '🧭固定';
     document.body.classList.toggle('follow', camFollow);
   };
-  $('btnSkin').onclick = () => {
-    skinIdx = (skinIdx + 1) % SKINS.length;
+  // 批25 T4：循环集合 = 免费 5 款 ∪ 已拥有（gachainfo 回填 ownedSkins）
+  function cycleSkin() {
+    const ids = [...ownedSkins].sort((a, b) => a - b);
+    const i = ids.indexOf(skinIdx);
+    skinIdx = ids[(i + 1) % ids.length];   // 不在集合（拥有被收回/脏值）→ 落回第一个
     localStorage.setItem('snake-skin', skinIdx);
     applySkin();
     sEat();
-  };
+  }
+  $('btnSkin').onclick = cycleSkin;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && !joined && state === 'idle' && !demoPaused) togglePause();
   });
