@@ -16,7 +16,7 @@
 | 4 | SKINS 16 款（5 免费 + 3★×6 + 4★×3 + 白金圣蛇 + UP 辉夜）+ 5★ 皮肤流光 | 中 | spec §6.3 | ✅ 完成（`d80640e`）：star 字段/越界钳制/暗金 emissive 流光；探针 p25_skins GREEN |
 | 5 | 祈愿界面：全屏覆盖层（深蓝金）、星尘余额、卡池横幅、×1/×10、我的皮肤页签（按星级分组点选）、大厅入口 ✨祈愿（startScreen 账号行） | 中 | spec §6.1 + T5 Ruling（入口放 startScreen） | ✅ 完成（`a01beaa`）：探针 p25_ui GREEN（登录引导/免费 5+拥有 6/大厅 ×1 扣 160→4840） |
 | 6 | 抽卡动画：流星（颜色按最高档 金>紫>蓝）→ 爆闪 → reveal，单抽 1 卡 / 十连 10 格最高档压轴、缩略图、跳过、reduced-motion | 中 | spec §6.2 + T6 Ruling（输入锁=动画非 done 锁键盘、点击两段协议） | ✅ 完成（`b322fca`）：探针 p25_anim GREEN（x1/x10/跳过+重抽/error-safe，errors=0） |
-| 7 | 门禁 + 部署生产 + 文档回写 | 小 | 计划 Task 7 | ⟳ 执行中：探针备份 ✓、门禁 ALL GREEN（134 单测 / js=656+ids=97 / local_ci 8 E2E+静态+Playwright 5）✓、文档回写（本段+HANDOVER 协议表+spec 偏离，本 commit）✓；余：部署 8090 + push + 收尾 oracle 终审 |
+| 7 | 门禁 + 部署生产 + 文档回写 | 小 | 计划 Task 7 | ⟳ 收尾中：探针备份 ✓、首轮门禁 ALL GREEN ✓、文档回写（本段+HANDOVER+spec，`ad13d62`）✓、首轮部署 8090 + push 双远端 ✓；**oracle 终审 REVISE** → MAJOR-1（浮点 `n` 穿透白名单致扣款无回包）+ MINOR-2（身份一致扩 gachainfo/skin）+ MINOR-3（登录指引文案）+ NIT-5/6/7 已修（TDD：3 新测，单测 137 / js=657 / local_ci ALL GREEN，本 commit）；余：终审修复重新部署 + 终态回写 |
 
 ## 批24（2026-10-15 起）
 

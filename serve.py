@@ -2042,6 +2042,10 @@ def gacha_state(sess):
     u = store.users.get(name) or {}
     room = sess.room
     p = room.players.get(sess.pid) if (room is not None and sess.pid is not None) else None
+    # 批25 终审 MINOR-2：身份不一致（换号）回零值占位——不混出「登录账号总账 + 他家玩家 dust」
+    if p is not None and p.get('user') != name:
+        return {'t': 'gachainfo', 'balance': 0, 'dust': 0, 'skins': [],
+                'p5': 0, 'p4': 0, 'lose': False}
     return {'t': 'gachainfo', 'balance': store.stardust(name),
             'dust': p.get('dust', 0) if p else 0,
             'skins': store.skins_of(name),
@@ -2053,7 +2057,9 @@ async def handle_gacha(sess, m):
     """批25：抽卡消息处理。n 白名单→登录→身份一致→余额→扣减→逐抽→回包。
     检查→扣减→保底字段→save 之间无 await（同账号双开会话无法在关键区穿插）"""
     n = m.get('n')
-    if n not in (1, 10):                     # n=-1 会变加币，白名单外一律拒
+    # 批25 终审 MAJOR-1：type() 身份判断拒 float/bool（True==1、1.0 in (1,10) 相等性穿透，
+    # 否则扣款后 range(float) 抛 TypeError 被顶层吞掉 = 扣款无回包）
+    if type(n) is not int or n not in (1, 10):   # n=-1 会变加币，白名单外一律拒
         await send(sess, {'t': 'error', 'err': '无效的抽数'})
         return
     name = sess.user
@@ -2610,7 +2616,10 @@ async def handle_msg(sess, m):
         except (TypeError, ValueError):
             i = 0
         i %= 16
-        if i >= 5 and i not in store.skins_of(sess.user or ''):
+        if sess.user and p.get('user') != sess.user:
+            # 批25 终审 MINOR-2：换号后不许改写他家玩家外观（匿名换免费皮肤不受影响）
+            await send(sess, {'t': 'error', 'err': '身份不一致，请重新登录'})
+        elif i >= 5 and i not in store.skins_of(sess.user or ''):
             await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
         else:
             p['skin'] = i

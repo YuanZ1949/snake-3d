@@ -70,7 +70,7 @@ user 字典新增:
 - `{t:'gachainfo'}` → `{t:'gachainfo', balance, skins:[...], p5, p4, lose}`（进祈愿界面时拉取；局内 balance 含当场星尘）。
 
 > **回写（实现偏离，Task 3 落地 `df660ac`）**：
-> ① items 每项增加 `up` 字段（`{skin, star, up, dup, refund}`）——十连展示需要标 UP；回包与 gachainfo 均增加 `dust` 字段（当场星尘）。
+> ① items 每项增加 `up` 字段（`{skin, star, up, dup, refund}`）——十连展示需要标 UP；回包与 gachainfo 均增加 `dust` 字段（当场星尘）；`gained` = 本次返还合计（Σrefund，已入账口径）。
 > ② `balance` 语义改定为**纯总账**（`store.stardust`，不含当场星尘），当场星尘由独立 `dust` 字段承载——原「局内 balance 含当场星尘」废弃，客户端余额展示按 `balance`（可花）与 `dust`（局内临时，settle 并账）分离。
 > ③ gacha 加固（oracle 审查 BLOCKER 修订）：`n` 白名单只收 1/10（防负数变加币）；入局玩家 `p.user` 与登录账号不一致回 error；检查→扣减→save 全程无 await（同账号双开会话无法在关键区穿插）。大厅（无房）允许抽卡，`dust=0`。
 

@@ -2443,7 +2443,7 @@
         localStorage.setItem(ROOM_KEY, curRoom);
         if (m.id != null) myId = m.id;
         if (m.resumed) $('connTip').textContent = '已恢复原蛇，继续对战';
-        if (m.user) { loggedUser = m.user; updateAcctUI(); }
+        if (m.user) { loggedUser = m.user; updateAcctUI(); send({t: 'gachainfo'}); }   // 终审 NIT-6：入局/重连后重同步当场星尘 HUD（resume 后 p.dust 仍在服务端）
         return;
       case 'auth':
         if (m.ok) {
@@ -3674,7 +3674,8 @@
     }
   }
   function openWish() {
-    if (!loggedUser) { showToast('抽卡需要登录'); return; }
+    // 终审 MINOR-3：未登录只 toast 并指引回主页（登录表单仅在 startScreen，局内打不开面板）
+    if (!loggedUser) { showToast('抽卡需要登录，请回主页登录'); return; }
     send({t: 'gachainfo'});                 // 权威余额/皮肤集合（回包时若面板已开则刷新）
     drawWishThumb();
     wishPrevStart = !startScreen.classList.contains('hidden');

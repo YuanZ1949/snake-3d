@@ -773,18 +773,21 @@ def _stub_pool(skin_id):
 
 
 def test_gacha_invalid_n_rejected():
-    """批25 T3：n 不在 (1,10) 白名单 → error 零副作用（n=-1 加币攻击等）"""
+    """批25 T3：n 不在 (1,10) 白名单 → error 零副作用（n=-1 加币攻击等）。
+    终审 MAJOR-1：float/bool/None 也必须拒（True==1、1.0 in (1,10) 相等性穿透）"""
     import asyncio
     d, old = _gacha_setup()
     try:
         s = _cfg_sess(sid='g1', user='alice')
         s.ip = '3.3.3.3'
-        for n in (0, -1, 5, 'abc', 10 ** 9):
+        serve.store.add_stardust('alice', 1600)   # 余额足够，暴露「扣款后异常」穿透
+        for n in (0, -1, 5, 'abc', 10 ** 9, 1.0, 10.0, True, None):
             asyncio.run(serve.handle_msg(s, {'t': 'gacha', 'n': n}))
             last = s.ws.sent[-1]
             assert last.get('t') == 'error', (n, last)
         u = serve.store.users['alice']
-        assert u['stardust'] == 0 and u['skins'] == []
+        assert u['stardust'] == 1600, u['stardust']   # 一笔都没扣
+        assert u['skins'] == []
         assert u['gacha_p5'] == 0 and u['gacha_p4'] == 0 and u['gacha_lose'] is False
     finally:
         _gacha_teardown(d, old)
@@ -829,6 +832,56 @@ def test_gacha_identity_mismatch_rejected():
     finally:
         _gacha_teardown(d, old)
     print('gacha identity mismatch OK')
+
+
+def test_gachainfo_identity_mismatch_zero():
+    """批25 终审 MINOR-2：入局玩家与登录账号不一致 → gachainfo 回零值占位
+    （不混出 bob 总账 + alice 玩家 dust 的错配数据）"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        ok, err = serve.store.register('bob', '135792')
+        assert ok, err
+        serve.store.add_stardust('bob', 1600)     # bob 有钱——错配时会泄进回包
+        r = fresh(10)
+        p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        p['user'] = 'alice'
+        p['dust'] = 77                            # 玩家 dust 挂在 alice 玩家上
+        s = _cfg_sess(sid='g3b', user='bob', room=r)
+        s.ip = '3.3.3.15'
+        s.pid = 1
+        asyncio.run(serve.handle_msg(s, {'t': 'gachainfo'}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'gachainfo', last
+        assert last['balance'] == 0 and last['dust'] == 0 and last['skins'] == [], last
+        assert last['p5'] == 0 and last['p4'] == 0 and last['lose'] is False, last
+    finally:
+        _gacha_teardown(d, old)
+    print('gachainfo identity mismatch zero OK')
+
+
+def test_skin_identity_mismatch_rejected():
+    """批25 终审 MINOR-2：换号后 skin → error 不改玩家外观
+    （bob 用自己身份改写 alice 冻结玩家的皮肤 = 计划 L18 禁止）"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        ok, err = serve.store.register('bob', '135792')
+        assert ok, err
+        r = fresh(10)
+        p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        p['user'] = 'alice'
+        p['skin'] = 0
+        s = _cfg_sess(sid='g3c', user='bob', room=r)
+        s.ip = '3.3.3.16'
+        s.pid = 1
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 2}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'error', last
+        assert p['skin'] == 0, p['skin']
+    finally:
+        _gacha_teardown(d, old)
+    print('skin identity mismatch OK')
 
 
 def test_gacha_in_lobby_works_with_zero_dust():
@@ -984,6 +1037,7 @@ def test_skin_normalize_and_auth():
     try:
         r = fresh(10)
         p = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+        p['user'] = 'alice'                      # 真实入局不变量：p.user == sess.user
         s = _cfg_sess(sid='g10', user='alice', room=r)
         s.ip = '3.3.3.10'
         s.pid = 1
@@ -995,7 +1049,7 @@ def test_skin_normalize_and_auth():
         asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -16}))
         assert p['skin'] == 0 and not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), \
             s.ws.sent[n0:]
-        # 21 → 5（4★ 未拥有）→ error
+        # 21 → 5（赤霞 3★ 未拥有）→ error（终审 NIT-7：原注释误标 4★）
         asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 21}))
         assert s.ws.sent[-1].get('t') == 'error' and p['skin'] == 0, s.ws.sent[-1]
         # 拥有 15 后生效
@@ -2622,6 +2676,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_gacha_pity_order, test_gacha_5050_guarantee, test_gacha_ten_pull_pity_carry,
             test_pool_pick_uniform, test_gacha_dist_smoke,
             test_gacha_invalid_n_rejected, test_gacha_requires_login,
+    test_gachainfo_identity_mismatch_zero, test_skin_identity_mismatch_rejected,
             test_gacha_identity_mismatch_rejected,
             test_gacha_in_lobby_works_with_zero_dust,
             test_gacha_insufficient_balance_no_side_effect,
