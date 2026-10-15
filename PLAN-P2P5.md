@@ -66,6 +66,14 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 
 > 批14 踩坑记录：spawn 主路径 `_solid`→`occupied` 替换引入 OOB 回归（`occupied()` 无界检查，贴边出界 spawn 被 `_open_ahead` 高分开选中）→ P5 E2E 抓出（resume 位置复核 `RCONF oob` 插桩定位）→ 修法为 `occupied()` 顶部补「出界即占用」（其余 3 个调用点坐标恒界内，零行为变化）。诊断插桩已全部移除（grep RCONF clean）。
 
+## 执行状态（第三轮 · 继续改进）
+
+| 批 | 状态 | commit | 回归证据 |
+|---|---|---|---|
+| 20 auth 失败原因入明细 | ✅ | 本 commit | test_usage_log 扩 err 断言（旧码红 `TypeError: unexpected keyword argument 'err'`，新码 92/92 绿）+ local_ci ALL GREEN（8 E2E/单测/静态/Playwright 5/5 13.8s）+ 报表实跑出现 `login:密码错误×1`、`register:用户名已存在×3` 等原因细分（旧历史行仍兜底 `:fail`，usage_report 零改动——L168 本就读 `o.get('err')`） |
+
+第三轮候选池排序：20 auth err（✅）→ 棋盘饱和度补偿（批10 遗留，下一项）→ 匿名创建者断线失编辑权 → ESM r161+（已评估不推荐）→ push origin（运维决策待用户）→ CI 真实跑（BLOCKED：远端无 runner）。
+
 ## 各批技术方案（要点）
 
 - **批12.5（A2 前移）**：`scripts/local_ci.ps1`——停服清库→起双服(28000/8090)→8 E2E→单测→停服清库→静态检查→起 8123→Playwright 3/3→汇总 Exit code。批13-18 每批跑它。

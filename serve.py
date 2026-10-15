@@ -292,10 +292,13 @@ class Usage:
         self.save()
         return rec
 
-    def auth(self, kind, ok, user=None, ip=None):
-        """登录 / 注册 / 令牌校验（含失败原因，便于发现异常尝试）"""
-        self.line({'e': 'auth', 'kind': kind, 'ok': bool(ok), 'user': user,
-                   'ip': ip, 'at': int(time.time())})
+    def auth(self, kind, ok, user=None, ip=None, err=None):
+        """登录 / 注册 / 令牌校验（批20：失败原因落明细，报表可细分爆破类型）"""
+        rec = {'e': 'auth', 'kind': kind, 'ok': bool(ok), 'user': user,
+               'ip': ip, 'at': int(time.time())}
+        if not ok and err:
+            rec['err'] = str(err)[:64]
+        self.line(rec)
         if not ok:
             return
         k = {'login': 'logins', 'register': 'registers'}.get(kind)
@@ -1756,7 +1759,7 @@ async def handle_msg(sess, m):
             await send(sess, auth_payload(sess.user))
         else:
             await send(sess, {'t': 'auth', 'ok': False, 'err': err})
-        usage.auth('register', ok, uname, sess.ip)
+        usage.auth('register', ok, uname, sess.ip, err=err)
         return
     if t == 'login':
         ok, err = store.login(m.get('user'), m.get('pass'))
@@ -1765,7 +1768,7 @@ async def handle_msg(sess, m):
             await send(sess, auth_payload(sess.user))
         else:
             await send(sess, {'t': 'auth', 'ok': False, 'err': err})
-        usage.auth('login', ok, uname, sess.ip)
+        usage.auth('login', ok, uname, sess.ip, err=err)
         return
     if t == 'authtoken':
         name = tokens.get(m.get('token'))
@@ -1775,7 +1778,8 @@ async def handle_msg(sess, m):
         else:
             name = None
             await send(sess, {'t': 'auth', 'ok': False, 'err': '登录已过期'})
-        usage.auth('authtoken', name is not None, name, sess.ip)
+        usage.auth('authtoken', name is not None, name, sess.ip,
+                   err=None if name else '登录已过期')
         return
     if t == 'logout':
         usage.note('logout', user=sess.user, sid=sess.sid, ip=sess.ip)

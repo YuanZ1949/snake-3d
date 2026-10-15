@@ -502,6 +502,8 @@ ssh tencent "journalctl -u snake-3d -n 50 --no-pager"
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python test_game.py"
 # 用量报表
 ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7"
+# 登录/注册/令牌失败的具体原因（密码错误/用户不存在/已存在等）自批20 起写入 usage.log，
+# 报表「登录失败」节自动按原因细分；历史旧行无 err 字段则显示 kind:fail 兜底
 # 发布（scp 的 test_*.py 通配符已实测可展开）
 scp serve.py index.html test_*.py tencent:/home/ubuntu/snake-3d/ && ssh tencent "sudo systemctl restart snake-3d"
 # 同步仓库到服务器裸仓库

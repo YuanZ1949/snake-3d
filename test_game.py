@@ -597,7 +597,7 @@ def test_usage_log():
                    "room": "b", "score": 0, "conn_s": 30, "play_s": 0,
                    "msgs": 2, "joins": 0})
         u.auth("login", True, "alice", "1.2.3.4")
-        u.auth("login", False, "alice", "9.9.9.9")     # 失败也要留痕
+        u.auth("login", False, "alice", "9.9.9.9", err="密码错误")   # 失败也要留痕（含原因，批20）
         u.win("a", "Alice", "alice", 42)
         u.note("join", sid=1, room="a", name="Alice")
 
@@ -606,7 +606,9 @@ def test_usage_log():
         assert kinds == ["session", "session", "auth", "auth", "win", "join"], kinds
         auths = [x for x in lines if x["e"] == "auth"]
         assert auths[0]["ok"] is True and auths[0]["kind"] == "login"
+        assert "err" not in auths[0], auths[0]                        # 成功不记 err
         assert auths[1]["ok"] is False and auths[1]["ip"] == "9.9.9.9"
+        assert auths[1]["err"] == "密码错误", auths[1]                 # 失败带具体原因
 
         s = _json.loads((d / "usage.json").read_text("utf-8"))
         t = s["totals"]
