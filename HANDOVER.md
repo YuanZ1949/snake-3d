@@ -18,7 +18,8 @@
 | 账户 | 昵称与账号合并（一个输入框）、6 位数字密码、token 恢复登录、可游客游玩 |
 | 排行榜/战绩 | 全服排行榜、个人战绩（胜场/击杀/死亡/场次/最高分/吃果数） |
 | 界面 | 统一 `.chip` 按钮风格、开始页布局、房间列表、创建面板、排行榜屏、暂停屏、结束屏、**三处 🏠 返回主页**、移动端触屏方向盘 |
-| 视听 | 环境光+半球光+平行光、粒子/飘字、音效与背景音乐、5 款皮肤、5 种地图主题（常规/熔岩/冰原/星空/白天） |
+| 视听 | 环境光+半球光+平行光、粒子/飘字、音效与背景音乐、**16 款皮肤（5 免费 + 11 抽卡）**、5 种地图主题（常规/熔岩/冰原/星空/白天） |
+| 抽卡（祈愿） | **批25**：星尘货币（局内吃果 10/颗 + 局末并账）、卡池 12 款（3★×6 / 4★×3 / 5★ 白金圣蛇+UP 辉夜）、160 星尘/抽、1.6% 5★ + 90 抽硬保底 + 50/50 歪则下个 5★ 必 UP、10 抽必出 4★、重复返还 10/50/200、流星抽卡动画（单抽/十连、最高档压轴、跳过）、我的皮肤页签（按星级分组点选）、大厅入口 ✨祈愿 |
 | 后台 | 服务器使用情况记录（`usage.log`/`usage.json` + 报表脚本），**不体现在页面上** |
 
 ---
@@ -112,6 +113,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | 2530–2654 | 输入（键鼠 / 触屏 / 快捷键）与按钮绑定 | — |
 
 > ⚠️ 分区注释与实际代码并非严格对应（例如 `goHome/start` 落在"攻击"段内，`onDisconnect` 落在"网络层"段内），按函数名搜索比按段落更可靠。
+> **批25 补充**：行段表为批23 前快照，行号已漂移；批25 抽卡相关——`SKINS`（L1104，16 款含 star 字段）、祈愿界面与皮肤页签（L3619 起 `openWish` 等）、抽卡动画状态机（L3698 起，phase: hidden|meteor|flash|reveal|done）、大厅入口绑定（L3785 `btnWishLobby`）、CSS 祈愿（L171 起）/动画（L214 起）、HTML 覆盖层（L703/L728）。
 
 **关键状态机**：`state ∈ idle | joining | playing | over | win`，配合 `joined / spectating / wantPlay / demoPaused` 四个布尔量决定界面与演示世界。
 
@@ -141,7 +143,9 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `atk` | — | 发射子弹（冷却 `ATK_COOL=800ms`） |
 | `ult` | — | **批2 新增**：释放大招（蓄力满 `ULT_MAX=100`、冷却 `ULT_COOL=3s`，否则服务端静默忽略）；8 方向环形弹幕 |
 | `speed` | `ms` | 速度档，服务端夹到 80–300，**立即生效** |
-| `skin` | `i` | 换皮肤（0–4） |
+| `skin` | `i` | 换皮肤。**批25**：`i %= 16` 归一化（负值/越界先折返），`i≥5` 必须已拥有（未拥有回 error 静默回退到 `join` 带的 i 或先前值），免费 0–4 恒可选 |
+| `gacha` | `n` | **批25 T3 新增**：抽卡，`n` 白名单只收 1/10（其余回「无效的抽数」）；需已登录（否则「抽卡需要先登录」）；入局时玩家 `p.user` 必须与登录账号一致（防中途换号跨账号搬资产）；余额 = 总账 + 当场星尘 ≥ 160×n 才可（扣减先总账后当场，检查→扣减→save 无 await 关键区） |
+| `gachainfo` | — | **批25 T3 新增**：拉抽卡状态（进祈愿界面/入局时各拉一次）；未登录回零值占位（防客户端卡死） |
 | `persist` | `room, otok?` | **批6 新增（新#11）**：把房间标记为常驻（成功后广播刷新列表；写盘 `data/persist_rooms.json`，重启重建、永不回收）。鉴权 **批23 P6** 从「仅在线 `owner==sid`」扩为 `can_edit_room()` 三轨（账号 / 在线 sid / `otok` owner 凭据常数时间比对）——匿名断线重连后仍可保存 |
 | `chat` | `text` | **批5 新增**：房间聊天（≤80 字，空白不发，1s 限速超限静默丢弃）；观战者也可发，走快照 `ev` 通道 |
 | `respawn` | — | 死亡后重生。**批22 H4**：仅复活房（`room.respawn=true`）且死亡满 `RESPAWN_MS=3s` 才生效，否则服务端拒绝；客户端非复活房死亡直接转观战 |
@@ -158,9 +162,12 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
 | `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
+| `gachares` | `items, balance, dust, gained` | **批25 T3 新增**：抽卡结果；`items[]` 按抽取顺序 `{skin, star, up, dup, refund}`（3★/4★/5★ 星级、up=本次 5★ 是否 UP、dup=重复已拥有、refund=重复返还星尘）；`balance`=抽后纯总账、`dust`=抽后当场星尘（回包时点，refund 已入账）、`gained`=本次总返还 |
+| `gachainfo` | `balance, dust, skins, p5, p4, lose` | **批25 T3 新增**：抽卡状态；`balance`=纯总账、`dust`=当前房当场星尘（不在局内=0）、`skins`=已拥有皮肤 id 列表、`p5/p4`=保底计数（距上次 5★/4★ 的抽数）、`lose`=50/50 是否已歪（下个 5★ 必 UP）；未登录回零值 |
 | `snap` | 见下 | **50ms 一次快照（批11 起为增量协议）** |
 
-**`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, food{id,x,y,score,color}, bonus`。
+**`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, foods[], bonus`。
+> **批25 A**：`food` 更名 **`foods`**（列表）——场上多果（每图 3–8 颗，`food_target()` 按 cols×rows 分档），元素 `{id,x,y,score,color}`，`id` 为全局递增（客户端按 id 对齐 mesh，删果即删 mesh）；旧字段名与单果语义废弃，本字段名变更为**批25 唯一协议 break**（同步升级客户端，老客户端不兼容）。
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 > 批11 增量协议：服务端对 6 个静态字段做签名对比（`Room._field_sig`），变了才带；新订阅者（join/watch/resume）首帧为**全量帧**（6 字段齐全 + `full:1`，由 `Session.full_sent` 控制，`broadcast` 内补组）。稳态实测增量帧较全量帧省 ~31% 字节。协议级验收见 `test_delta_p1.py`（第 8 套 E2E）。
 
