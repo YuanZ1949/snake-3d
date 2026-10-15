@@ -1372,6 +1372,46 @@ def test_place_food_reach_time_budget():
     print("reach budget OK: %.2fms" % ms)
 
 
+def test_bot_reaches_food_around_wall():
+    """批24 O5：贪心打分死循环——石列挡道（缺口在远端 (6,8)）时水果 (7,5) 可达
+    却 8 步环原地绕圈（确定性复现 test-results/repro_circling.py case_a）。
+    距离场路径修复后须在限步内吃到（此前必红：环内永远吃不到）"""
+    r = fresh(10)
+    r.rocks = [(6, y) for y in range(0, 8)]                 # 石列 x=6，仅留 y=8/9 缺口
+    r.food = {'id': 1, 'x': 7, 'y': 5, 'score': 15, 'color': '#fff'}
+    p = mk(r, 'b1', 'AI', [(5, 5), (5, 6), (5, 7)], (0, -1))
+    p['bot'] = True
+    p['score'] = 0
+    now = 1_000_000
+    for _ in range(400):                                   # 20s 步进（tick 150ms）
+        r.step(50, now)
+        now += 50
+        if p['score'] > 0:
+            break
+    assert not p['alive'] or p['score'] > 0, \
+        'AI 应绕石列缺口吃到水果（复现：8 步环原地绕圈永远吃不到）'
+    assert p['score'] > 0, '400 步内未吃到——绕圈死循环复现'
+
+
+def test_bot_reaches_food_in_pocket():
+    """批24 O5：U 型袋开口朝下、水果在袋内（case_c 复现 16 步环）——
+    须绕袋口进入吃到，不得在袋外顶壁绕环"""
+    r = fresh(12)
+    r.rocks = [(x, 4) for x in range(3, 9)] + [(3, y) for y in range(5, 9)] \
+        + [(9, y) for y in range(5, 9)]                    # 开口 y=9
+    r.food = {'id': 1, 'x': 6, 'y': 6, 'score': 15, 'color': '#fff'}
+    p = mk(r, 'b1', 'AI', [(6, 2), (6, 1), (6, 0)], (0, 1))
+    p['bot'] = True
+    p['score'] = 0
+    now = 1_000_000
+    for _ in range(500):
+        r.step(50, now)
+        now += 50
+        if p['score'] > 0:
+            break
+    assert p['score'] > 0, '500 步内未吃到——袋外绕环复现'
+
+
 def test_bot_turns_toward_target_when_blocked():
     """批15②：直达方向被挡，选与目标方向最接近的开放方向（不再按 DIRS4 定序反向偏航）"""
     r = fresh(24)
@@ -2134,6 +2174,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_place_food_avoids_sealed_pocket,
             test_place_food_reach_time_budget,
             test_bot_turns_toward_target_when_blocked,
+            test_bot_reaches_food_around_wall,
+            test_bot_reaches_food_in_pocket,
             test_bot_picks_nearest_target,
             test_walldeflect_room_bounces_at_wall,
             test_walldeflect_room_no_escape_dies,

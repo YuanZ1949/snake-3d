@@ -1051,8 +1051,65 @@ class Room:
             self.maybe_start_round()
 
     # -------- 世界推进 --------
+    def _bot_path_step(self, p, tgt, cap=None):
+        """批24 O5：目标最短路首步（BFS）——修贪心打分绕墙死循环（边角转圈吃不到水果，
+        确定性复现 test-results/repro_circling.py）。阻挡=静态地形+传送门+全部活蛇身
+        （己身除头，颈格本属己身阻挡故反向天然禁）；同长多路优先当前直行（少转向）；
+        超 cap/无路/目标被占返回 None → 回落既有贪心打分（保持原兜底行为）。"""
+        hx, hy = p['cells'][0]
+        tgt = (tgt[0], tgt[1])
+        if (hx, hy) == tgt:
+            return None
+        if not (0 <= tgt[0] < self.cols and 0 <= tgt[1] < self.rows):
+            return None
+        block = set(self.rocks) | set(self.walls) | set(self.portals)
+        for q in self.players.values():
+            if not q['alive']:
+                continue
+            block.update(q['cells'][1:] if q is p else q['cells'])
+        if tgt in block:
+            return None
+        cap = cap or min(self.cols * self.rows, 2000)     # 大图无路时的兜底预算
+        cur = p['dir']
+        opp = (-cur[0], -cur[1])
+        start = (hx, hy)
+        prev = {start: None}
+        dq = deque([start])
+        hit = None
+        n = 0
+        while dq and n < cap:
+            x, y = dq.popleft()
+            n += 1
+            dirs = DIRS4
+            if (x, y) == start:
+                dirs = (cur,) + tuple(d for d in DIRS4 if d != cur)   # 起步直行优先破同长平局
+            for d in dirs:
+                nx, ny = x + d[0], y + d[1]
+                if not (0 <= nx < self.cols and 0 <= ny < self.rows):
+                    continue
+                np = (nx, ny)
+                if np in block or np in prev:
+                    continue
+                prev[np] = (x, y)
+                if np == tgt:
+                    hit = np
+                    break
+                dq.append(np)
+            if hit:
+                break
+        if not hit:
+            return None
+        node = hit
+        while prev[node] != start:
+            node = prev[node]
+        d = (node[0] - start[0], node[1] - start[1])
+        if d == opp:
+            return None
+        return d
+
     def _bot_think(self, p):
-        """AI 蛇转向：目标取 food/bonus 中距离更近者（等距优先星星，批15③）；
+        """AI 蛇转向：有目标先走最短路首步（批24 O5 修绕墙死循环），无路回落
+        贪心打分：目标取 food/bonus 中距离更近者（等距优先星星，批15③）；
         打分 (是否绝路, 离目标距离, -目标方向对齐度, -前方空间)——直达被挡时
         按对齐度绕行而非 DIRS4 定序偏航（批15②）；无目标时以开阔空间为准。"""
         if not p['cells']:
@@ -1070,6 +1127,11 @@ class Room:
                           1, (self.food['x'], self.food['y'])))
         if cands:
             tgt = min(cands)[2]
+            nd = self._bot_path_step(p, tgt)
+            if nd is not None:
+                if nd != cur:
+                    p['queue'] = [nd]
+                return                          # 首步=当前方向 → 直行不写队列
         pref = (0, 0)                           # 首选方向：朝目标的轴对齐步（大差值轴优先）
         if tgt:
             dx, dy = tgt[0] - hx, tgt[1] - hy

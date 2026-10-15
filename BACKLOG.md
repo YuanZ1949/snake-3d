@@ -14,6 +14,7 @@
 | O2 | 房间删除：卡片🗑按钮 + `delroom` 消息，任意空闲房（含常驻⭐）任何人可删 | 中 | 用户「房间无法删除」→ 拍板「任意空闲房，含常驻」→ 设计获批 m0254；默认房/有人房拒 | ✅ 完成：服务端 `delroom` 分支（默认房拒/有人观战拒/persist 重写盘/delok+broadcast_rooms）；客户端非默认房（id a/b/c）显示🗑+confirm+`delok` toast；TDD 单测 `test_delroom_open_to_anyone` 先红（空闲房应被删除）后绿，**单测 107**；探针 `p25_del.js` GREEN（默认房无按钮/自建房删除+toast errors=0）；静态 js=581；local_ci ALL GREEN |
 | O4 | 纯 AI 房可直接删除 | 小 | 用户报「AI房无法直接删除」→ 根因 = O2 `delroom` 用 `room.players` 判"有人"（含 bot 占位）→ 改 `any(not q.get('bot') ...) or room.subs` | ✅ 完成：单测第 5/6 段先红（纯 AI 房应可删除）后绿，单测 107；local_ci ALL GREEN；commit `251a933` 已部署生产+push（生产 sha 6cefab54 核对，隔离单测 ALL PASS） |
 | O3 | 只剩 AI 自动停：纯 AI 房整房冻结（不 step 不 broadcast），真人回来自动恢复 | 小 | 用户挂起项「挂起项继续」放行；设计 = `room_live(room)`（subs 有人类 或 players 有非 bot）+ 从 `game_loop` 拆出可测 `game_cycle`，冻结时仍刷 `last_step` 防恢复大 dt 跳跃 | ✅ 完成：TDD `test_room_live_and_ai_freeze` 先红（`AttributeError: room_live`）后绿，单测 **108**；静态 js=581；local_ci ALL GREEN（8 E2E+单测+静态+Playwright 5/5）；不删/不回收纯 AI 房、不改 UI、不动 drop_player 清 AI 级联与 gc |
+| O5 | AI 边角转圈吃不到水果：贪心打分绕墙死循环 | 中 | 用户挂起项 2；systematic-debugging 根因修复 | ✅ 完成：Phase1 确定性复现 `test-results/repro_circling.py`（case_a 8 步环/case_c 16 步环，BFS 可达却吃不到；夹具坑=Room.__init__ 默认生成 portals、未移动帧假阳性自环须按头位变化登记）；根因=`_bot_think` 纯贪心 Manhattan 打分无路径记忆，`|dy|>|dx|` 时缺口处选轴错向回环；修复=`_bot_path_step` 最短路首步 BFS（阻挡=地形+传送门+活蛇身，起步直行破平局，无路回落贪心）；TDD 2 例先红后绿，**单测 110**；复现 LOOP→EATEN(27/51 步)；local_ci ALL GREEN |
 
 来源：用户上报「手机端访问体验不好」五项 + 后续追加指令。
 流程：`tamako-flow-backlog-sprint` —— 一次取一项，做完回写本文件。
