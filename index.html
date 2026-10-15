@@ -341,10 +341,10 @@
   }
   .createPanel select.nameIn.sm { width: 100%; }
   /* 批16 B：面板内原生下拉强制暗色（仅建房/设置面板作用域，不外溢到全站控件） */
-  .createPanel select, #cfgScreen select { color-scheme: dark; }
-  .createPanel select option, #cfgScreen select option { background: #131728; color: #dce3ff; }
-  /* 批18 E：房间设置面板行布局 */
-  #cfgScreen .cfgRow { display: flex; gap: 8px; align-items: center; justify-content: center; width: 100%; }
+  .createPanel select { color-scheme: dark; }
+  .createPanel select option { background: #131728; color: #dce3ff; }
+  /* 批23 N2：编辑模式辅助控件（复用创建面板，非编辑态隐藏） */
+  #cfgHint.hidden, #cPassClearWrap.hidden, #btnCfgCancel.hidden { display: none; }
   #cName { flex: 1; min-width: 0; width: auto; }
   #userIn { width: 196px; }
   .lbRows {
@@ -571,9 +571,14 @@
             <label><span>口令</span>
               <input class="nameIn sm" id="cPass" maxlength="20" placeholder="可选·6-20位字母数字">
             </label>
+            <label class="sub hidden" id="cPassClearWrap" title="勾选保存后移除房间口令，任何人可直接进出">
+              <span><input type="checkbox" id="cPassClear"> 清除原口令</span>
+            </label>
           </div>
+          <div class="sub hidden" id="cfgHint">编辑房间设置（尺寸/主题/岩石/传送门 下局生效）</div>
           <div class="actRow">
             <input class="nameIn sm" id="cName" maxlength="16" placeholder="房间名（可留空）">
+            <button class="chip hidden" id="btnCfgCancel">✖ 取消</button>
             <button class="chip" id="btnCreateGo">✅ 创建</button>
           </div>
         </div>
@@ -591,51 +596,6 @@
       <h2>🏆 排行榜</h2>
       <div class="lbRows" id="lbRows"></div>
       <button class="primary" id="btnLbClose">返回</button>
-    </div>
-
-    <!-- 批18 E：房间参数编辑（仅创建者可改，live 生效不重开局） -->
-    <div class="overlay hidden" id="cfgScreen">
-      <h2>⚙ 房间设置</h2>
-      <div class="sub" id="cfgRoomName"></div>
-      <label class="cfgRow"><span>获胜</span>
-        <select class="nameIn sm" id="c2Win" aria-label="获胜模式">
-          <option value="last">死斗·剩一人胜</option>
-          <option value="score">积分赛</option>
-        </select>
-      </label>
-      <label class="cfgRow"><span>限时</span>
-        <select class="nameIn sm" id="c2Limit" aria-label="限时">
-          <option value="">不限时</option>
-          <option value="60">1 分钟</option>
-          <option value="120">2 分钟</option>
-          <option value="300">5 分钟</option>
-          <option value="600">10 分钟</option>
-        </select>
-      </label>
-      <label class="cfgRow"><span>复活</span>
-        <select class="nameIn sm" id="c2Respawn" aria-label="复活模式">
-          <option value="">关闭·阵亡观战</option>
-          <option value="1">无限复活</option>
-        </select>
-      </label>
-      <label class="cfgRow"><span>碰墙</span>
-        <select class="nameIn sm" id="c2Wd" aria-label="碰墙模式">
-          <option value="">关闭·撞墙即死</option>
-          <option value="1">碰外墙折返</option>
-        </select>
-      </label>
-      <label class="cfgRow"><span>AI蛇</span>
-        <select class="nameIn sm" id="c2Bots" aria-label="AI蛇数量">
-          <option value="0">无</option>
-          <option value="1">1 条</option>
-          <option value="2">2 条</option>
-          <option value="3">3 条</option>
-          <option value="5">5 条</option>
-          <option value="7">7 条</option>
-        </select>
-      </label>
-      <button class="primary" id="btnCfgSave">💾 保存（live 生效）</button>
-      <button class="chip" id="btnCfgClose">取消</button>
     </div>
 
     <div class="overlay hidden" id="pauseScreen">
@@ -2906,7 +2866,11 @@
       nm.textContent = r.name;
       const cnt = document.createElement('span');
       cnt.className = 'cnt';
-      cnt.textContent = r.players > 0 ? `${r.players}人` : '空闲';
+      const botsN = Math.max(0, r.players - (r.humans ?? r.players));   // 批23 N1：AI 与真人数分开
+      const humanN = r.players - botsN;
+      cnt.textContent = r.players > 0
+        ? `${humanN ? humanN + '人' : ''}${botsN ? (humanN ? '+' : '') + botsN + 'AI' : ''}`
+        : '空闲';
       const meta = document.createElement('div');
       meta.className = 'meta';
       meta.textContent = roomMeta(r);
@@ -2966,6 +2930,7 @@
   function toggleCreatePanel() {
     const p = $('createPanel');
     const open = p.classList.contains('hidden');
+    if (!open) exitCfgMode();   // 批23 N2：收起面板即退出编辑模式
     p.classList.toggle('hidden', !open);
     $('btnRoomCreate').textContent = open ? '－ 收起' : '＋ 创建房间';
     if (open) $('cSize').focus();
@@ -3006,30 +2971,72 @@
     send({t: 'create', name: '单人练习', size: 24, bots: 3});
   }
 
-  // ================= 房间参数编辑（批18 E） =================
-  let cfgRoomId = null;
+  // ================= 房间参数编辑（批18 E；批23 N2：复用创建面板，字段与创建完全同集） =================
+  let cfgRoomId = null;   // 非空 = 编辑模式（同一面板发 roomcfg 而非 create）
+  function hideCreatePanel() {
+    $('createPanel').classList.add('hidden');
+    $('btnRoomCreate').textContent = '＋ 创建房间';
+    exitCfgMode();
+  }
+  function exitCfgMode() {
+    if (!cfgRoomId) return;
+    cfgRoomId = null;
+    $('btnCreateGo').textContent = '✅ 创建';
+    $('btnCfgCancel').classList.add('hidden');
+    $('cfgHint').classList.add('hidden');
+    $('cPassClearWrap').classList.add('hidden');
+    $('cPassClear').checked = false;
+    $('cPass').value = '';
+    $('cPass').placeholder = '可选·6-20位字母数字';
+    $('cName').value = '';
+  }
+  // 点 ⚙：直接展开创建面板并预填当前配置（批23 N2：两处设置统一、复用创建视图）
   function openCfg(r) {
     cfgRoomId = r.id;
-    $('cfgRoomName').textContent = r.name + '（' + r.id + '）';
-    $('c2Win').value = r.winMode === 'score' ? 'score' : 'last';
-    $('c2Limit').value = r.limit > 0 ? String(r.limit) : '';
-    $('c2Respawn').value = r.respawn ? '1' : '';
-    $('c2Wd').value = r.wd ? '1' : '';
-    $('c2Bots').value = String(r.bots | 0);
-    $('cfgScreen').classList.remove('hidden');
+    $('cSize').value = String(r.pendingSize ?? r.cols);  // 排队中的下局尺寸优先回填
+    $('cTheme').value = r.themeFixed ? (r.theme || '') : '';
+    $('cRock').value = (r.rockCustom == null) ? '' : String(r.rockCustom);
+    $('cPortal').value = (r.portalCustom == null) ? '' : (r.portalCustom ? '1' : '0');
+    $('cWin').value = r.winMode === 'score' ? 'score' : '';
+    $('cLimit').value = r.limit > 0 ? String(r.limit) : '';
+    $('cRespawn').value = r.respawn ? '1' : '';
+    $('cWallDeflect').value = r.wd ? '1' : '';
+    $('cBots').value = r.bots ? String(r.bots) : '';
+    $('cName').value = r.name || '';
+    $('cPass').value = '';
+    $('cPass').placeholder = r.hasPass ? '已设口令·留空=保持' : '新口令·可选';
+    $('cPassClear').checked = false;
+    $('cPassClearWrap').classList.toggle('hidden', !r.hasPass);
+    $('btnCreateGo').textContent = '💾 保存设置';
+    $('btnCfgCancel').classList.remove('hidden');
+    const hint = $('cfgHint');
+    hint.textContent = '编辑「' + (r.name || r.id) + '」· 尺寸/主题/岩石/传送门 下局生效';
+    hint.classList.remove('hidden');
+    $('createPanel').classList.remove('hidden');   // 收起状态点⚙也直接展开
+    $('btnRoomCreate').textContent = '－ 收起';
   }
-  $('btnCfgSave').onclick = () => {
+  function saveRoomCfg() {
     if (!cfgRoomId) return;
-    send({t: 'roomcfg', room: cfgRoomId,
-          winMode: $('c2Win').value,
-          limit: $('c2Limit').value === '' ? 0 : parseInt($('c2Limit').value, 10),
-          respawn: $('c2Respawn').value === '1',
-          wd: $('c2Wd').value === '1',
-          bots: parseInt($('c2Bots').value, 10) || 0});
-    $('cfgScreen').classList.add('hidden');
-    showToast('设置已发送…');
-  };
-  $('btnCfgClose').onclick = () => $('cfgScreen').classList.add('hidden');
+    const msg = {t: 'roomcfg', room: cfgRoomId,
+                 name: ($('cName').value || '').trim().slice(0, 16),
+                 size: parseInt($('cSize').value, 10) || 24,
+                 theme: $('cTheme').value || '',
+                 rock: $('cRock').value === '' ? '' : parseFloat($('cRock').value),
+                 portal: $('cPortal').value === '' ? '' : $('cPortal').value === '1',
+                 winMode: $('cWin').value || 'last',
+                 limit: $('cLimit').value === '' ? 0 : parseInt($('cLimit').value, 10),
+                 respawn: $('cRespawn').value === '1',
+                 wd: $('cWallDeflect').value === '1',
+                 bots: parseInt($('cBots').value, 10) || 0};
+    if ($('cPassClear').checked) msg.clearPass = true;
+    else {
+      const ps = ($('cPass').value || '').trim();
+      if (ps) { msg.pass = ps; roomPasss[cfgRoomId] = ps; }  // 改了口令 → 入表免重输
+    }
+    send(msg);
+    hideCreatePanel();
+  }
+  $('btnCfgCancel').onclick = hideCreatePanel;
 
   // ================= 房间聊天（批5） =================
   function focusChat() {
@@ -3151,7 +3158,7 @@
   $('btnLogout').onclick = doLogout;
   $('btnRoomRefresh').onclick = () => send({t: 'rooms'});
   $('btnRoomCreate').onclick = toggleCreatePanel;
-  $('btnCreateGo').onclick = createRoom;
+  $('btnCreateGo').onclick = () => (cfgRoomId ? saveRoomCfg() : createRoom());
   $('btnSolo').onclick = () => {
     if (state === 'joining' || soloPending) return;
     ac(); bgmStart();                 // 用户手势里解锁音频
@@ -3179,7 +3186,7 @@
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
-   'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate', 'btnCfgSave', 'btnCfgClose',
+   'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate', 'btnCfgCancel',
    'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {
@@ -3217,4 +3224,6 @@
 })();
 </script>
 </body>
+</html>
+y>
 </html>

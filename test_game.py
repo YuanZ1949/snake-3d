@@ -1535,6 +1535,45 @@ def test_roomcfg_limit_fallback_mirror():
     del serve.rooms['rc']
 
 
+def test_roomcfg_extended_fields_unified():
+    """批23 N2：roomcfg 与创建面字段统一——name/theme/rock/portal 即时存（地形类下局
+    生效）、size 走 pending_size 下局应用、pass 可改可清；非法口令整条消息原子拒绝"""
+    import asyncio
+    s = _cfg_sess(sid='s1')
+    r = _cfg_room(s)
+    s.room = r
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'name': '新名字', 'theme': 'day',
+                                     'rock': 1.8, 'portal': False,
+                                     'size': 40}))
+    assert r.name == '新名字'
+    assert r.theme_fixed == 'day'
+    assert r.rock_mult == 1.8 and r.portal_on is False
+    assert getattr(r, 'pending_size', None) == 40
+    assert r.size == 12 and r.cols == 12      # Room('rc','rc',10) 被 MAP_MIN 夹到 12；当前局不动
+    info = r.info()
+    assert info['rockCustom'] == 1.8 and info['portalCustom'] is False  # 编辑面回填用
+    assert info['pendingSize'] == 40
+    r.new_round()
+    assert (r.size, r.cols, r.rows) == (40, 40, 40)   # 新局应用 pending 尺寸
+    # 非法主题回退为「随机」（与创建面 ""=随机 同语义）
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'theme': 'bogus'}))
+    assert r.theme_fixed is None
+    # 口令：非法（弱口令）→ 整条拒绝，同消息的 name 不被应用
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'name': '不该改', 'pass': 'abc123'}))
+    assert any(x.get('t') == 'error' for x in s.ws.sent)
+    assert r.name == '新名字' and r.passw is None
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'pass': 'Kx9m2Q'}))
+    assert r.passw == 'Kx9m2Q'
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'clearPass': True}))
+    assert r.passw is None
+    # 空 name = 保持原名（不允许置空）
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'name': ''}))
+    assert r.name == '新名字'
+    del serve.rooms['rc']
+
+
 def test_respawn_msg_gated_by_room_mode_and_delay():
     """批22 H4：手动复活仅限复活房且须过 RESPAWN_MS——死斗/积分房裸发复活必须被拒
     （漏洞已本地复现：respawn=False 房死亡后裸发 {t:'respawn'} 立即复活）"""
@@ -1781,6 +1820,20 @@ def test_token_ttl_expired():
     print('token ttl OK')
 
 
+def test_room_info_humans_vs_bots():
+    """批23 N1：房间列表人数区分真人与 AI（humans 字段，players 语义不变）"""
+    r = fresh(12, bots=3)
+    i = r.info()
+    assert i["players"] == 3            # players 仍含 AI（既有语义不变）
+    assert i["humans"] == 0             # 新字段：真人数
+    mk(r, 7, "甲", [(2, 2), (2, 3)], (1, 0))
+    i = r.info()
+    assert i["players"] == 4
+    assert i["humans"] == 1
+    assert i["players"] - i["humans"] == 3   # AI 数可由差值推出
+    print('info humans OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1845,11 +1898,13 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_roomcfg_account_owner_survives_reconnect,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
+            test_roomcfg_extended_fields_unified,
             test_respawn_msg_gated_by_room_mode_and_delay,
             test_create_rate_limited_and_room_cap,
             test_register_rate_limited,
             test_room_pass_bruteforce_throttle,
             test_anonymous_resume_ip_bound,
-            test_token_ttl_expired]:
+            test_token_ttl_expired,
+            test_room_info_humans_vs_bots]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

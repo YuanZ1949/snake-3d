@@ -398,6 +398,7 @@ class Room:
         self.theme_fixed = theme_fixed if theme_fixed in THEMES else None  # 固定主题（None=每局随机）
         self.rock_mult = rock_mult          # 岩石密度倍率覆盖
         self.portal_on = portal_on          # 传送门开关覆盖
+        self.pending_size = None            # 批23 N2：编辑面改尺寸 → 下局 new_round 应用
         # ---- 战场自定义：获胜模式（last=死斗留最后一人 / score=积分赛）/ 限时秒（0=不限）/ 无限复活 ----
         self.win_mode = win_mode if win_mode in ('last', 'score') else 'last'
         try:
@@ -429,6 +430,7 @@ class Room:
         self.passw = passw if (isinstance(passw, str) and passw) else None   # 进房口令（None=无口令）
         self.persist = False                # 「保存」标记：常驻不回收、重启后重建
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
+        self.size = self.cols                 # 批23 N2：名义尺寸（与 cols 同步，编辑面回填用）
         self.players = {}          # pid -> player dict
         self.subs = set()          # 接收快照的 Session（玩家 + 旁观者）
         self.round_ids = set()
@@ -610,8 +612,12 @@ class Room:
             'theme': self.theme,
             'themeFixed': self.theme_fixed is not None,   # 主题固定（否则每局随机）
             'rock': self.eff_rock(),                      # 实际岩石密度倍率
+            'rockCustom': self.rock_mult,                 # 批23 N2：覆盖值原样回传（编辑面精确回填；None=跟随主题）
             'portal': self.eff_portal(),                  # 是否生成传送门
+            'portalCustom': self.portal_on,               # 批23 N2：覆盖值原样回传（None=跟随主题）
+            'pendingSize': self.pending_size,             # 批23 N2：已改待下局应用的尺寸（None=无）
             'players': len(self.players),                 # 房间内人数（含已阵亡）
+            'humans': sum(1 for p in self.players.values() if not p.get('bot')),  # 批23 N1：真人数（AI 不计）
             'alive': sum(1 for p in self.players.values() if p['alive']),
             'watchers': max(0, len(self.subs) - len(self.players)),
             'round': self.round_no,
@@ -1000,6 +1006,13 @@ class Room:
         self.items = []
         self.round_no += 1
         self.round_started = now_ms()        # 限时模式的时钟随新一局重置
+        # ---- 批23 N2：应用编辑面改的尺寸（新局统一坐标系：地形/出生/可达集都按新网格重建）----
+        ps = self.pending_size
+        if ps and ps != self.size:
+            self.size = ps
+            self.cols = self.rows = ps
+            self._reach = None                # 网格变了，可达集失效
+        self.pending_size = None              # 已消费（无论是否变化）
         self._pick_theme()
         self.build_terrain()
         for pid in list(self.round_ids):
@@ -1959,11 +1972,11 @@ async def handle_msg(sess, m):
         await send(sess, {'t': 'created', 'room': rid, 'name': name})
         return
 
-    # -------- 房间参数编辑（批18 E）：live 生效，不重开局 --------
-    # 语义（拍板）：winMode/limit/respawn/wd 现读现发即时生效（快照/check_win 本就读
-    # 房间字段，零协议改动）；limit 改小到已超时 → 下一 tick 按「时间到」结算；
-    # size/theme/rock/portal 属地形，需要重掷不在此列（theme live 改 = 下局生效）；
-    # 口令不在编辑面（独立安全面）。bots 走 set_bots 显式增减。
+    # -------- 房间参数编辑（批18 E；批23 N2 扩到与创建面同集）：live 生效，不重开局 --------
+    # 语义（拍板）：winMode/limit/respawn/wd/bots 现读现发即时生效（快照/check_win 本就
+    # 读房间字段，零协议改动）；limit 改小到已超时 → 下一 tick 按「时间到」结算；
+    # size 走 pending_size 下局生效；theme/rock/portal 存字段、下局 new_round 重掷地形；
+    # name 即时（广播卡片）；pass 可改可清（clearPass），非法口令整条消息原子拒绝。
     if t == 'roomcfg':
         rid = m.get('room') or (sess.room.id if sess.room else '')
         room = rooms.get(rid)
@@ -1973,6 +1986,12 @@ async def handle_msg(sess, m):
         if not can_edit_room(sess, room):
             await send(sess, {'t': 'error', 'err': '仅房间创建者可修改设置'})
             return
+        # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
+        new_pass = m.get('pass')
+        if 'pass' in m and new_pass not in (None, ''):
+            if not valid_room_pass(str(new_pass)):
+                await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
+                return
         changed = False
         wm = m.get('winMode')
         if wm in ('last', 'score') and wm != room.win_mode:
@@ -2001,6 +2020,63 @@ async def handle_msg(sess, m):
             nb = max(0, min(BOTS_MAX, nb))
             if nb != room.bots:
                 room.set_bots(nb)
+                changed = True
+        # ---- 批23 N2：与创建面同集——name / theme / rock / portal / size / pass ----
+        if 'name' in m:
+            nn = str(m.get('name') or '').strip()[:16]
+            if nn and nn != room.name:        # 空名 = 保持原名（与创建面兜底同向）
+                room.name = nn
+                changed = True
+        if 'theme' in m:
+            th = m.get('theme')
+            nv = th if th in THEMES else None  # 非法/空 = 随机（同创建面 ""=随机）
+            if nv != room.theme_fixed:
+                room.theme_fixed = nv
+                changed = True
+        if 'rock' in m:
+            rk = m.get('rock')
+            if rk in (None, ''):
+                nv = None
+            elif isinstance(rk, bool) or not isinstance(rk, (int, float)):
+                nv = room.rock_mult            # 非法类型忽略，不动原值
+            else:
+                nv = max(0.0, min(4.0, float(rk)))
+            if nv != room.rock_mult:
+                room.rock_mult = nv
+                changed = True
+        if 'portal' in m:
+            pv = m.get('portal')
+            if pv in (None, ''):
+                nv = None
+            elif isinstance(pv, bool):
+                nv = pv
+            else:
+                nv = room.portal_on            # 非法类型忽略
+            if nv != room.portal_on:
+                room.portal_on = nv
+                changed = True
+        if 'size' in m:
+            try:
+                nsz = int(m.get('size'))
+            except (TypeError, ValueError):
+                nsz = room.size
+            nsz = max(MAP_MIN, min(MAP_MAX, nsz))
+            if nsz == room.size:
+                if room.pending_size is not None:
+                    room.pending_size = None   # 改回当前尺寸 → 撤销排队
+                    changed = True
+            elif room.pending_size != nsz:
+                room.pending_size = nsz        # 下局 new_round 统一重建坐标系
+                changed = True
+        # 口令（批23 N2，上方先验已过）：clearPass 显式清除；给了新值才改；留空不动
+        if m.get('clearPass') is True:
+            if room.passw is not None:
+                room.passw = None
+                changed = True
+        elif new_pass not in (None, ''):
+            nv = str(new_pass)
+            if nv != room.passw:
+                room.passw = nv
                 changed = True
         # 与 __init__ 同款兜底：score/respawn 房必须有限时（live 改动保持同一不变量）
         if room.limit == 0:
