@@ -830,7 +830,12 @@
       }
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(COLS, ROWS),
-      new THREE.MeshStandardMaterial({map: new THREE.CanvasTexture(c), roughness: .9})
+      // P3 白天闪烁：地板与基座顶面仅差 0.005，远距深度精度不足时逐帧互换（z-fighting）。
+      // polygonOffset 负偏移让地板在深度平局时恒胜，远区不再闪出深蓝基座。
+      new THREE.MeshStandardMaterial({
+        map: new THREE.CanvasTexture(c), roughness: .9,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+      })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = .005;
