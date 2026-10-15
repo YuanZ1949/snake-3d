@@ -423,6 +423,8 @@
     #startScreen { overflow-y: auto; -webkit-overflow-scrolling: touch; }
     #startScreen .sub { font-size: 11px; max-width: 94vw; }
     .miniMap { width: 104px; height: 104px; right: 8px; top: 54px; }
+    /* 批23 P2：小地图可见时给 HUD 让出右列（内容右缘 W-130 < 小地图左缘 W-112，任意宽度恒 18px 间隙） */
+    body.minimapOn .hud { padding-right: 116px; }
     .chatLog { max-width: 78%; font-size: 12px; }
     .chatIn { max-width: 78%; font-size: 14px; }
   }
@@ -2700,6 +2702,7 @@
     const cv = $('miniMap');
     const show = joined || spectating;
     cv.classList.toggle('hidden', !show);
+    document.body.classList.toggle('minimapOn', show);   // 批23 P2：可见时让 HUD 让出右列
     if (!show) return;
     const W = cv.width, H = cv.height;
     const g = cv.getContext('2d');
