@@ -41,7 +41,7 @@ def fresh(size=10, **kw):
     r.portals = []
     r.items = []
     r.bonus = None
-    r.food = None
+    r.foods = []
     r._reach = None      # 直接改地形绕过失效点 → 手动失效（批15①）
     return r
 
@@ -75,7 +75,7 @@ def test_bot_turns_toward_food():
     p["dir"] = (0, 1)                       # 初始朝下，食物在正右方
     p["queue"] = []
     p["inv"] = 0
-    r.food = {"id": 999, "x": hx + 4, "y": hy, "score": 10, "color": "#fff"}
+    r.foods = [{"id": 999, "x": hx + 4, "y": hy, "score": 10, "color": "#fff"}]
     p["last_move"] = serve.now_ms() - 99999
     r.step(0.05, serve.now_ms())
     assert p["dir"] == (1, 0)               # 应转向食物方向
@@ -89,7 +89,7 @@ def test_bot_avoids_wall_death():
     p["dir"] = (1, 0)
     p["queue"] = []
     p["inv"] = 0
-    r.food = None                           # 无目标：以空间为准
+    r.foods = []                           # 无目标：以空间为准
     p["last_move"] = serve.now_ms() - 99999
     r.step(0.05, serve.now_ms())
     assert p["alive"]                       # 没撞出界
@@ -545,13 +545,73 @@ def test_spawn_avoids_snakes_and_faces_open():
 
 
 def test_food_has_unique_id():
+    # 批25 语义：吃一补一后新果 id 不与场上已有 id 重复
     r = fresh(16)
     r.place_food()
-    a = r.food["id"]
+    old_ids = {f["id"] for f in r.foods}
+    kept_ids = {f["id"] for f in r.foods[1:]}
+    r.foods = r.foods[1:]            # 模拟吃掉一颗
     r.place_food()
-    b = r.food["id"]
-    assert b != a, (a, b)
-    print("food unique id OK:", a, b)
+    new_id = (set(f["id"] for f in r.foods) - kept_ids).pop()
+    assert new_id not in old_ids, (new_id, old_ids)
+    assert len(r.foods) == len(old_ids)
+    print("food unique id OK:", new_id, sorted(old_ids))
+
+
+# ================= 批25 多果（经济拍板：果=10星尘，场上多果并存） =================
+def test_multi_foods_target_and_unique():
+    # 目标数 = min(8, max(3, size//8))；坐标互不重复
+    r24 = fresh(24)
+    r24.place_food()
+    assert len(r24.foods) == 3, len(r24.foods)          # 24//8=3
+    r96 = fresh(96)
+    r96.place_food()
+    assert len(r96.foods) == 8, len(r96.foods)          # 上限 8
+    r10 = fresh(10)
+    r10.place_food()
+    assert len(r10.foods) == 3, len(r10.foods)          # 下限 3
+    coords = [(f["x"], f["y"]) for f in r24.foods]
+    assert len(set(coords)) == len(coords), coords      # 不重叠
+    ids = [f["id"] for f in r24.foods]
+    assert len(set(ids)) == len(ids), ids               # id 唯一
+    print("multi foods OK:", len(r24.foods), len(r96.foods), len(r10.foods))
+
+
+def test_multi_foods_eat_replenishes():
+    # 吃掉一颗 → 列表移除该果并补一颗，保持满员；其余果不动
+    r = fresh(24)
+    r.place_food()
+    before = len(r.foods)
+    victim = {"id": 900, "x": 6, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [victim] + r.foods[1:]
+    others = [f for f in r.foods[1:]]
+    p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))   # 头在果左侧，朝果走
+    r.step(0.05, serve.now_ms())                          # 头踏入 (6,5)
+    assert len(r.foods) == before, (len(r.foods), before)
+    assert all((f["x"], f["y"]) != (6, 5) for f in r.foods), r.foods   # 被吃那颗没了
+    for f in others:                                      # 其余果原位保留
+        assert any((g["x"], g["y"]) == (f["x"], f["y"]) for g in r.foods), (f, r.foods)
+    assert p["score"] > 0, p["score"]
+    print("eat replenish OK:", before, "->", len(r.foods))
+
+
+def test_multi_foods_bot_target_nearest():
+    # AI 目标选择：多果时取最近的一颗（bonus 优先级不变）
+    r = fresh(24)
+    r.place_food()
+    far = {"id": 900, "x": 20, "y": 20, "score": 10, "color": 0xff5f5f}
+    near = {"id": 901, "x": 6, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [far, near]
+    r.bonus = None
+    p = serve.make_player(1, None, "t", 0)
+    p["cells"] = [(5, 5), (4, 5), (3, 5)]
+    p["dir"] = (1, 0)
+    p["alive"] = True
+    r.players["1"] = p
+    r._bot_think(p)
+    # 首步应朝最近果 (6,5)（即 +x 直行），而不是 20,20
+    assert p["queue"] == [] or p["queue"][0] == (1, 0), p["queue"]
+    print("bot nearest food OK")
 
 
 def test_room_custom_config():
@@ -706,7 +766,7 @@ def test_free_cells_big_map():
     r.rocks = [(10, 10), (11, 11)]
     r.walls = [(0, 0)]
     r.items = [{"x": 20, "y": 20, "kind": "shield", "born": 0}]
-    r.food = {"id": 1, "x": 30, "y": 30, "score": 1, "color": "red"}
+    r.foods = [{"id": 1, "x": 30, "y": 30, "score": 1, "color": "red"}]
     blocked = {(5, 5), (6, 5), (7, 5), (10, 10), (11, 11), (0, 0), (20, 20), (30, 30)}
     free = r.free_list()
     assert len(free) == 96 * 96 - len(blocked), len(free)
@@ -717,7 +777,8 @@ def test_free_cells_big_map():
     ms = (time.perf_counter() - t0) / 20 * 1000
     assert ms < 30, "%.1fms/scan 太慢" % ms
     r.place_food()
-    assert r.food and (r.food["x"], r.food["y"]) not in blocked, r.food
+    added = [f for f in r.foods if (f["x"], f["y"]) != (30, 30)]   # 批25：只看新补的果
+    assert added and all((f["x"], f["y"]) not in blocked for f in added), r.foods
     print("free cells 96x96 OK: free=%d, %.2fms/scan" % (len(free), ms))
 
 
@@ -725,18 +786,18 @@ def test_combo_increments_and_expires():
     r = fresh(16)
     now = serve.now_ms()
     p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
-    r.food = {"id": 1, "x": 6, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [{"id": 1, "x": 6, "y": 5, "score": 10, "color": 0xff5f5f}]
     # 第一次吃果：combo=1，倍率 x1
     r.step(0.05, now)
     assert p["combo"] == 1, p.get("combo")
     assert p["score"] == 10, p["score"]
     # 3 秒内再吃：combo=2，仍 x1（档位 1-4）
-    r.food = {"id": 2, "x": 7, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [{"id": 2, "x": 7, "y": 5, "score": 10, "color": 0xff5f5f}]
     r.step(0.05, now + 200)
     assert p["combo"] == 2, p["combo"]
     assert p["score"] == 20, p["score"]
     # 超时后再吃：combo 重置为 1
-    r.food = {"id": 3, "x": 8, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [{"id": 3, "x": 8, "y": 5, "score": 10, "color": 0xff5f5f}]
     r.step(0.05, now + 200 + serve.COMBO_MS + 10)
     assert p["combo"] == 1, p["combo"]
     assert p["score"] == 30, p["score"]
@@ -757,7 +818,7 @@ def test_combo_multiplier_tiers():
     # 连吃 5 个（同 tick 链不现实，直接设 combo 后吃一个）
     p["combo"] = 4
     p["combo_at"] = now
-    r.food = {"id": 1, "x": 6, "y": 5, "score": 20, "color": 0xff6b81}
+    r.foods = [{"id": 1, "x": 6, "y": 5, "score": 20, "color": 0xff6b81}]
     r.step(0.05, now + 200)
     assert p["combo"] == 5, p["combo"]
     assert p["score"] == int(20 * 1.5), p["score"]   # 30
@@ -769,13 +830,13 @@ def test_double_item_doubles_score():
     now = serve.now_ms()
     p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
     p["eff"] = {"double": now + 9999}
-    r.food = {"id": 1, "x": 6, "y": 5, "score": 15, "color": 0xe74c3c}
+    r.foods = [{"id": 1, "x": 6, "y": 5, "score": 15, "color": 0xe74c3c}]
     r.step(0.05, now)
     assert p["score"] == 30, p["score"]              # 15 × 2
     # 咬蛇得分也翻倍：造一只 2 格蛇
     p2 = mk(r, 2, "B", [(8, 5), (7, 5)], (0, 1))
     p2["inv"] = 0
-    r.food = None
+    r.foods = []
     r.step(0.05, now + 200)
     # 咬杀 2 格：8×2=16 → 双倍 32；再加胜局 200 → 双倍不作用于胜局（只作用于咬蛇/吃果）
     assert p2["alive"] is False, p2["cells"]
@@ -788,21 +849,21 @@ def test_magnet_pulls_food():
     now = serve.now_ms()
     p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
     p["eff"] = {"magnet": now + 9999}
-    r.food = {"id": 1, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [{"id": 1, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}]
     r.step_wrapper(0.05, now)
     # 食物朝蛇头移动 1 格
-    assert (r.food["x"], r.food["y"]) == (8, 5), r.food
+    assert (r.foods[0]["x"], r.foods[0]["y"]) == (8, 5), r.foods
     # 挡路的岩石 → 绕开（换轴移动）
     r.rocks = [(7, 5)]
     r.step_wrapper(0.05, now + 60)
-    assert (r.food["x"], r.food["y"]) != (7, 5), r.food
-    assert abs(r.food["x"] - 8) + abs(r.food["y"] - 5) == 1, r.food
+    assert (r.foods[0]["x"], r.foods[0]["y"]) != (7, 5), r.foods
+    assert abs(r.foods[0]["x"] - 8) + abs(r.foods[0]["y"] - 5) == 1, r.foods
     # 无磁铁效果 → 不动
     p["eff"] = {}
     r.rocks = []
-    r.food = {"id": 2, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}
+    r.foods = [{"id": 2, "x": 9, "y": 5, "score": 10, "color": 0xff5f5f}]
     r.step_wrapper(0.05, now + 120)
-    assert (r.food["x"], r.food["y"]) == (9, 5), r.food
+    assert (r.foods[0]["x"], r.foods[0]["y"]) == (9, 5), r.foods
     print("magnet OK")
 
 
@@ -1008,12 +1069,12 @@ def test_ult_fruit_and_star_charge():
     r = fresh(10)
     p = mk(r, 1, "A", [(2, 5), (1, 5), (0, 5)], (1, 0))
     now = serve.now_ms()
-    r.food = {"id": 1, "x": 3, "y": 5, "score": 10, "color": "#fff"}
+    r.foods = [{"id": 1, "x": 3, "y": 5, "score": 10, "color": "#fff"}]
     r.step(0.05, now)
     assert p["ult"] == serve.ULT_FRUIT, p.get("ult")
     # 批23 P7：吃果触发的 place_food() 随机补粒，恰落蛇头下一步 (4,5) 时
     # 第二步与 bonus 一步双吃 → 35≠25（约 1.5% flaky）。夹具把补粒钉到远格消除随机
-    r.food = {"id": 2, "x": 0, "y": 9, "score": 10, "color": "#fff"}
+    r.foods = [{"id": 2, "x": 0, "y": 9, "score": 10, "color": "#fff"}]
     r.bonus = {"id": 9, "x": 4, "y": 5, "score": 50, "born": now}
     r.step(0.05, now + 200)
     assert p["ult"] == serve.ULT_FRUIT + serve.ULT_STAR, p.get("ult")
@@ -1149,7 +1210,7 @@ def test_spawn_fallback_safe_point_avoids_food():
     # 旧版兜底在中央硬铺 3 格零检查 → 可能压 food，且同格同向死锁源
     from unittest import mock
     r = fresh(12)
-    r.food = {"id": 1, "x": 6, "y": 6, "score": 10, "color": "#fff"}
+    r.foods = [{"id": 1, "x": 6, "y": 6, "score": 10, "color": "#fff"}]
     s = S()
     p = serve.make_player(1, s, "A", 0)
     r.players[1] = p
@@ -1175,7 +1236,7 @@ def test_spawn_main_path_avoids_food():
     from itertools import cycle
     from unittest import mock
     r = fresh(12)
-    r.food = {"id": 1, "x": 2, "y": 2, "score": 10, "color": "#fff"}
+    r.foods = [{"id": 1, "x": 2, "y": 2, "score": 10, "color": "#fff"}]
     s = S()
     p = serve.make_player(1, s, "A", 0)
     r.players[1] = p
@@ -1347,9 +1408,9 @@ def test_place_food_avoids_sealed_pocket():
     # choice 恒取末位：free_list 按 x 主序，末位自由格正是口袋 (11,11) → 旧码必落口袋
     with mock.patch.object(serve.random, "choice", side_effect=lambda seq: seq[-1]):
         r.place_food()
-    assert r.food is not None
-    assert (r.food['x'], r.food['y']) != (11, 11), (
-        "水果放进封死口袋", r.food)
+    assert r.foods
+    assert (r.foods[0]['x'], r.foods[0]['y']) != (11, 11), (
+        "水果放进封死口袋", r.foods)
     reach = r.reach_set()
     assert (11, 11) not in reach and (6, 6) in reach, reach
 
@@ -1378,7 +1439,7 @@ def test_bot_reaches_food_around_wall():
     距离场路径修复后须在限步内吃到（此前必红：环内永远吃不到）"""
     r = fresh(10)
     r.rocks = [(6, y) for y in range(0, 8)]                 # 石列 x=6，仅留 y=8/9 缺口
-    r.food = {'id': 1, 'x': 7, 'y': 5, 'score': 15, 'color': '#fff'}
+    r.foods = [{'id': 1, 'x': 7, 'y': 5, 'score': 15, 'color': '#fff'}]
     p = mk(r, 'b1', 'AI', [(5, 5), (5, 6), (5, 7)], (0, -1))
     p['bot'] = True
     p['score'] = 0
@@ -1399,7 +1460,7 @@ def test_bot_reaches_food_in_pocket():
     r = fresh(12)
     r.rocks = [(x, 4) for x in range(3, 9)] + [(3, y) for y in range(5, 9)] \
         + [(9, y) for y in range(5, 9)]                    # 开口 y=9
-    r.food = {'id': 1, 'x': 6, 'y': 6, 'score': 15, 'color': '#fff'}
+    r.foods = [{'id': 1, 'x': 6, 'y': 6, 'score': 15, 'color': '#fff'}]
     p = mk(r, 'b1', 'AI', [(6, 2), (6, 1), (6, 0)], (0, 1))
     p['bot'] = True
     p['score'] = 0
@@ -1416,7 +1477,7 @@ def test_bot_turns_toward_target_when_blocked():
     """批15②：直达方向被挡，选与目标方向最接近的开放方向（不再按 DIRS4 定序反向偏航）"""
     r = fresh(24)
     r.rocks = [(11, y) for y in range(5, 16)]    # 东面石列挡直达
-    r.food = {'id': 1, 'x': 20, 'y': 10, 'score': 15, 'color': '#fff'}
+    r.foods = [{'id': 1, 'x': 20, 'y': 10, 'score': 15, 'color': '#fff'}]
     p = mk(r, 'b1', 'AI', [(10, 10), (10, 11), (10, 12)], (0, -1))
     r._bot_think(p)
     # 目标在东（首选方向 E）：E 被石列挡、S 是反向 → 候选只剩 W/N，dist 与 openv 打平(11/9)。
@@ -1427,7 +1488,7 @@ def test_bot_turns_toward_target_when_blocked():
 def test_bot_picks_nearest_target():
     """批15③：food/bonus 按 min(dist) 选目标（不再星星无条件压过近处水果）"""
     r = fresh(24)
-    r.food = {'id': 1, 'x': 10, 'y': 13, 'score': 15, 'color': '#fff'}   # 距 3（南）
+    r.foods = [{'id': 1, 'x': 10, 'y': 13, 'score': 15, 'color': '#fff'}]   # 距 3（南）
     r.bonus = {'id': 1, 'x': 19, 'y': 10, 'score': 50, 'born': 0}         # 距 9（东）
     p = mk(r, 'b1', 'AI', [(10, 10), (9, 10), (8, 10)], (1, 0))
     r._bot_think(p)
@@ -2126,6 +2187,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
+            test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
            test_room_custom_config, test_speed_change_instant,
            test_free_cells_big_map, test_usage_log,
            test_auth_login_throttle,

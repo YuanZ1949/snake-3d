@@ -69,7 +69,7 @@ async def main():
 
             snap = await recv_until(ws2, "snap")
             print("snap: cols=%s theme=%s portals=%s food=%s" % (
-                snap["cols"], snap["theme"], snap["portals"], len(snap["food"])))
+                snap["cols"], snap["theme"], snap["portals"], len(snap["foods"])))
             assert snap["cols"] == 40 and snap["theme"] == "lava", snap
             assert snap["portals"], "覆盖项 portal=True 应该生成传送门"
             assert snap["rocks"] == [], snap["rocks"]

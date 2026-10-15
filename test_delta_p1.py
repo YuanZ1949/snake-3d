@@ -5,7 +5,7 @@
 import asyncio, json
 import websockets
 
-DELTA = ("food", "bonus", "rocks", "walls", "portals", "items")
+DELTA = ("foods", "bonus", "rocks", "walls", "portals", "items")
 
 
 async def recv_snap(ws):

@@ -41,8 +41,8 @@ async def main():
         await ws.send(json.dumps({"t": "join", "room": cr["room"], "name": "验证员"}))
         rok = await recv_until(ws, "room-ok")
         snap = await recv_until(ws, "snap")
-        print("join ->", rok, "| snap cols=%s theme=%s portals=%s food=%s" % (
-            snap["cols"], snap["theme"], snap["portals"], len(snap["food"])))
+        print("join ->", rok, "| snap cols=%s theme=%s portals=%s foods=%s" % (
+            snap["cols"], snap["theme"], snap["portals"], len(snap["foods"])))
         assert snap["cols"] == 40 and snap["theme"] == "ice" and snap["portals"]
         rid = cr["room"]
 

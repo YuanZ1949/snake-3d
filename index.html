@@ -670,10 +670,10 @@
     0xffa94d: '🍊',  // 橙柑 +15
   };
 
-  let snake, lastCells, dir, food, bonus, score, best, state, lastTick;
+  let snake, lastCells, dir, foods = [], bonus, score, best, state, lastTick;
   let particles = [], floaters = [], shake = 0, audio = null;
   let muted = localStorage.getItem(MUTE_KEY) === '1';
-  let foodMesh = null, bonusMesh = null, bonusLight = null;
+  let foodMeshes = new Map(), bonusMesh = null, bonusLight = null;   // 批25: 多果用 id→mesh
   let rocks = [], rockPool = [], fruitsEaten = 0;
   let camYaw = 0, userYaw = 0, camDist = 11, prevFrame = 0, bgmTimer = null, bgmStep = 0;
   let camFollow = true;
@@ -690,7 +690,7 @@
   const ents = new Map();          // id -> ent
   let myEnt = null;
   let dirQ = [];                   // 本地镜像的已发送方向队列（跟随视角计算用）
-  let foodKey = '', rockKey = '', bonusKey = '', projKey = '';
+  let rockKey = '', bonusKey = '', projKey = '';
   let projMeshes = [];             // 服务器弹药的渲染体
   let winRound = false;            // 本轮已出胜负
   let spectating = false;          // 观战模式（未入局但观看他人对局）
@@ -1313,7 +1313,8 @@
     rocks = [];
     rockPool.forEach(m => { m.visible = false; });
     fruitsEaten = 0;
-    foodKey = rockKey = bonusKey = projKey = '';
+    rockKey = bonusKey = projKey = '';
+    clearAllFoods();
     placeFood();
     updateHud();
     rotT = snake.map(() => Math.atan2(dir.x, dir.y));
@@ -1334,7 +1335,7 @@
       for (let x = 0; x < COLS; x++)
         if (!snake.some(s => s.x === x && s.y === y) &&
             !rocks.some(r => r.x === x && r.y === y) &&
-            !(food && food.x === x && food.y === y) &&
+            !foods.some(f => f.x === x && f.y === y) &&
             !(bonus && bonus.x === x && bonus.y === y)) free.push({x, y});
     return free.length ? free[Math.floor(Math.random() * free.length)] : null;
   }
@@ -1342,11 +1343,20 @@
   function placeFood() {
     const p = randFree();
     if (!p) return;
-    food = {...p, ...FRUITS[Math.floor(Math.random() * FRUITS.length)], born: performance.now()};
-    clearMesh(foodMesh);
-    foodMesh = makeFruit(food);
-    scene.add(foodMesh);
+    const f = {...p, ...FRUITS[Math.floor(Math.random() * FRUITS.length)], born: performance.now(), _key: 'd' + Math.random().toString(36).slice(2)};
+    foods.push(f);
+    const m = makeFruit(f);
+    foodMeshes.set(f._key, m);
+    scene.add(m);
   }
+
+  function clearAllFoods() {
+    foodMeshes.forEach(m => clearMesh(m));
+    foodMeshes.clear();
+    foods = [];
+  }
+  // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
+  window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
 
   function maybeBonus(now) {
     if (bonus && now - bonus.born > 8000) {
@@ -1775,9 +1785,15 @@
                !rocks.some(r => r.x === n.x && r.y === n.y);
       });
     if (!opts.length) return null;
+    // 批25: 朝最近的果走（多果）
+    let tf = foods[0] || null;
+    if (tf) for (const f of foods) {
+      if (Math.abs(f.x - h.x) + Math.abs(f.y - h.y) < Math.abs(tf.x - h.x) + Math.abs(tf.y - h.y)) tf = f;
+    }
+    const tgt = tf || {x: h.x, y: h.y};
     opts.sort(([ax,ay],[bx,by]) => {
-      const da = Math.abs(h.x + ax - food.x) + Math.abs(h.y + ay - food.y);
-      const db = Math.abs(h.x + bx - food.x) + Math.abs(h.y + by - food.y);
+      const da = Math.abs(h.x + ax - tgt.x) + Math.abs(h.y + ay - tgt.y);
+      const db = Math.abs(h.x + bx - tgt.x) + Math.abs(h.y + by - tgt.y);
       return da - db;
     });
     const [x, y] = opts[Math.floor(Math.random() * Math.min(2, opts.length))];
@@ -1799,11 +1815,15 @@
     snake.unshift(headCell);
 
     let ate = false;
-    if (food && headCell.x === food.x && headCell.y === food.y) {
+    const fi = foods.findIndex(f => headCell.x === f.x && headCell.y === f.y);
+    if (fi >= 0) {
       ate = true;
-      const w = cellW(food.x, food.y);
+      const f = foods[fi];
+      const w = cellW(f.x, f.y);
       burst(w.x, .55, w.z, 0xff8787, 12);
       fruitsEaten++;
+      clearMesh(foodMeshes.get(f._key) || null); foodMeshes.delete(f._key);
+      foods.splice(fi, 1);
       placeFood();
       maybeRocks();
     }
@@ -1972,25 +1992,30 @@
   }
 
   function applyWorld(s, now) {
-    // 食物（C1 增量：字段缺失=未变化，沿用旧值；full/首帧必带）
-    const f = s.food;
-    if (s.food !== undefined) {
-      if (f) {
-        // 优先用服务器下发的唯一 id 作键：即使新水果恰好刷在相同坐标/颜色也能识别为“新水果”，
-        // 避免出现“吃了不消失”的观感问题（老服务器无 id 时退回坐标+颜色）
+    // 食物（批25 多果：按 id 键做增量同步——新增建 mesh、消失删 mesh、其余原位）
+    if (s.foods !== undefined) {
+      const seen = new Set();
+      for (const f of s.foods) {
         const key = (f.id != null) ? ('f' + f.id) : (f.x + ',' + f.y + ',' + f.color);
-        if (key !== foodKey) {
-          foodKey = key;
-          food = {x: f.x, y: f.y, score: f.score, color: f.color, born: now};
-          clearMesh(foodMesh);
-          foodMesh = makeFruit(food);
-          scene.add(foodMesh);
-        } else if (food) {
-          food.x = f.x; food.y = f.y; food.score = f.score;
+        seen.add(key);
+        let obj = foods.find(o => o._key === key);
+        if (!obj) {
+          obj = {x: f.x, y: f.y, score: f.score, color: f.color, born: now, _key: key};
+          foods.push(obj);
+          const m = makeFruit(obj);
+          foodMeshes.set(key, m);
+          scene.add(m);
+        } else {
+          obj.x = f.x; obj.y = f.y; obj.score = f.score; obj.color = f.color;
         }
-      } else if (food) {
-        food = null; foodKey = '';
-        clearMesh(foodMesh); foodMesh = null;
+      }
+      for (let i = foods.length - 1; i >= 0; i--) {
+        const obj = foods[i];
+        if (!seen.has(obj._key)) {
+          clearMesh(foodMeshes.get(obj._key) || null);
+          foodMeshes.delete(obj._key);
+          foods.splice(i, 1);
+        }
       }
     }
     // 星星（服务器 born 为单调时钟，本地记出现时间；用唯一 id 作键避免过期重刷竞态）
@@ -2610,10 +2635,12 @@
   }
 
   function syncFood(now) {
-    if (foodMesh && food) {
-      const w = cellW(food.x, food.y);
-      foodMesh.position.set(w.x, .42 + Math.sin(now / 250) * .1, w.z);
-      foodMesh.rotation.y = now / 900;
+    for (const f of foods) {
+      const m = foodMeshes.get(f._key);
+      if (!m) continue;
+      const w = cellW(f.x, f.y);
+      m.position.set(w.x, .42 + Math.sin(now / 250) * .1, w.z);
+      m.rotation.y = now / 900;
     }
     if (bonusMesh && bonus) {
       const w = cellW(bonus.x, bonus.y);
@@ -2674,11 +2701,18 @@
   }
 
   function updateEdgeHints() {
-    // #9 边缘提示跟随水果实际种类（颜色 → 图标），缺省回落 🍎
+    // #9 边缘提示跟随水果实际种类（颜色 → 图标），缺省回落 🍎；批25 多果取最近一颗
     const fe = $('foodEdge');
-    const em = (food && FRUIT_EMOJI[food.color]) || '🍎';
+    let nf = null;
+    if (foods.length) {
+      nf = foods[0];
+      const h = snake[0];
+      for (const f of foods)
+        if (Math.abs(f.x - h.x) + Math.abs(f.y - h.y) < Math.abs(nf.x - h.x) + Math.abs(nf.y - h.y)) nf = f;
+    }
+    const em = (nf && FRUIT_EMOJI[nf.color]) || '🍎';
     if (fe.textContent !== em) fe.textContent = em;
-    placeEdge(fe, food ? food.x : null, food ? food.y : null, null);
+    placeEdge(fe, nf ? nf.x : null, nf ? nf.y : null, null);
     const blink = bonus
       ? (performance.now() - bonus.born) / 8000 > .7 && Math.floor(performance.now() / 180) % 2
       : undefined;
@@ -2800,7 +2834,7 @@
     for (const r of rocks) g.fillRect(ox + r.x * s + .5, oy + r.y * s + .5, Math.max(2, sq - 1), Math.max(2, sq - 1));
     portalCells.forEach((r, i) => dot(r[0], r[1], Math.max(2, s * .4), i % 2 ? '#61d0ff' : '#b197fc'));
     // 资源
-    if (food) dot(food.x, food.y, Math.max(2, s * .45), '#' + ((food.color || 0xff5f5f) >>> 0).toString(16).padStart(6, '0'));
+    for (const f of foods) dot(f.x, f.y, Math.max(2, s * .45), '#' + ((f.color || 0xff5f5f) >>> 0).toString(16).padStart(6, '0'));
     if (bonus) dot(bonus.x, bonus.y, Math.max(2, s * .5), '#ffd166');
     itemMeshes.forEach(e => dot(e.x, e.y, Math.max(2, s * .4),
       '#' + (((ITEMS[e.type] || ITEMS.shield).color) >>> 0).toString(16).padStart(6, '0')));

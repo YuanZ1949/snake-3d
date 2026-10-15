@@ -437,7 +437,7 @@ class Room:
         self.subs = set()          # 接收快照的 Session（玩家 + 旁观者）
         self.round_ids = set()
         self.ready = set()
-        self.food = None
+        self.foods = []
         self.bonus = None
         self.rocks = []            # [(x,y)] 可被子弹击碎
         self._reach = None         # 批15①：静态地形可达集缓存（失效点见 reach_set）
@@ -592,7 +592,7 @@ class Room:
             return True
         if (x, y) in self.portals:
             return True
-        if self.food and (self.food['x'], self.food['y']) == (x, y):
+        if (x, y) in {(f['x'], f['y']) for f in self.foods}:
             return True
         if self.bonus and (self.bonus['x'], self.bonus['y']) == (x, y):
             return True
@@ -802,8 +802,7 @@ class Room:
         """一次性构建占用集合，避免逐格调用 occupied() 时反复遍历所有蛇。
         大地图（最高 96×96）扫描一次只需 1-2ms，否则会卡住主循环。"""
         occ = set(self.rocks) | set(self.walls) | set(self.portals)
-        if self.food:
-            occ.add((self.food['x'], self.food['y']))
+        occ.update((f['x'], f['y']) for f in self.foods)
         if self.bonus:
             occ.add((self.bonus['x'], self.bonus['y']))
         for it in self.items:
@@ -861,21 +860,29 @@ class Room:
         self._reach = seen
         return seen
 
+    def food_target(self):
+        """多果（批25）：目标果数随地图放大 3-8。"""
+        return min(8, max(3, max(self.cols, self.rows) // 8))
+
     def place_food(self):
+        # 批25：维持场上果数满员（吃一补一）
+        if len(self.foods) >= self.food_target():
+            return
         free = self.free_list()
         if not free:
-            self.food = None
             return
         # 批15①：只放静态可达区（避免落在蛇圈/岩石口袋里永远吃不到）；
         # 可达区无空格时退化回旧行为（总比没有水果好）
         reach = self.reach_set()
         cand = [c for c in free if c in reach] or free
-        x, y = random.choice(cand)
-        s, c = random.choice(FRUITS)
-        # 唯一 id：即使水果恰好刷在相同坐标/颜色，客户端也能识别为"新水果"并重建，
-        # 避免出现"吃了不消失"的观感问题
-        self.food = {'id': self.next_food_id, 'x': x, 'y': y, 'score': s, 'color': c}
-        self.next_food_id += 1
+        while len(self.foods) < self.food_target() and cand:
+            x, y = random.choice(cand)
+            cand.remove((x, y))
+            s, c = random.choice(FRUITS)
+            # 唯一 id：即使水果恰好刷在相同坐标/颜色，客户端也能识别为"新水果"并重建，
+            # 避免出现"吃了不消失"的观感问题
+            self.foods.append({'id': self.next_food_id, 'x': x, 'y': y, 'score': s, 'color': c})
+            self.next_food_id += 1
 
     def maybe_rocks(self):
         if self.fruits_eaten % 3 != 0:
@@ -1122,9 +1129,9 @@ class Room:
         if self.bonus:
             cands.append((abs(self.bonus['x'] - hx) + abs(self.bonus['y'] - hy),
                           0, (self.bonus['x'], self.bonus['y'])))
-        if self.food:
-            cands.append((abs(self.food['x'] - hx) + abs(self.food['y'] - hy),
-                          1, (self.food['x'], self.food['y'])))
+        for f in self.foods:                         # 批25 多果：全部入候选，min 取最近
+            cands.append((abs(f['x'] - hx) + abs(f['y'] - hy),
+                          1, (f['x'], f['y'])))
         if cands:
             tgt = min(cands)[2]
             nd = self._bot_path_step(p, tgt)
@@ -1386,7 +1393,9 @@ class Room:
             p['cells'].insert(0, (hx, hy))
             p.pop('hstreak', None)               # 批14④：成功移动即解除僵持计数
             ate = False
-            if self.food and (hx, hy) == (self.food['x'], self.food['y']):
+            hit = next((f for f in self.foods
+                        if (hx, hy) == (f['x'], f['y'])), None)   # 批25 多果
+            if hit:
                 ate = True
                 # 连击：3 秒窗口内连续吃果计数递增，超时重置；倍率按档位
                 if now - p.get('combo_at', 0) <= COMBO_MS:
@@ -1395,7 +1404,7 @@ class Room:
                     p['combo'] = 1
                 p['combo_at'] = now
                 mult = combo_mult(p['combo'])
-                base = self.food['score']
+                base = hit['score']
                 gained = self.score_gain(p, int(base * mult), now)
                 self.ev('eat', id=p['id'], x=hx, y=hy, score=gained,
                         combo=p['combo'], mult=mult)
@@ -1404,7 +1413,8 @@ class Room:
                 if p.get('user'):
                     store.inc(p['user'], 'food')
                 self.maybe_rocks()
-                self.place_food()
+                self.foods = [f for f in self.foods if f is not hit]   # 批25：移除被吃果
+                self.place_food()                                       # 吃一补一
                 if p['tick'] > p.get('base_tick', 150) - 45:
                     p['tick'] -= 3
             if self.bonus and (hx, hy) == (self.bonus['x'], self.bonus['y']):
@@ -1504,7 +1514,7 @@ class Room:
         occ = self.free_cells()
         for p in holders:
             hx, hy = p['cells'][0]
-            for obj in (self.food, self.bonus):
+            for obj in [*self.foods, self.bonus]:
                 if not obj:
                     continue
                 occ.discard((obj['x'], obj['y']))
@@ -1589,7 +1599,7 @@ class Room:
                 self.projectiles.remove(pr)
 
     # -------- 快照 / 广播 --------
-    DELTA_FIELDS = ('food', 'bonus', 'rocks', 'walls', 'portals', 'items')  # 仅变化才下发（C1）
+    DELTA_FIELDS = ('foods', 'bonus', 'rocks', 'walls', 'portals', 'items')  # 仅变化才下发（C1）
 
     @staticmethod
     def _sig(v):
@@ -1628,7 +1638,7 @@ class Room:
         self.events.clear()
         if full:
             # 全量帧：新订阅者首帧/显式请求，静态字段全带 + full 标志
-            out['food'] = self.food
+            out['foods'] = self.foods
             out['bonus'] = self.bonus
             out['rocks'] = [list(r) for r in self.rocks]
             out['walls'] = [list(r) for r in self.walls]

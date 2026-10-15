@@ -20,7 +20,7 @@ async def main():
         snap = await recv_until(ws, "snap")
         keys = sorted(snap.keys())
         print("snap room/theme/cols:", snap.get("room"), snap.get("theme"), snap.get("cols"))
-        print("has food id:", (snap.get("food") or {}).get("id") is not None)
+        print("has foods id:", bool((snap.get("foods") or [{}])[0].get("id") is not None))
         me = [p for p in snap["players"] if p["id"] == ok["id"]]
         print("me cells:", me[0]["cells"] if me else None)
         print("PROD WS OK")
