@@ -614,6 +614,32 @@ def test_multi_foods_bot_target_nearest():
     print("bot nearest food OK")
 
 
+def test_store_gacha_fields():
+    # 批25 T1: Store 星尘/皮肤库存/保底字段（防御式 + 钳制 + 老账号兼容）
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix="snake-gacha-store-"))
+    st = serve.Store(d / "store.json")
+    ok, err = st.register("gk", "135790")
+    assert ok, err
+    assert st.stardust("gk") == 0, st.stardust("gk")
+    assert st.skins_of("gk") == [], st.skins_of("gk")
+    st.add_stardust("gk", 160)
+    assert st.stardust("gk") == 160, st.stardust("gk")
+    st.add_stardust("gk", -99999)
+    assert st.stardust("gk") == 0, st.stardust("gk")   # 钳制非负
+    assert st.grant_skin("gk", 15) is True
+    assert st.grant_skin("gk", 15) is False           # 已拥有
+    assert st.skins_of("gk") == [15], st.skins_of("gk")
+    # 批22 老账号：只有 salt/hash/stats，读不炸且默认值正确
+    st.users["old"] = {"salt": "s", "hash": "h", "stats": serve.blank_stats()}
+    assert st.stardust("old") == 0
+    assert st.skins_of("old") == []
+    assert st.grant_skin("old", 5) is True
+    assert st.stardust("nobody") == 0                 # 不存在的账号
+    print("store gacha fields OK")
+
+
 def test_room_custom_config():
     # 尺寸 / 主题 / 岩石 / 传送门 可自由组合
     r = serve.Room("x", "自定义", 40, theme_fixed="lava", rock_mult=0.0, portal_on=True)
@@ -2188,6 +2214,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
+            test_store_gacha_fields,
            test_room_custom_config, test_speed_change_instant,
            test_free_cells_big_map, test_usage_log,
            test_auth_login_throttle,

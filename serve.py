@@ -192,7 +192,9 @@ class Store:
             return False, '用户名已存在'
         salt = secrets.token_hex(8)
         self.users[name] = {'salt': salt, 'hash': _hash_pw(pw, salt),
-                            'created': int(time.time()), 'stats': blank_stats()}
+                            'created': int(time.time()), 'stats': blank_stats(),
+                            # 批25 抽卡：星尘总账/皮肤库存/保底（老账号走防御式读取）
+                            'stardust': 0, 'skins': [], 'gacha_p5': 0, 'gacha_p4': 0, 'gacha_lose': False}
         self.save()
         return True, None
 
@@ -235,6 +237,36 @@ class Store:
                          'kills': st.get('kills', 0), 'games': st.get('games', 0)})
         rows.sort(key=lambda r: (r['best'], r['wins'], r['kills']), reverse=True)
         return rows[:limit]
+
+    # ---- 批25 抽卡：星尘总账 / 皮肤库存（防御式，兼容老账号） ----
+
+    def stardust(self, name):
+        u = self.users.get(name)
+        return int(u.get('stardust', 0)) if u else 0
+
+    def add_stardust(self, name, n):
+        u = self.users.get(name)
+        if not u:
+            return 0
+        v = max(0, int(u.get('stardust', 0)) + int(n))   # 钳制非负
+        u['stardust'] = v
+        self.save()
+        return v
+
+    def skins_of(self, name):
+        u = self.users.get(name)
+        return list(u.get('skins', [])) if u else []
+
+    def grant_skin(self, name, sid):
+        u = self.users.get(name)
+        if not u:
+            return False
+        sk = u.setdefault('skins', [])
+        if sid in sk:
+            return False
+        sk.append(sid)
+        self.save()
+        return True
 
 
 store = Store(STORE_PATH)
