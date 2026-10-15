@@ -407,7 +407,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`39bc6be`**（批23 全量 8 项：N1/N2/P5/P2/P3/P6/P7/P4，2026-10-15 15:35 部署，origin/server 双远端均已推送，纯 LF；运行时 `serve.py` sha256 与 `39bc6be` blob 一致 `469583de…`、生产 venv 单测 106 PASS（在 `/tmp/b23test` 隔离跑，防污染生产 data）、P4 前端探针经 ssh 隧道对生产 GREEN、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-153153.tar.gz`（另有 `120032`、`113629`、`091402`、`062936`、`020636`）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py`、批22 探针 `/tmp/repro_respawn.py` 跑完已删。批22 注册/建房/口令限速以单测 6 用例 + local_ci 为证据（未在生产做破坏性探针，避免污染生产 store/usage 数据）；批23 生产验证同样未做破坏性探针（建房类走本地 local_ci，生产仅只读探针 + 单测隔离跑）。
+当前生产版本：**dev@`4c48660`**（批23 全量 8 项 + 批末收尾 + 四文档回写，2026-10-15 16:04 部署，origin/server 双远端均已推送，纯 LF；运行时 `serve.py` sha256 与 `4c48660` blob 一致 `469583de…`、`index.html` 一致 `86a34dcc…`（4c48660 相对 39bc6be 仅文档变更，二进制一致）、生产 venv 单测 106 PASS（在 `/tmp/b24test` 隔离跑，防污染生产 data）、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-160322.tar.gz`（另有 `153153`、`120032`、`113629`、`091402`、`062936`、`020636`）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py`、批22 探针 `/tmp/repro_respawn.py` 跑完已删。批22 注册/建房/口令限速以单测 6 用例 + local_ci 为证据（未在生产做破坏性探针，避免污染生产 store/usage 数据）；批23 生产验证同样未做破坏性探针（建房类走本地 local_ci，生产仅只读探针 + 单测隔离跑）。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 
