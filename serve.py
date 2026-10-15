@@ -427,6 +427,7 @@ class Room:
         self.next_bot_pid = -1               # AI 用负 id，与真人 pid(≥1) 不冲突
         self.owner = None                   # 创建者会话 id，断开后空房间才回收
         self.owner_user = None              # 批18：创建者账号（跨重连仍可编辑设置；None=无主）
+        self.owner_tok = None               # 批23 P6：一次性 owner 凭据（匿名断线恢复用，不下发列表）
         # ---- 房间口令（C3）与持久化（新#11）----
         self.passw = passw if (isinstance(passw, str) and passw) else None   # 进房口令（None=无口令）
         self.persist = False                # 「保存」标记：常驻不回收、重启后重建
@@ -1649,7 +1650,7 @@ def persist_rooms_dump():
                     'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
                     'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect,
-                    'ownerUser': r.owner_user})
+                    'ownerUser': r.owner_user, 'ownerTok': r.owner_tok})  # 批23 P6
     return out
 
 
@@ -1696,6 +1697,8 @@ def load_persist_rooms(path=PERSIST_FILE):
                  passw=d.get('pass'), walldeflect=d.get('wd') is True)
         ou = d.get('ownerUser')
         r.owner_user = ou if isinstance(ou, str) and ou else None   # 批18
+        ot = d.get('ownerTok')
+        r.owner_tok = ot if isinstance(ot, str) and ot else None    # 批23 P6
         r.persist = True
         r.created = time.time()            # 持久化房间不回收，创建时间无意义
         rooms[rid] = r
@@ -1822,10 +1825,13 @@ def tokens_inv(name):
     return tok
 
 
-def can_edit_room(sess, room):
+def can_edit_room(sess, room, otok=None):
     """批18 E 鉴权：账号匹配 owner_user（跨重连有效）或仍是在线创建者 sid，
-    二者其一即可；默认房间/无主房间（双 None）一律拒绝"""
+    批23 P6 第三轨：请求带 otok 且与房间 owner 凭据常数时间比对一致；
+    默认房间/无主房间（双 None 且无凭据）一律拒绝"""
     if room.owner_user and sess.user and room.owner_user == sess.user:
+        return True
+    if otok and room.owner_tok and secrets.compare_digest(str(otok), room.owner_tok):
         return True
     return room.owner is not None and room.owner == sess.sid
 
@@ -1979,10 +1985,12 @@ async def handle_msg(sess, m):
                           walldeflect=walldeflect)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
+        rooms[rid].owner_tok = secrets.token_hex(16)   # 批23 P6：一次性 owner 凭据
         cts.append(nowc)              # 批22 H3：只计成功建房
         _win_bump(create_ip, ckey, nowc, CREATE_WIN)
         await broadcast_rooms()
-        await send(sess, {'t': 'created', 'room': rid, 'name': name})
+        await send(sess, {'t': 'created', 'room': rid, 'name': name,
+                          'tok': rooms[rid].owner_tok})   # 批23 P6：仅创建者回执携带
         return
 
     # -------- 房间参数编辑（批18 E；批23 N2 扩到与创建面同集）：live 生效，不重开局 --------
@@ -1996,7 +2004,7 @@ async def handle_msg(sess, m):
         if not room:
             await send(sess, {'t': 'error', 'err': '房间不存在'})
             return
-        if not can_edit_room(sess, room):
+        if not can_edit_room(sess, room, m.get('otok')):   # 批23 P6：第三轨 owner 凭据
             await send(sess, {'t': 'error', 'err': '仅房间创建者可修改设置'})
             return
         # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
@@ -2212,7 +2220,8 @@ async def handle_msg(sess, m):
         room = rooms.get(m.get('room') or '')
         if not room:
             return
-        if room.owner != sess.sid:
+        # 批23 P6：从「仅在线 sid」扩为 can_edit_room 三轨（账号/在线 sid/owner 凭据）
+        if not can_edit_room(sess, room, m.get('otok')):
             await send(sess, {'t': 'error', 'err': '仅创建者可保存房间'})
             return
         if not room.persist:

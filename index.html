@@ -709,6 +709,12 @@
   let roomCfg = {winMode: 'last', limit: 0, respawn: false, remain: 0};  // 当前房间战场配置（来自快照）
   const roomPasss = {};    // rid -> 口令（内存记忆，页面生命周期内免重输；C3）
   const myCreated = new Set();  // 本会话创建过的房间（显示「保存」按钮；新#11）
+  // 批23 P6：owner 凭据 rid->tok（localStorage 跨刷新持久——匿名断线/刷新后仍可改/存自己的房）
+  let ownerToks = {};
+  try { ownerToks = JSON.parse(localStorage.getItem('snake-owner-toks') || '{}') || {}; } catch (e) { ownerToks = {}; }
+  function saveOwnerToks() { localStorage.setItem('snake-owner-toks', JSON.stringify(ownerToks)); }
+  function isMine(rid) { return myCreated.has(rid) || !!ownerToks[rid]; }   // 卡片⚙/⭐显示条件
+  function otokOf(rid) { return ownerToks[rid] || undefined; }              // 出站消息附带
   let pendingPass = '';    // 创建时填的口令，created 回来时入表
   let toastTimer = 0;
   let curRoom = localStorage.getItem(ROOM_KEY) || 'a';
@@ -2099,6 +2105,7 @@
         curRoom = m.room;
         localStorage.setItem(ROOM_KEY, curRoom);
         myCreated.add(m.room);                 // 自己建的房 → 卡片显示「保存」（新#11）
+        if (m.tok) { ownerToks[m.room] = m.tok; saveOwnerToks(); }   // 批23 P6：owner 凭据入库
         if (pendingPass) { roomPasss[m.room] = pendingPass; pendingPass = ''; }  // 创建者免重输口令
         $('createPanel').classList.add('hidden');
         $('btnRoomCreate').textContent = '＋ 创建房间';
@@ -2902,17 +2909,17 @@
       meta.className = 'meta';
       meta.textContent = roomMeta(r);
       top.append(nm, cnt);
-      if (myCreated.has(r.id) && !r.persist) {
+      if (isMine(r.id) && !r.persist) {
         // 创建者可「保存」房间：persist → 常驻不回收、重启后重建（新#11）
         const sv = document.createElement('span');
         sv.className = 'saveBtn';
         sv.textContent = '⭐ 保存';
         sv.setAttribute('role', 'button');
-        sv.onclick = e => { e.stopPropagation(); send({t: 'persist', room: r.id}); };
+        sv.onclick = e => { e.stopPropagation(); send({t: 'persist', room: r.id, otok: otokOf(r.id)}); };
         top.appendChild(sv);
       }
-      if (myCreated.has(r.id)) {
-        // 批18 E：本会话创建的房间可 live 编辑参数（服务端二次鉴权）
+      if (isMine(r.id)) {
+        // 批18 E：创建者可 live 编辑参数（服务端二次鉴权；批23 P6 凭据跨刷新）
         const gb = document.createElement('span');
         gb.className = 'saveBtn';
         gb.textContent = '⚙ 设置';
@@ -3045,6 +3052,7 @@
   function saveRoomCfg() {
     if (!cfgRoomId) return;
     const msg = {t: 'roomcfg', room: cfgRoomId,
+                 otok: otokOf(cfgRoomId),   // 批23 P6：owner 凭据（无则 undefined，服务端走sid/账号轨）
                  name: ($('cName').value || '').trim().slice(0, 16),
                  size: parseInt($('cSize').value, 10) || 24,
                  theme: $('cTheme').value || '',

@@ -220,12 +220,14 @@ def test_persist_roundtrip(tmpdir=None):
             walldeflect=True)   # 批17：碰墙折返随持久化往返
         serve.rooms["rp1"].persist = True
         serve.rooms["rp1"].owner_user = "creator"   # 批18：账号归属随持久化往返
+        serve.rooms["rp1"].owner_tok = "tok123"      # 批23 P6：owner 凭据随持久化往返
         serve.save_persist_rooms(path)
         saved = serve.rooms.pop("rp1")
         assert serve.load_persist_rooms(path) == 1
         r = serve.rooms.get("rp1")
         assert r is not None and r.persist is True
         assert r.owner_user == "creator"
+        assert r.owner_tok == "tok123"               # 批23 P6
         assert (r.name, r.cols, r.theme_fixed, r.rock_mult, r.portal_on) == (
             "回环", 32, "ice", 0.5, True)
         assert (r.win_mode, r.limit, r.respawn, r.passw) == (
@@ -1507,6 +1509,74 @@ def test_roomcfg_account_owner_survives_reconnect():
     del serve.rooms['rc']
 
 
+def test_created_issues_owner_tok():
+    """批23 P6：建房回执下发一次性 owner 凭据（匿名恢复用），且不进房间列表"""
+    import asyncio
+    orig = dict(serve.rooms)
+    try:
+        s = _cfg_sess(sid='ot1')
+        s.ip = '9.9.9.9'
+        asyncio.run(serve.handle_msg(s, {'t': 'create', 'name': '凭据房'}))
+        cd = [x for x in s.ws.sent if x.get('t') == 'created']
+        assert cd and cd[0].get('tok'), s.ws.sent          # 回执必须带 tok
+        rid = cd[0]['room']
+        r = serve.rooms[rid]
+        assert r.owner_tok == cd[0]['tok'] and len(r.owner_tok) >= 32
+        assert 'owner_tok' not in r.info() and 'tok' not in r.info()  # 列表不泄露
+    finally:
+        serve.rooms.clear()
+        serve.rooms.update(orig)
+
+
+def test_roomcfg_owner_tok_recovers_anonymous():
+    """批23 P6：匿名创建者断线（sid 失效、无账号）凭 owner 凭据恢复编辑；
+    无凭据/错凭据拒绝且参数不变"""
+    import asyncio
+    r = serve.Room('rc', 'rc', 10)
+    r.owner = 'oldsid'
+    r.owner_user = None
+    r.owner_tok = 'a' * 32
+    serve.rooms['rc'] = r
+    s2 = _cfg_sess(sid='newsid', user=None)     # 匿名新连接
+    asyncio.run(serve.handle_msg(s2, {'t': 'roomcfg', 'room': 'rc',
+                                      'otok': 'a' * 32, 'bots': 2}))
+    assert r.bots == 2
+    assert any(x.get('t') == 'cfgapplied' for x in s2.ws.sent)
+    s3 = _cfg_sess(sid='x', user=None)          # 错凭据 → 拒
+    asyncio.run(serve.handle_msg(s3, {'t': 'roomcfg', 'room': 'rc',
+                                      'otok': 'b' * 32, 'bots': 5}))
+    assert r.bots == 2
+    s4 = _cfg_sess(sid='y', user=None)          # 无凭据 → 拒
+    asyncio.run(serve.handle_msg(s4, {'t': 'roomcfg', 'room': 'rc', 'bots': 7}))
+    assert r.bots == 2
+    assert any(x.get('t') == 'error' for x in s4.ws.sent)
+    del serve.rooms['rc']
+
+
+def test_persist_owner_tok_grants_save():
+    """批23 P6：persist 从「仅在线 sid」扩为 can_edit_room 三轨——
+    匿名断线重连凭 otok 仍可保存常驻；无凭据非创建者拒"""
+    import asyncio
+    old_save = serve.save_persist_rooms
+    serve.save_persist_rooms = lambda *a, **k: True   # 不落真实 data/ 文件
+    r = serve.Room('rc', 'rc', 10)
+    r.owner = 'oldsid'
+    r.owner_user = None
+    r.owner_tok = 'c' * 32
+    serve.rooms['rc'] = r
+    try:
+        s = _cfg_sess(sid='newsid', user=None)
+        asyncio.run(serve.handle_msg(s, {'t': 'persist', 'room': 'rc'}))
+        assert r.persist is False, '无凭据非创建者不可保存'
+        assert any(x.get('t') == 'error' for x in s.ws.sent)
+        asyncio.run(serve.handle_msg(s, {'t': 'persist', 'room': 'rc',
+                                         'otok': 'c' * 32}))
+        assert r.persist is True
+    finally:
+        serve.save_persist_rooms = old_save
+        del serve.rooms['rc']
+
+
 def test_roomcfg_bots_live_add_remove():
     """批18 必改7：bots live 增减（set_bots 显式补生成/摘除）"""
     import asyncio
@@ -1942,6 +2012,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_roomcfg_stranger_denied,
             test_roomcfg_creator_edits_live_without_restart,
             test_roomcfg_account_owner_survives_reconnect,
+            test_created_issues_owner_tok,
+            test_roomcfg_owner_tok_recovers_anonymous,
+            test_persist_owner_tok_grants_save,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
             test_roomcfg_extended_fields_unified,
