@@ -761,6 +761,23 @@
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
+  // ===== 批23 P4：动态自适应画质 =====
+  // 帧耗时 EMA 采样：持续掉帧（>24ms ≈ <45fps）自动降档，稳定流畅（<17.5ms）自动升回。
+  // 档位只动 pixelRatio / 阴影开关 / 小地图刷新频率，不碰几何与玩法数值。
+  const QUAL_TIERS = [
+    {ratio: 1.5, shadows: true, miniEvery: 1},    // 0 满档
+    {ratio: 1.0, shadows: true, miniEvery: 2},    // 1 中档
+    {ratio: .75, shadows: false, miniEvery: 4},   // 2 低档（关阴影）
+  ];
+  const QUAL_DOWN = 24, QUAL_UP = 17.5;        // ms：掉帧判定 / 恢复判定（回差防抖）
+  const QUAL_DOWN_N = 30, QUAL_UP_N = 180;     // 连续样本数：≈0.5s 掉帧降档、≈3s 流畅升档
+  const QUAL_COOL = 2500;                      // 档位变更冷却 ms
+  const quality = {
+    tier: 0, ema: 16.7, good: 0, bad: 0, coolUntil: 0, miniTick: 0,
+    freeze: false,                             // 探针调试钩子：暂停真实帧采样
+    applied: null,                             // applyQuality 落地快照（探针可见）
+  };
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0d1020);
   scene.fog = new THREE.Fog(0x0d1020, 40, 95);
@@ -772,7 +789,7 @@
     // 短屏（≤760 高）给 dpad 与底部留白让位：系数 .68 → .60，避免底部攻击按钮被裁出视口
     const vFactor = window.innerHeight <= 760 ? .60 : .68;
     const s = Math.min(window.innerWidth * .96, window.innerHeight * vFactor, 860);
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, QUAL_TIERS[quality.tier].ratio));
     renderer.setSize(s, s);
     canvas.style.width = s + 'px';
     canvas.style.height = s + 'px';
@@ -792,6 +809,45 @@
   sun.shadow.camera.left = -16; sun.shadow.camera.right = 16;
   sun.shadow.camera.top = 16; sun.shadow.camera.bottom = -16;
   sun.shadow.camera.far = 60;
+
+  // —— P4：档位落地 / 采样 / 升降档（依赖 renderer、scene、sun、resize，故声明在场景装配之后）——
+  function applyQuality() {
+    const t = QUAL_TIERS[quality.tier];
+    renderer.shadowMap.enabled = t.shadows;
+    if (sun.castShadow !== t.shadows) {
+      sun.castShadow = t.shadows;
+      // 阴影开关需要材质重编译，否则残留旧光照
+      scene.traverse(o => {
+        if (!o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) m.needsUpdate = true;
+      });
+    }
+    quality.applied = {ratio: t.ratio, shadows: t.shadows, miniEvery: t.miniEvery};
+    resize();   // 按当前档位 pixelRatio 重设画布
+  }
+  function setTier(n) {
+    const prev = quality.tier;
+    quality.tier = Math.max(0, Math.min(QUAL_TIERS.length - 1, n));
+    quality.good = 0; quality.bad = 0;
+    quality.coolUntil = performance.now() + QUAL_COOL;
+    if (quality.tier !== prev || !quality.applied) applyQuality();
+  }
+  function qualSample(t, ms) {
+    if (!(ms > 0) || ms > 1000) return;   // 首帧 / 切回标签的大间隔不计入
+    quality.ema = quality.ema * .88 + ms * .12;
+    if (t < quality.coolUntil) return;
+    if (quality.ema > QUAL_DOWN) {
+      quality.good = 0;
+      if (++quality.bad >= QUAL_DOWN_N && quality.tier < QUAL_TIERS.length - 1) setTier(quality.tier + 1);
+    } else if (quality.ema < QUAL_UP) {
+      quality.bad = 0;
+      if (++quality.good >= QUAL_UP_N && quality.tier > 0) setTier(quality.tier - 1);
+    } else { quality.bad = 0; quality.good = 0; }
+  }
+  applyQuality();
+  window.__qual = {quality, qualSample, setTier, applyQuality};
+
   scene.add(sun);
 
   // 星空
@@ -2628,6 +2684,7 @@
   function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min(.05, (now - prevFrame) / 1000);
+    if (!quality.freeze) qualSample(now, now - prevFrame);   // P4：帧耗时采样
     prevFrame = now;
 
     const demoMode = !joined && !spectating;
@@ -2706,7 +2763,11 @@
     camera.lookAt(camLook);
     renderer.render(scene, camera);
     updateEdgeHints();
-    updateMinimap();
+    // P4：小地图按档位降频刷新（满档每帧，低档每 4 帧）
+    if (++quality.miniTick >= QUAL_TIERS[quality.tier].miniEvery) {
+      quality.miniTick = 0;
+      updateMinimap();
+    }
   }
 
   // ================= 小地图（批8 B1） =================
