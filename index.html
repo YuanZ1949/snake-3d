@@ -211,6 +211,60 @@
   .wishSkn canvas { width: 72px; height: 40px; border-radius: 6px; }
   .wishSkn .nm { font-size: 12px; color: #e7eaf8; }
   .wishSkn .st { font-size: 10px; color: #ffd166; letter-spacing: 1px; }
+  /* 批25 T6：抽卡动画（流星 → 爆闪 → reveal） */
+  #wishAnim { background: rgba(6,8,18,.97); cursor: pointer; overflow: hidden; }
+  .wishSky { position: absolute; inset: -30%; transform: rotate(-25deg); pointer-events: none; }
+  .meteor {
+    position: absolute; top: -6%; width: 230px; height: 4px; border-radius: 4px;
+    background: linear-gradient(90deg, transparent, var(--wishCol, #ffd43b));
+    filter: drop-shadow(0 0 8px var(--wishCol, #ffd43b));
+    opacity: 0; animation: meteorFall .9s cubic-bezier(.4, 0, .7, .4) both;
+  }
+  .meteor.m2 { top: 26%; width: 150px; animation-delay: .12s; }
+  .meteor.m3 { top: 52%; width: 185px; animation-delay: .25s; }
+  .meteor::after {
+    content: ''; position: absolute; right: -5px; top: 50%; transform: translateY(-50%);
+    width: 13px; height: 13px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 16px 5px var(--wishCol, #ffd43b);
+  }
+  @keyframes meteorFall {
+    0% { left: 105%; opacity: 0; }
+    8% { opacity: 1; }
+    100% { left: -30%; top: 92%; opacity: 1; }
+  }
+  .wishFlash {
+    position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    background: radial-gradient(circle at 50% 44%, rgba(255,255,255,.95), rgba(255,255,255,0) 58%);
+  }
+  .wishFlash.on { animation: flashPop .35s ease-out forwards; }
+  @keyframes flashPop { 0% { opacity: 0; transform: scale(.5); } 35% { opacity: 1; } 100% { opacity: 0; transform: scale(1.5); } }
+  .wishResult {
+    display: none; position: relative; z-index: 2; flex-direction: column; align-items: center; gap: 16px; max-height: 92vh;
+  }
+  #wishAnim[data-phase="reveal"] .wishResult, #wishAnim[data-phase="done"] .wishResult { display: flex; }
+  .wishGrid { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: center; max-width: 88vw; }
+  .wishCard {
+    position: relative; width: 128px; border-radius: 10px; overflow: hidden;
+    animation: cardFlip .45s ease both;
+    box-shadow: 0 10px 28px rgba(0,0,0,.55);
+    border: 2px solid rgba(255,255,255,.2);
+  }
+  .wishCard canvas { display: block; width: 100%; height: auto; }
+  .wishCard[data-star="4"] { border-color: #b197fc; box-shadow: 0 0 18px rgba(177,151,252,.5); }
+  .wishCard[data-star="5"] { border-color: #ffd43b; box-shadow: 0 0 24px rgba(255,212,59,.6); }
+  #wishGrid.single .wishCard { width: 196px; }
+  @keyframes cardFlip { from { transform: perspective(760px) rotateY(85deg); opacity: 0; } to { transform: perspective(760px) rotateY(0); opacity: 1; } }
+  .wishDup {
+    position: absolute; right: 6px; bottom: 30px; padding: 1px 8px; border-radius: 999px;
+    background: rgba(10,10,20,.85); border: 1px solid #ffd43b; color: #ffe9a8; font-size: 12px;
+  }
+  .wishThumbs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .wishThumbs canvas { width: 44px; height: 66px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
+  .wishSkipHint { font-size: 12px; color: #9aa3c7; letter-spacing: 2px; }
+  #wishAnim.skipped .meteor, #wishAnim.skipped .wishFlash { display: none; }   /* 跳过：流星/爆闪立即撤 */
+  @media (prefers-reduced-motion: reduce) {
+    .meteor, .wishFlash, .wishCard { animation-duration: .01s !important; animation-delay: 0s !important; }
+  }
   button.primary {
     margin-top: 8px;
     width: min(340px, 92vw);
@@ -669,6 +723,21 @@
         <div id="wishSkins" class="wishSkins"></div>
       </div>
       <button class="chip" id="btnWishClose">关闭</button>
+    </div>
+
+    <!-- 批25 T6：抽卡动画（流星 → 爆闪 → reveal）；phase: hidden|meteor|flash|reveal|done -->
+    <div class="overlay hidden" id="wishAnim" data-phase="hidden">
+      <div class="wishSky">
+        <div class="meteor"></div>
+        <div class="meteor m2"></div>
+        <div class="meteor m3"></div>
+      </div>
+      <div class="wishFlash" id="wishFlash"></div>
+      <div class="wishResult">
+        <div class="wishGrid" id="wishGrid"></div>
+        <div class="wishThumbs" id="wishThumbs"></div>
+        <div class="wishSkipHint">点击跳过 · 结果页点击关闭</div>
+      </div>
     </div>
 
     <div class="overlay hidden" id="pauseScreen">
@@ -2421,8 +2490,8 @@
         if (!$('wishLayer').classList.contains('hidden')) updateWishPanel(m);
         return;
       case 'gachares':
-        // 批25 T5：抽卡回包（余额权威）——极简反馈，T6 换流星动画
-        showToast('祈愿完成：' + m.items.length + ' 张' + (m.gained ? '（返还 ' + m.gained + ' 星尘）' : ''));
+        // 批25 T6：抽卡回包 → 流星动画（meteor→flash→reveal）；gachainfo 回包刷新余额
+        playWish(m);
         send({t: 'gachainfo'});   // 刷新余额/皮肤集合
         return;
     }
@@ -3412,6 +3481,10 @@
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;   // 输入中不抢游戏按键
+    if (wishAnimBusy()) {                                                    // 批25 T6：抽卡动画期间锁输入（done 后解锁）
+      if (e.key === 'Escape' && !e.repeat) { const w = $('wishAnim'); (w.dataset.phase === 'done') ? wishAnimClose() : wishSkip(w); }
+      return;
+    }
     const k = e.key.toLowerCase();
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();
     // 批8 #8：观战时左右键（←/→/A/D）循环切换被观战者
@@ -3622,6 +3695,92 @@
     $('tabSkins').setAttribute('aria-pressed', t === 'skins');
     if (t === 'skins') renderWishSkins();
   }
+  // ===== 批25 T6：抽卡流星动画（meteor → flash → reveal → done） =====
+  const WISH_COL = {3: '#4da3ff', 4: '#b06dff', 5: '#ffd43b'};   // 流星颜色随最高档变
+  let wishTimers = [];
+  function clearWishTimers() { wishTimers.forEach(clearTimeout); wishTimers = []; }
+  function makeCardArt(s) {          // 立绘卡 canvas 256×384：star 渐变底 + 蛇剪影 + 星徽 + 名字条
+    const c = document.createElement('canvas'); c.width = 256; c.height = 384;
+    const g = c.getContext('2d');
+    const pal = {3: ['#17325c', '#0b1428'], 4: ['#33235c', '#140e2e'], 5: ['#5c4713', '#241a06']}[s.star] || ['#17325c', '#0b1428'];
+    const gr = g.createLinearGradient(0, 0, 0, 384);
+    gr.addColorStop(0, pal[0]); gr.addColorStop(1, pal[1]);
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 384);
+    g.fillStyle = WISH_COL[s.star] || WISH_COL[3];
+    g.font = '30px serif'; g.textAlign = 'left';
+    g.fillText('★'.repeat(s.star), 16, 46);                          // 星徽
+    g.strokeStyle = s.base; g.lineWidth = 36; g.lineCap = 'round';    // 蛇形剪影
+    g.beginPath(); g.moveTo(52, 306); g.quadraticCurveTo(124, 254, 102, 192); g.quadraticCurveTo(82, 132, 168, 122); g.stroke();
+    g.fillStyle = s.base; g.beginPath(); g.arc(168, 122, 33, 0, 7); g.fill();
+    g.fillStyle = '#101426'; g.beginPath(); g.arc(180, 112, 7, 0, 7); g.fill();
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 330, 256, 54);     // 名字条
+    g.fillStyle = '#fff'; g.font = 'bold 24px sans-serif'; g.textAlign = 'center';
+    g.fillText(s.name, 128, 366);
+    return c;
+  }
+  function playWish(m) {
+    const items = Array.isArray(m.items) ? m.items : [];
+    if (!items.length) return;
+    clearWishTimers();
+    const layer = $('wishAnim');
+    const maxStar = Math.max.apply(null, items.map(i => i.star));
+    layer.style.setProperty('--wishCol', WISH_COL[maxStar] || WISH_COL[3]);
+    // 压轴：低星在前（保持原序），最高星全部排末尾
+    const ordered = items.filter(i => i.star < maxStar).concat(items.filter(i => i.star === maxStar));
+    const grid = $('wishGrid'), thumbs = $('wishThumbs');
+    grid.innerHTML = ''; thumbs.innerHTML = '';
+    grid.classList.toggle('single', ordered.length === 1);
+    ordered.forEach((it, i) => {
+      const s = SKINS[it.skin] || SKINS[0];
+      const card = document.createElement('div');
+      card.className = 'wishCard'; card.dataset.star = it.star;
+      card.style.animationDelay = (i * 120) + 'ms';                   // 十连 120ms 依次翻出
+      card.appendChild(makeCardArt(s));
+      if (it.dup && it.refund) {                                      // 重复返还提示 +N
+        const b = document.createElement('span'); b.className = 'wishDup';
+        b.textContent = '+' + it.refund; card.appendChild(b);
+      }
+      grid.appendChild(card);
+      if (ordered.length > 1) {                                       // 十连底部一排缩略图
+        const t = document.createElement('canvas'); t.width = 48; t.height = 72;
+        t.getContext('2d').drawImage(makeCardArt(s), 0, 0, 48, 72);
+        thumbs.appendChild(t);
+      }
+    });
+    layer.classList.remove('skipped', 'hidden');
+    layer.dataset.phase = 'meteor';
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { wishSkip(layer); return; }
+    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'flash'; $('wishFlash').classList.add('on'); }, 900));
+    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'reveal'; }, 1250));
+    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'done'; },
+      1250 + (ordered.length > 1 ? (ordered.length - 1) * 120 + 550 : 550)));
+  }
+  function wishSkip(layer) {          // 点击跳过：直接 reveal 终态并解锁输入
+    layer = layer || $('wishAnim');
+    clearWishTimers();
+    layer.classList.add('skipped');
+    Array.from($('wishGrid').children).forEach(c => { c.style.animation = 'none'; });
+    layer.dataset.phase = 'done';
+  }
+  function wishAnimClose() {
+    clearWishTimers();
+    const layer = $('wishAnim');
+    layer.classList.add('hidden'); layer.dataset.phase = 'hidden';
+    layer.classList.remove('skipped');
+    $('wishFlash').classList.remove('on');
+    $('wishGrid').innerHTML = ''; $('wishThumbs').innerHTML = '';
+  }
+  function wishAnimBusy() {          // 动画期间锁键盘输入（done 后解锁）
+    const el = $('wishAnim');
+    return !el.classList.contains('hidden') && el.dataset.phase !== 'done';
+  }
+  $('wishAnim').onclick = () => {
+    const layer = $('wishAnim');
+    if (layer.classList.contains('hidden')) return;
+    if (layer.dataset.phase === 'done') wishAnimClose();
+    else wishSkip(layer);
+  };
+  window.__gachaDbg = m => { onMsg(m); };   // 探针钩子：模拟服务端消息（如 error）
   $('btnWish').onclick = openWish;
   $('btnWishLobby').onclick = openWish;   // 批25 T5：大厅入口（startScreen 全屏遮罩盖住顶栏）
   $('btnWishClose').onclick = closeWish;
@@ -3630,7 +3789,7 @@
   $('wish1').onclick = () => { if (loggedUser) send({t: 'gacha', n: 1}); else showToast('抽卡需要登录'); };
   $('wish10').onclick = () => { if (loggedUser) send({t: 'gacha', n: 10}); else showToast('抽卡需要登录'); };
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !$('wishLayer').classList.contains('hidden')) closeWish();
+    if (e.key === 'Escape' && !wishAnimBusy() && !$('wishLayer').classList.contains('hidden')) closeWish();   // T6：动画层优先
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && !joined && state === 'idle' && !demoPaused) togglePause();
