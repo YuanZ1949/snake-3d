@@ -1535,6 +1535,252 @@ def test_roomcfg_limit_fallback_mirror():
     del serve.rooms['rc']
 
 
+def test_respawn_msg_gated_by_room_mode_and_delay():
+    """批22 H4：手动复活仅限复活房且须过 RESPAWN_MS——死斗/积分房裸发复活必须被拒
+    （漏洞已本地复现：respawn=False 房死亡后裸发 {t:'respawn'} 立即复活）"""
+    import asyncio
+    # 非复活房：死亡后发 respawn → 仍然死亡
+    r = fresh(10)
+    s = _cfg_sess(sid='s1', room=r)
+    p = mk(r, 1, 'Me', [(4, 4), (4, 5)], (1, 0))
+    s.pid = 1
+    p['user'] = None
+    p['alive'] = False
+    p['died_at'] = serve.now_ms()
+    asyncio.run(serve.handle_msg(s, {'t': 'respawn'}))
+    assert p['alive'] is False, '非复活房不允许手动复活（H4）'
+    # 复活房：延迟未到 → 仍拒；到点 → 放行
+    r2 = fresh(10, respawn=True)
+    s2 = _cfg_sess(sid='s2', room=r2)
+    p2 = mk(r2, 1, 'Me2', [(4, 4), (4, 5)], (1, 0))
+    s2.pid = 1
+    p2['user'] = None
+    p2['alive'] = False
+    p2['died_at'] = serve.now_ms()
+    asyncio.run(serve.handle_msg(s2, {'t': 'respawn'}))
+    assert p2['alive'] is False, 'RESPAWN_MS 延迟未到不允许复活'
+    p2['died_at'] = serve.now_ms() - serve.RESPAWN_MS - 10
+    asyncio.run(serve.handle_msg(s2, {'t': 'respawn'}))
+    assert p2['alive'] is True, '复活房到点后应正常复活'
+    print('respawn msg gated OK')
+
+
+def test_create_rate_limited_and_room_cap():
+    """批22 H3：单会话/同 IP 窗内成功建房配额 + 全局房间上限
+    （达上限先淘汰最老空置非持久房，无可淘汰则拒）"""
+    import asyncio
+    orig = dict(serve.rooms)
+    old_cmax, old_ipmax = serve.CREATE_MAX, serve.CREATE_IP_MAX
+    old_rmax, old_evict = serve.ROOM_MAX, serve.ROOM_EVICT_AGE
+    old_cwin, old_ipwin = serve.CREATE_WIN, getattr(serve, 'CREATE_IP_WIN', 300)
+    s = _cfg_sess(sid='cs1')
+    s.ip = '5.5.5.5'
+    try:
+        serve.CREATE_MAX = 2
+        n0 = len(serve.rooms)
+        asyncio.run(serve.handle_msg(s, {'t': 'create', 'name': 'c1'}))
+        asyncio.run(serve.handle_msg(s, {'t': 'create', 'name': 'c2'}))
+        asyncio.run(serve.handle_msg(s, {'t': 'create', 'name': 'c3'}))
+        errs = [x for x in s.ws.sent if x.get('t') == 'error']
+        assert len(errs) == 1 and '频繁' in errs[0].get('err', ''), (len(errs), errs)
+        assert len(serve.rooms) == n0 + 2, len(serve.rooms)
+        # 同 IP 换连接绕过会话配额 → IP 配额兜底（清计数后重新验证 IP 上限）
+        serve.CREATE_MAX = 10 ** 9
+        serve.create_ip.clear()
+        serve.CREATE_IP_MAX = 1
+        s2 = _cfg_sess(sid='cs2')
+        s2.ip = '5.5.5.5'
+        asyncio.run(serve.handle_msg(s2, {'t': 'create', 'name': 'c4'}))
+        asyncio.run(serve.handle_msg(s2, {'t': 'create', 'name': 'c5'}))
+        errs = [x for x in s2.ws.sent if x.get('t') == 'error']
+        assert len(errs) == 1 and '频繁' in errs[0].get('err', ''), (len(errs), errs)
+        # 全局上限：先造一个足够老的空置房 → 淘汰它并建成
+        serve.CREATE_IP_MAX = 10 ** 9
+        victim = serve.Room('vv', 'vv', 10)
+        victim.created = serve.time.time() - serve.ROOM_EVICT_AGE - 10
+        serve.rooms['vv'] = victim
+        serve.ROOM_MAX = len(serve.rooms)
+        s3 = _cfg_sess(sid='cs3')
+        s3.ip = '6.6.6.6'
+        asyncio.run(serve.handle_msg(s3, {'t': 'create', 'name': 'c6'}))
+        assert 'vv' not in serve.rooms, '达上限应淘汰最老空置房'
+        assert any(x.get('t') == 'created' for x in s3.ws.sent), s3.ws.sent
+        # 再达上限且无可淘汰（新建的都太年轻）→ 拒
+        serve.ROOM_MAX = len(serve.rooms)
+        s4 = _cfg_sess(sid='cs4')
+        s4.ip = '7.7.7.7'
+        asyncio.run(serve.handle_msg(s4, {'t': 'create', 'name': 'c7'}))
+        errs = [x for x in s4.ws.sent if x.get('t') == 'error']
+        assert errs and '上限' in errs[0].get('err', ''), errs
+    finally:
+        serve.rooms.clear()
+        serve.rooms.update(orig)
+        serve.create_ip.clear()
+        serve.CREATE_MAX, serve.CREATE_IP_MAX = old_cmax, old_ipmax
+        serve.ROOM_MAX, serve.ROOM_EVICT_AGE = old_rmax, old_evict
+        serve.CREATE_WIN, serve.CREATE_IP_WIN = old_cwin, old_ipwin
+    print('create rate+cap OK')
+
+
+def test_register_rate_limited():
+    """批22 M2：同 IP 窗内成功注册超限被拒（防批量注册刷 store.json），异 IP/窗过期复位"""
+    import tempfile, shutil, asyncio, json as _json
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-reglim-'))
+    old_store, old_usage = serve.store, serve.usage
+    old_reg = dict(serve.reg_ok)
+    old_max, old_win = serve.REG_MAX, serve.REG_WIN
+    try:
+        serve.store = serve.Store(d / 'store.json')
+        serve.usage = serve.Usage(d / 'usage.log', d / 'usage.json')
+        serve.reg_ok.clear()
+        serve.REG_MAX = 2
+
+        async def run():
+            s = _cfg_sess(sid='r1', user=None)
+            s.ip = '8.8.8.8'
+            for i in range(2):
+                await serve.handle_msg(s, {'t': 'register', 'user': 'u%d' % i, 'pass': '246810'})
+                assert s.ws.sent[-1]['ok'] is True, s.ws.sent[-1]
+            await serve.handle_msg(s, {'t': 'register', 'user': 'u9', 'pass': '246810'})
+            assert s.ws.sent[-1]['ok'] is False and '频繁' in s.ws.sent[-1].get('err', ''), \
+                s.ws.sent[-1]
+            # 别的 IP 不受影响
+            s2 = _cfg_sess(sid='r2', user=None)
+            s2.ip = '4.4.4.4'
+            await serve.handle_msg(s2, {'t': 'register', 'user': 'u8', 'pass': '246810'})
+            assert s2.ws.sent[-1]['ok'] is True, s2.ws.sent[-1]
+            # 窗口过期 → 复位
+            serve.REG_WIN = 0
+            await serve.handle_msg(s, {'t': 'register', 'user': 'u7', 'pass': '246810'})
+            assert s.ws.sent[-1]['ok'] is True, s.ws.sent[-1]
+        asyncio.run(run())
+        lines = [_json.loads(x) for x in (d / 'usage.log').read_text('utf-8').splitlines()]
+        assert any(x.get('err') == '限速拒绝' for x in lines), lines
+    finally:
+        serve.store, serve.usage = old_store, old_usage
+        serve.reg_ok.clear()
+        serve.reg_ok.update(old_reg)
+        serve.REG_MAX, serve.REG_WIN = old_max, old_win
+        shutil.rmtree(d, ignore_errors=True)
+    print('register rate OK')
+
+
+def test_room_pass_bruteforce_throttle():
+    """批22 M5：同 (ip, 房) 口令错试超限 → 含正确口令一并拒（同登录防爆破语义），窗过期复位"""
+    import asyncio
+    r = fresh(10)
+    r.passw = 'xy1234'
+    serve.rooms['t'] = r
+    old_max, old_win = serve.PASS_FAIL_MAX, serve.PASS_FAIL_WIN
+    old_fails = dict(serve.pass_fails)
+    try:
+        serve.pass_fails.clear()
+        serve.PASS_FAIL_MAX = 3
+        s = _cfg_sess(sid='pw5')
+        s.ip = '3.3.3.3'
+        s.joins = 0
+        for i in range(3):
+            asyncio.run(serve.handle_msg(
+                s, {'t': 'join', 'room': 't', 'name': 'x', 'pass': 'wrong%d' % i}))
+            assert s.ws.sent[-1].get('err') == '房间口令错误', s.ws.sent[-1]
+        asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 't', 'name': 'x', 'pass': 'xy1234'}))
+        assert s.ws.sent[-1].get('t') == 'error' and '频繁' in s.ws.sent[-1].get('err', ''), \
+            s.ws.sent[-1]
+        # 窗过期 → 正确口令放行
+        serve.PASS_FAIL_WIN = 0
+        asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 't', 'name': 'x', 'pass': 'xy1234'}))
+        assert s.ws.sent[-1].get('t') == 'room-ok', s.ws.sent[-1]
+    finally:
+        serve.PASS_FAIL_MAX, serve.PASS_FAIL_WIN = old_max, old_win
+        serve.pass_fails.clear()
+        serve.pass_fails.update(old_fails)
+        serve.rooms.pop('t', None)
+    print('room pass throttle OK')
+
+
+def test_anonymous_resume_ip_bound():
+    """批22 M1：匿名挂起蛇只认同 IP（防任意新加入者 10s 窗内抢蛇）；
+    登录账户凭账号跨 IP 恢复不变；off_ip 由 leave_room(hard=False) 落标"""
+    r = fresh(12)
+    p = mk(r, 1, 'Anon', [(4, 4), (4, 5)], (1, 0))
+    p['user'] = None
+    p['off_at'] = serve.now_ms()
+    p['off_ip'] = '1.1.1.1'
+    assert r.resumable(None, '1.1.1.1') is p       # 同 IP 恢复
+    assert r.resumable(None, '2.2.2.2') is None     # 异 IP 拒绝抢蛇
+    p['off_ip'] = None                              # 无记录（旧数据/测试桩）→ 保持旧行为放行
+    assert r.resumable(None, '2.2.2.2') is p
+    # 登录账户跨 IP 照常恢复（凭据=密码/token，不依赖 IP）
+    p2 = mk(r, 2, 'U', [(6, 6)], (1, 0))
+    p2['user'] = 'u1'
+    p2['off_at'] = serve.now_ms()
+    p2['off_ip'] = '1.1.1.1'
+    assert r.resumable('u1', '9.9.9.9') is p2
+    # leave_room(hard=False) 挂起时记录原 IP
+    r2 = fresh(12)
+    q = mk(r2, 1, 'M2', [(5, 5)], (1, 0))
+    q['user'] = None
+    mk(r2, 2, 'B', [(6, 6)], (1, 0))                # 房里还有别的真人 → 走挂起分支
+    s = S()
+    s.ip = '7.7.7.7'
+    s.room = r2
+    s.pid = 1
+    serve.leave_room(s, hard=False)
+    assert q.get('off_at') and q.get('off_ip') == '7.7.7.7', \
+        (q.get('off_at'), q.get('off_ip'))
+    print('anonymous resume ip bound OK')
+
+
+def test_token_ttl_expired():
+    """批22 M3：令牌过 TOKEN_TTL 作废（回'登录已过期'并从字典清除）；有效令牌成功鉴权滑动续期"""
+    import tempfile, shutil, asyncio
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-tokttl-'))
+    old_store, old_usage = serve.store, serve.usage
+    old_tokens, old_ttl = serve.tokens, serve.TOKEN_TTL
+    old_at = getattr(serve, 'token_at', None)
+    try:
+        serve.store = serve.Store(d / 'store.json')
+        serve.usage = serve.Usage(d / 'usage.log', d / 'usage.json')
+        serve.tokens = {}
+        serve.token_at = {}
+        ok, err = serve.store.register('alice', '246810')
+        assert ok, err
+        now = serve.time.time()
+        serve.tokens['deadbeef'] = 'alice'
+        serve.token_at['deadbeef'] = now - serve.TOKEN_TTL - 10    # 已过期
+        serve.tokens['fresh01'] = 'alice'
+        serve.token_at['fresh01'] = now - 60                        # 有效
+        t_base = serve.time.time()
+
+        async def run():
+            s = _cfg_sess(sid='t1', user=None)
+            s.ip = '2.2.2.2'
+            await serve.handle_msg(s, {'t': 'authtoken', 'token': 'deadbeef'})
+            assert s.ws.sent[-1]['ok'] is False and '过期' in s.ws.sent[-1].get('err', ''), \
+                s.ws.sent[-1]
+            assert 'deadbeef' not in serve.tokens, '过期令牌应作废'
+            await serve.handle_msg(s, {'t': 'authtoken', 'token': 'fresh01'})
+            assert s.ws.sent[-1]['ok'] is True, s.ws.sent[-1]
+        asyncio.run(run())
+        # 成功鉴权 → 滑动续期（在鉴权时刻之后刷新，不能早于基准时刻）
+        assert serve.token_at['fresh01'] >= t_base, serve.token_at['fresh01']
+    finally:
+        serve.store, serve.usage = old_store, old_usage
+        serve.tokens = old_tokens
+        serve.TOKEN_TTL = old_ttl
+        if old_at is None:
+            try:
+                del serve.token_at
+            except AttributeError:
+                pass
+        else:
+            serve.token_at = old_at
+        shutil.rmtree(d, ignore_errors=True)
+    print('token ttl OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -1598,6 +1844,12 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_roomcfg_creator_edits_live_without_restart,
             test_roomcfg_account_owner_survives_reconnect,
             test_roomcfg_bots_live_add_remove,
-            test_roomcfg_limit_fallback_mirror]:
+            test_roomcfg_limit_fallback_mirror,
+            test_respawn_msg_gated_by_room_mode_and_delay,
+            test_create_rate_limited_and_room_cap,
+            test_register_rate_limited,
+            test_room_pass_bruteforce_throttle,
+            test_anonymous_resume_ip_bound,
+            test_token_ttl_expired]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

@@ -1669,8 +1669,11 @@
 
   function respawn() {
     if (!wsOpen) { start(); return; }
-    // 服务器仅在未存活时生成；成功与否由下一帧快照驱动状态迁移
+    // 批22 H4：非复活房死亡不能裸发复活（服务器已拒），直接转观战等新局
+    if (!roomCfg.respawn) { spectate(); return; }
+    // 服务器要求满 RESPAWN_MS 才放行：立即发一次（到点即活），点早了 3.2s 自动补发
     send({t: 'respawn'});
+    setTimeout(() => { if (state === 'over' && myEnt && !myEnt.alive) send({t: 'respawn'}); }, 3200);
     dirQ = [];
     lastTick = performance.now();
   }

@@ -73,6 +73,7 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 | 20 auth 失败原因入明细 | ✅ | 905e724 | test_usage_log 扩 err 断言（旧码红 `TypeError: unexpected keyword argument 'err'`，新码 92/92 绿）+ local_ci ALL GREEN（8 E2E/单测/静态/Playwright 5/5 13.8s）+ 报表实跑出现 `login:密码错误×1`、`register:用户名已存在×3` 等原因细分（旧历史行仍兜底 `:fail`，usage_report 零改动——L168 本就读 `o.get('err')`） |
 | 21 登录防爆破限速 | ✅ | 8ebb68f | test_auth_login_throttle（+1 新例，旧码红 `AttributeError: AUTH_FAIL_WIN`；连续 10 败后正确密码也拒、窗口过期复位、成功复位、同 ip 异用户隔离、明细记"限速拒绝"恰好 1 条）+ 单测 93/93 + local_ci ALL GREEN（8 E2E/静态/Playwright 5/5 11.3s） |
 | 20+21 生产部署 | ✅ | — | `git -c core.autocrlf=false archive` 纯 LF 投放（sha256 与本地 HEAD blob 一致）、生产 venv 单测 93/93、线上限速探针 `THROTTLE PROBE OK`（10 败后第 11 次回「尝试过于频繁」）、journal 零 error；predeploy 回滚点 `snake-3d-predeploy-20261015-091402.tar.gz` |
+| 22 安全加固 6 项 | ✅ | 本 commit | 红检驱动：6 新用例旧码全红→全绿（RED_COUNT=0/6，含「正确口令绕过限速」实现 bug 被测试抓出后修闸序）；单测 99/99；local_ci ALL GREEN（8 E2E/静态 ids=82/Playwright 5/5）；H4 复现脚本裸 `respawn` 超时被拒（修复前 REPRO OK） |
 
 第三轮候选池排序：20 auth err（✅905e724）→ 21 登录防爆破限速（✅本 commit）→ ~~棋盘饱和度补偿~~（**移除**：批10 用户已拍板 r160 新默认零改动、不改 THEMES 配色，此条与拍板冲突）→ 匿名创建者断线失编辑权（评估结论：匿名无身份本质不可解，仅可加提示，低价值）→ `_deflect_dir` 未排除他人身体（批17 观察项，代码走查结论：落他人身体=正常咬合规则、落他人头=1 tick 重叠被批14 破僵局覆盖，**判定不修**，已记 HANDOVER 批17 INFO）→ ESM r161+（不推荐）→ push origin（运维决策待用户）→ CI 真实跑（BLOCKED：无远端 runner）。
 
@@ -245,3 +246,9 @@ A1 ✅ 已完成（commit a0283e9，broadcast list 副本 + 确定性证明）�
 - **③ three r161+ ESM 评估（结论：维持 r160）**：已核实 index.html 无 inline onclick → ESM 改造技术可行（主脚本包 boot + module import THREE 后触发）；但新版本特性（WebGPU 等）本项目用不到，改造需 2130 行作用域包裹 + 全量视觉回归重做——收益低风险中。已写入 HANDOVER 技术债 #9。
 - **④ DEPLOY.md 刷新**：文件位置树更新（data/、vendor r160 说明）+ 新增「当前功能版本」节（11 批功能清单 + 协议/CI/报表一段，指向 HANDOVER）。
 - **验证**：单测 67/67 ALL PASSED；8 套 E2E 全 Exit 0（delta: first=full 680B/avg_delta 424B）；Playwright 3/3 passed (7.8s)；静态 ALL PASSED (71ids/dup0/div33/css159/**js533**，+2 系 applyOffTint)。
+
+### 批22 安全加固 6 项（M1-M5 + H3/H4 + CI）✅
+- **范围**：M1 匿名 resume 绑 IP / M2 register 限速 / M3 token TTL 滑动续期 / M5 房间口令错试限速 / H3 建房限速+房间数上限 / H4 非复活房裸 respawn 门禁 / index.html 死亡转观战 / ci.yml permissions: contents: read。
+- **实现要点**：通用窗口闸 `_win_ok/_win_bump`（auth_throttle_ok/auth_fail_bump 委托复用，行为不变）；新常量 TOKEN_TTL=30d、CREATE_MAX=8/CREATE_IP_MAX=40/CREATE_WIN=300、ROOM_MAX=100/ROOM_EVICT_AGE=600、REG_MAX=30/REG_WIN=300、PASS_FAIL_MAX=10/PASS_FAIL_WIN=300；新 dict `token_at/reg_ok/pass_fails/create_ip`。H3 房间 cap 先回收「无玩家无观战超 600s 非 persist 非房主在线」空房再拒绝；M5 闸序在口令比较**之前**（正确口令也受窗口限制，第一版闸在 mismatch 内被测试抓出绕过）；M1 `off_ip` 匿名唯一候选 fail-open；H4 服务端 `room.respawn + died_at>=RESPAWN_MS` 双门禁，客户端非复活房死亡直接 `spectate()` + 3.2s 自动补发。
+- **TDD**：红检驱动 red_driver22.py 6 用例先红后绿（RED_COUNT=0/6）；调试修 5 处测试桩问题（create_ip 污染、_cfg_sess 缺 joins/ip、token 续期基准时刻、pass 断言字段）。
+- **验证**：单测 99/99；local_ci ALL GREEN（8 E2E + 静态 ids=82 dup=0 + Playwright 5/5 13.3s）；H4 复现脚本裸 respawn 10s 超时被拒（修复前 REPRO OK）。CI 真实跑仍 BLOCKED（无远端 runner，workflow 从未运行过，SHA 固定跳过）。

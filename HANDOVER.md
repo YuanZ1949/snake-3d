@@ -125,16 +125,16 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 
 | `t` | 字段 | 说明 |
 |---|---|---|
-| `register` | `user, pass` | 注册（`user` 即账号，**也是昵称来源**；`pass` 为 6 位数字） |
+| `register` | `user, pass` | 注册（`user` 即账号，**也是昵称来源**；`pass` 为 6 位数字）。**批22 限速**：同 ip 5 分钟窗成功注册满 30 次后拒绝（回「注册过于频繁」，明细记"限速拒绝"；失败不计数） |
 | `login` | `user, pass` | 登录，成功回 `token`；**批21 防爆破**：同 (ip, 用户) 5 分钟窗连续失败 10 次后直接拒绝（明细记"限速拒绝"） |
-| `authtoken` | `token` | 断线重连恢复登录态（不需要带 user） |
+| `authtoken` | `token` | 断线重连恢复登录态（不需要带 user）。**批22 M3**：令牌 `TOKEN_TTL=30` 天过期作废（回「登录已过期」并清字典）；成功鉴权**滑动续期**（活跃用户不过期），见 §6.2 |
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
 | `rooms` | — | 主动请求房间列表 |
-| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots, pass, wd` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready）。**批6 口令（C3）**：`pass` 可选，给了就必须合法（6-20 位字母+数字混合、非弱口令黑名单，`valid_room_pass()` 前后端同步），非法直接 `error` 拒绝创建（不静默回退）。**批17 H**：`wd` 仅 `true` 生效（碰外墙折返，见 §6.2） |
+| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots, pass, wd` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready）。**批6 口令（C3）**：`pass` 可选，给了就必须合法（6-20 位字母+数字混合、非弱口令黑名单，`valid_room_pass()` 前后端同步），非法直接 `error` 拒绝创建（不静默回退）。**批17 H**：`wd` 仅 `true` 生效（碰外墙折返，见 §6.2）。**批22 H3 限速+cap**：单会话 5 分钟窗最多 8 次、同 ip 窗内最多 40 次（超回「建房太频繁」）；全局 `ROOM_MAX=100`，满时先回收「无玩家无观战、超 600s、非 persist、房主不在线」空房，无可回收才拒绝 |
 | `roomcfg` | `room, winMode, limit, respawn, wd, bots` | **批18 E**：房间参数 live 编辑（不重开局、零协议改动——快照/check_win 现读房间字段）。鉴权 `can_edit_room()`：账号匹配 `owner_user`（跨重连有效）**或**仍是在线创建者 `sid`，默认/无主房间一律拒绝。语义：`limit` 改小到已超时 → 下一 tick 按时间到结算；score/respawn 房 `limit=0` 兜底 300/120s（与 `__init__` 同不变量）；`bots` 走 `set_bots()` 显式增减（增=补生成、减=优先摘死/挂起再摘低分，不走 drop_player 避开清 AI 级联）；size/theme/rock/portal 属地形**不可编辑**（theme live 改=下局生效为已知限制）；口令独立安全面不在列。回执 `{t:'cfgapplied', room, changed}` + 变更时 `broadcast_rooms` |
-| `watch` | `room, pass` | 进入旁观（会先 `leave_room`）；口令房必须带对口令（批6） |
-| `join` | `room, name, skin, pass` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效；口令房必须带对口令（批6，断线自动重连也带记忆的口令） |
+| `watch` | `room, pass` | 进入旁观（会先 `leave_room`）；口令房必须带对口令（批6）。**批22 M5**：同 (ip, 房间) 5 分钟窗口令错试满 10 次后**正确口令也拒**（回「口令尝试过于频繁」） |
+| `join` | `room, name, skin, pass` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效；口令房必须带对口令（批6，断线自动重连也带记忆的口令）。**批22 M5**：口令错试限速同 `watch`；**M1**：匿名断线恢复唯一候选时校验来源 ip 一致（不一致不复用，fail-open） |
 | `leave` | — | **新增**：返回主页，把自己移出房间（旧客户端不发，行为不变） |
 | `ready` | — | 回合结束后的下一局确认 |
 | `dir` | `x, y` | 转向（服务端做反向与队列校验） |
@@ -144,7 +144,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `skin` | `i` | 换皮肤（0–4） |
 | `persist` | `room` | **批6 新增（新#11）**：把房间标记为常驻（仅创建者可标，成功后广播刷新列表；写盘 `data/persist_rooms.json`，重启重建、永不回收） |
 | `chat` | `text` | **批5 新增**：房间聊天（≤80 字，空白不发，1s 限速超限静默丢弃）；观战者也可发，走快照 `ev` 通道 |
-| `respawn` | — | 死亡后重生 |
+| `respawn` | — | 死亡后重生。**批22 H4**：仅复活房（`room.respawn=true`）且死亡满 `RESPAWN_MS=3s` 才生效，否则服务端拒绝；客户端非复活房死亡直接转观战 |
 
 ### 5.2 服务端 → 客户端
 
@@ -236,7 +236,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
   丢人（drop_player）同样走 `check_win`。参数校验：`winMode` 非 last/score 回退 last；`limit` 夹 0–3600；`respawn` 必须布尔；limit=0 时 score→300s、respawn→120s 兜底（score 优先）。
 - **碰外墙折返（批17，H）**：`create` 带 `wd:1`（布尔，非法回退 False）→ `Room.walldeflect`——全员常驻「仅边界墙折返」（与 deflect 道具同语义：step §4 折返 guard 放行，方向由 `_deflect_dir()` 取垂直两向中空间最大者，仍无路可折照死 `cause='wall'`）。**边界**：正面撞岩石/墙块照死（`cause='rock'`）、撞自己照死、2 格被咬照常整条淘汰（折返不救被咬）；`rooms` 列表项带 `wd`，房间卡片 meta 显示「↩︎碰墙折返」；建房面板「碰墙」下拉（关闭·撞墙即死 / 碰外墙折返）；`wd` 随 persist 持久化往返。
 - **房间参数 live 编辑（批18，E）**：新消息 `roomcfg`（见 §5 协议表）——创建者可改 `winMode/limit/respawn/wd/bots`，**live 生效不重开局**。归属：`Room.owner_user`（create 时记 `sess.user`，随 persist 往返）；`can_edit_room()` 双轨鉴权（账号跨重连 / 在线 sid）。客户端：房间卡片「⚙ 设置」（`myCreated` 才显示，服务端二次鉴权）→ `cfgScreen` 面板（五个下拉 + 保存）→ `cfgapplied` toast；面板 select 同享批16 暗色。**已知限制**：匿名创建者断线（sid 失效）后失去编辑权；地形类参数（size/theme/rock/portal）不进编辑面。
-- **登录防爆破限速（批21）**：同 `(ip, 用户)` 在 `AUTH_FAIL_WIN=300s` 窗内连续登录失败满 `AUTH_FAIL_MAX=10` 次 → 直接拒绝**不再查库**（回执 err「尝试过于频繁，请稍后再试」，usage 明细记 `err='限速拒绝'` 供报表排查）；登录成功/窗口过期自动复位；内存 dict 每次计数时顺手清过期键防撑爆（重启清零可接受）。注册/authtoken 不限（注册失败是格式校验非爆破面、token 32 位不可猜）。单测 `test_auth_login_throttle` 全覆盖；失败原因明细见批20。
+- **登录防爆破限速（批21）**：同 `(ip, 用户)` 在 `AUTH_FAIL_WIN=300s` 窗内连续登录失败满 `AUTH_FAIL_MAX=10` 次 → 直接拒绝**不再查库**（回执 err「尝试过于频繁，请稍后再试」，usage 明细记 `err='限速拒绝'` 供报表排查）；登录成功/窗口过期自动复位；内存 dict 每次计数时顺手清过期键防撑爆（重启清零可接受）。单测 `test_auth_login_throttle` 全覆盖；失败原因明细见批20。
+- **批22 安全加固（6 项）**：① **匿名 resume 绑 IP（M1）**：匿名断线恢复只在恰一个无账户挂起者时命中，且其 `off_ip` 与当前来源 ip 一致才复用（不一致 → 当新玩家处理；`off_ip` 缺失 fail-open 兼容旧数据；账号玩家不绑）——防抢号。② **注册限速（M2）**：同 ip 5 分钟窗成功注册满 `REG_MAX=30` 拒（失败不计数）。③ **token TTL（M3）**：`token_at` 记签发/续期时刻，`authtoken` 超 `TOKEN_TTL=30d` 作废清字典；成功鉴权 `tokens_inv` 滑动续期（活跃用户不过期）；logout 同步清理。④ **建房限速+房间 cap（H3）**：单会话窗内 `CREATE_MAX=8` + 同 ip `CREATE_IP_MAX=40`（`CREATE_WIN=300s`）；全局 `ROOM_MAX=100` 满时先回收「无玩家无观战、>600s、非 persist、房主不在线」空房，无可回收才拒。⑤ **口令错试限速（M5）**：同 `(ip, 房间)` 窗内错试满 `PASS_FAIL_MAX=10`（`PASS_FAIL_WIN=300s`）→ **正确口令也拒**（闸在口令比较**之前**，watch/join 两处同构）；错试才计数。⑥ **H4 裸 respawn 门禁**：服务端 respawn 分支要求 `room.respawn` 且死亡满 `RESPAWN_MS=3s`（`died_at` 判定），非复活房发 `respawn` 静默拒绝；客户端 `respawn()` 非复活房直接 `spectate()`、复活房 3.2s 自动补发过延迟。通用窗口闸 `_win_ok/_win_bump`（auth 系列委托复用）。CI 加固：`ci.yml` 加 `permissions: contents: read`。单测 6 新例先红后绿（99 用例）。
 - **AI 蛇（批4，A4）**：`create` 带 `bots`(0–7) 建房即生成；条目与普通玩家同结构但 `bot:true`、pid 为负数、名字 `AI-N`、`session=None`。**决策**：step 中该 AI 移动到期且转向队列空时 `_bot_think()`——候选不回头且界内可走；打分 `(是否绝路, 离目标距离, -目标方向对齐度, -前方开阔)`；**目标取 food/bonus 中距离更近者（等距优先星星，批15③**，不再星星无条件压过近处水果**）**，直达被挡时按对齐度绕行而非 DIRS4 定序偏航（批15②），无目标时以最开阔方向为准。AI **视为永远 ready**（只等真人 ready 触发新局）、常驻 `round_ids` 参与胜负计数、死亡/复活/新局逻辑与真人共用。**最后一个真人离开房间时 AI 全部清掉**（否则 AI 占位导致空房永不回收）。
 - **单人练习（批4，新#5）**：主页「🐍 单人练习」→ 建房 `{size:24, bots:3}` → `created` 自动入局（断线重连 onopen 补建房）；建房面板「AI蛇」下拉 0/1/2/3/5/7；房间卡片 meta 显示 `🤖AI×N`。
 - **断线恢复（批5，B2）**：断线时若房内**还有其他真人** → 原蛇置 `off_at` 挂起（原地冻结、不移动不参与转向）等待 `RESUME_MS=10s`；单人房/无其他真人则立即清房（保空房回收语义）。重连（同账号精确匹配；匿名仅当恰一个无账户挂起者）走原 `join` → `room-ok` 带 `resumed:true`，**原 id/身体/分数全保留不重新出生**；超 10s 未归 → drop（含清 AI）。客户端本有的自动重连（onDisconnect→2s→join）自动命中新路径。挂起者对 `maybe_start_round` 视为 ready。
@@ -310,7 +311,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×83 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser） |
+| `test_game.py` | 单元 ×99 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser）+ 批20/21 ×2（usage err 明细/登录防爆破限速）+ 批22 ×6（respawn 消息门禁/建房限速与房间 cap/注册限速/口令错试限速/匿名 resume 绑 IP/token TTL 过期与滑动续期） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |

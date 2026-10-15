@@ -7,6 +7,10 @@ on:
     branches: [ dev, main ]
   workflow_dispatch:
 
+# 批22 CI 加固：默认最小权限（本工作流只读仓库内容）
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -33,6 +33,16 @@ CHAT_COOL = 1000        # 聊天发送冷却 ms
 CHAT_MAX = 80           # 聊天内容长度上限（字符）
 AUTH_FAIL_MAX = 10      # 批21：同 (ip, 用户) 窗内连续登录失败上限，超限直接拒绝（防爆破）
 AUTH_FAIL_WIN = 300     # 批21：失败计数窗口（秒），过期自动复位
+TOKEN_TTL = 30 * 86400  # 批22 M3：登录令牌有效期（秒），成功鉴权时滑动续期
+CREATE_MAX = 8          # 批22 H3：单会话窗内成功建房上限
+CREATE_IP_MAX = 40      # 批22 H3：同 IP 窗内成功建房上限（防换连接绕过会话配额）
+CREATE_WIN = 300        # 批22 H3：建房计数窗口（秒）
+ROOM_MAX = 100          # 批22 H3：全局房间数硬上限（防内存耗尽 DoS）
+ROOM_EVICT_AGE = 600    # 批22 H3：达上限时可淘汰空房的最小年龄（秒），保护刚建等待好友的房
+REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量注册刷 store.json）
+REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
+PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
+PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
@@ -69,28 +79,41 @@ def valid_room_pass(p):
 
 
 auth_fails = {}         # 批21：(ip, user) -> [window_start, fail_count]
+reg_ok = {}             # 批22 M2：ip -> [window_start, ok_count]（成功注册计数）
+pass_fails = {}         # 批22 M5：(ip, room) -> [window_start, fail_count]
+create_ip = {}          # 批22 H3：ip -> [window_start, ok_count]（成功建房计数）
+
+
+def _win_ok(fails, key, now, max_n, win):
+    """通用窗口闸：key 在窗内计数达 max_n 则拒；窗过期自动清（批22）"""
+    rec = fails.get(key)
+    if rec is None:
+        return True
+    if now - rec[0] > win:
+        fails.pop(key, None)
+        return True
+    return rec[1] < max_n
+
+
+def _win_bump(fails, key, now, win):
+    """通用计数 +1；顺手清理过期条目，防海量 key 撑爆字典（批22）"""
+    for k in [k for k, v in list(fails.items()) if now - v[0] > win]:
+        fails.pop(k, None)
+    rec = fails.get(key)
+    if rec is None:
+        fails[key] = [now, 1]
+    else:
+        rec[1] += 1
 
 
 def auth_throttle_ok(ip, user, now):
     """登录防爆破闸门：窗口内连续失败达 AUTH_FAIL_MAX 则拒绝；窗口过期自动复位"""
-    rec = auth_fails.get((ip, user))
-    if rec is None:
-        return True
-    if now - rec[0] > AUTH_FAIL_WIN:
-        auth_fails.pop((ip, user), None)
-        return True
-    return rec[1] < AUTH_FAIL_MAX
+    return _win_ok(auth_fails, (ip, user), now, AUTH_FAIL_MAX, AUTH_FAIL_WIN)
 
 
 def auth_fail_bump(ip, user, now):
     """登录失败 +1；顺手清理过期条目，防攻击者用海量用户名撑爆字典"""
-    for k in [k for k, v in list(auth_fails.items()) if now - v[0] > AUTH_FAIL_WIN]:
-        auth_fails.pop(k, None)
-    rec = auth_fails.get((ip, user))
-    if rec is None:
-        auth_fails[(ip, user)] = [now, 1]
-    else:
-        rec[1] += 1
+    _win_bump(auth_fails, (ip, user), now, AUTH_FAIL_WIN)
 
 
 def chat_throttle(src, now):
@@ -217,6 +240,7 @@ store = Store(STORE_PATH)
 
 # 登录令牌（内存级，服务重启后需重新登录）
 tokens = {}             # token -> username
+token_at = {}           # 批22 M3：token -> 最近一次成功鉴权时间（滑动续期基准）
 
 
 # ============================================================ 使用情况记录（后台）
@@ -610,7 +634,7 @@ class Room:
         self.ev('chat', name=str(name)[:12], text=text)
         return True
 
-    def resumable(self, user):
+    def resumable(self, user, ip=None):
         """找可恢复的挂起原蛇：登录账户精确匹配；匿名仅在恰好一个且无账户时恢复"""
         cands = [q for q in self.players.values() if q.get('off_at')]
         if user:
@@ -619,6 +643,10 @@ class Room:
                     return q
             return None
         if len(cands) == 1 and not cands[0].get('user'):
+            # 批22 M1：匿名恢复须同 IP——无身份凭据，唯一候选也可能是别人抢的
+            off_ip = cands[0].get('off_ip')
+            if off_ip and ip and off_ip != ip:
+                return None
             return cands[0]
         return None
 
@@ -647,6 +675,7 @@ class Room:
         if self._resume_conflict(p):
             self.spawn_player(p, fresh_cells=True)
         p.pop('off_at', None)
+        p.pop('off_ip', None)   # 批22 M1：恢复后清掉挂起 IP 标记
         p['session'] = sess
         self.subs.add(sess)
         sess.full_sent = False     # 重连恢复 → 首帧补全量
@@ -1756,11 +1785,14 @@ def auth_payload(name):
 
 
 def tokens_inv(name):
+    now = time.time()
     for tok, u in tokens.items():
         if u == name:
+            token_at[tok] = now   # 批22 M3：成功鉴权即滑动续期（活跃用户不过期）
             return tok
     tok = secrets.token_hex(16)
     tokens[tok] = name
+    token_at[tok] = now
     return tok
 
 
@@ -1780,8 +1812,15 @@ async def handle_msg(sess, m):
     # -------- 账户 --------
     uname = str(m.get('user') or '').strip()
     if t == 'register':
+        # 批22 M2：同 IP 窗内成功注册限速（失败的格式校验不落盘不计数），防批量注册刷 store.json
+        nowr = time.time()
+        if not _win_ok(reg_ok, sess.ip or 'local', nowr, REG_MAX, REG_WIN):
+            await send(sess, {'t': 'auth', 'ok': False, 'err': '注册过于频繁，请稍后再试'})
+            usage.auth('register', False, uname, sess.ip, err='限速拒绝')
+            return
         ok, err = store.register(m.get('user'), m.get('pass'))
         if ok:
+            _win_bump(reg_ok, sess.ip or 'local', nowr, REG_WIN)
             sess.user = uname
             await send(sess, auth_payload(sess.user))
         else:
@@ -1806,7 +1845,13 @@ async def handle_msg(sess, m):
         usage.auth('login', ok, uname, sess.ip, err=err)
         return
     if t == 'authtoken':
-        name = tokens.get(m.get('token'))
+        tok = m.get('token')
+        name = tokens.get(tok)
+        # 批22 M3：过 TOKEN_TTL 直接作废（正常续期见 tokens_inv 滑动续期）
+        if name and time.time() - token_at.get(tok, 0) > TOKEN_TTL:
+            tokens.pop(tok, None)
+            token_at.pop(tok, None)
+            name = None
         if name and name in store.users:
             sess.user = name
             await send(sess, auth_payload(name))
@@ -1822,6 +1867,7 @@ async def handle_msg(sess, m):
             for tok, u in list(tokens.items()):
                 if u == sess.user:
                     tokens.pop(tok, None)
+                    token_at.pop(tok, None)
         sess.user = None
         await send(sess, {'t': 'auth', 'ok': False, 'err': '已退出'})
         return
@@ -1832,6 +1878,17 @@ async def handle_msg(sess, m):
         await send(sess, {'t': 'rooms', 'list': room_list()})
         return
     if t == 'create':
+        # ---- 批22 H3：建房限速（单会话 + 同 IP 窗内成功配额），防刷房触发全服广播风暴 ----
+        nowc = time.time()
+        cts = getattr(sess, 'create_ts', None)
+        if cts is None:
+            cts = sess.create_ts = []
+        cts[:] = [x for x in cts if nowc - x < CREATE_WIN]
+        ckey = sess.ip or 'local'
+        if len(cts) >= CREATE_MAX or \
+                not _win_ok(create_ip, ckey, nowc, CREATE_IP_MAX, CREATE_WIN):
+            await send(sess, {'t': 'error', 'err': '建房太频繁，请稍后再试'})
+            return
         try:
             size = int(m.get('size', 24))
         except (TypeError, ValueError):
@@ -1876,11 +1933,28 @@ async def handle_msg(sess, m):
         elif not valid_room_pass(str(passw)):
             await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
             return
+        # ---- 批22 H3：全局房间数上限——达上限先淘汰最老空置非持久房（条件镜像
+        # gc_empty_rooms，只把 24h 放宽到 ROOM_EVICT_AGE），无可淘汰则拒 ----
+        if len(rooms) >= ROOM_MAX:
+            live = {x.sid for x in all_sessions}
+            nowr = time.time()
+            victims = [k for k, r in rooms.items()
+                       if k not in DEFAULT_ROOM_IDS and not r.persist
+                       and not r.players and not r.subs
+                       and nowr - r.created > ROOM_EVICT_AGE
+                       and not (r.owner is not None and r.owner in live)]
+            if victims:
+                rooms.pop(min(victims, key=lambda k: rooms[k].created), None)
+            else:
+                await send(sess, {'t': 'error', 'err': '房间数已达上限，请稍后再试'})
+                return
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
                           win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
                           walldeflect=walldeflect)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
+        cts.append(nowc)              # 批22 H3：只计成功建房
+        _win_bump(create_ip, ckey, nowc, CREATE_WIN)
         await broadcast_rooms()
         await send(sess, {'t': 'created', 'room': rid, 'name': name})
         return
@@ -1948,7 +2022,13 @@ async def handle_msg(sess, m):
         if not room:
             await send(sess, {'t': 'rooms', 'list': room_list()})
             return
+        if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
+                       PASS_FAIL_MAX, PASS_FAIL_WIN):
+            # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
+            await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
+            return
         if room.passw and str(m.get('pass') or '') != room.passw:
+            _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
             await send(sess, {'t': 'error', 'err': '房间口令错误'})
             return
         leave_room(sess)
@@ -1966,12 +2046,18 @@ async def handle_msg(sess, m):
             await send(sess, {'t': 'rooms', 'list': room_list()})
             return
         # 口令房：先校验再动状态（客户端重连也带记忆的口令，含断线恢复路径）
+        if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
+                       PASS_FAIL_MAX, PASS_FAIL_WIN):
+            # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
+            await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
+            return
         if room.passw and str(m.get('pass') or '') != room.passw:
+            _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
             await send(sess, {'t': 'error', 'err': '房间口令错误'})
             return
         leave_room(sess)
         # ---- 断线恢复：宽限期内找回原蛇（原分数/身体/位置） ----
-        prev = room.resumable(sess.user)
+        prev = room.resumable(sess.user, sess.ip)
         if prev is not None:
             room.resume(sess, prev)
             sess.room = room
@@ -2106,7 +2192,10 @@ async def handle_msg(sess, m):
     elif t == 'skin':
         p['skin'] = int(m.get('i', 0)) % 5
     elif t == 'respawn':
-        if not p['alive'] and not room.win_pending:
+        # 批22 H4：手动复活仅限复活房且须过 RESPAWN_MS 延迟（与自动复活同门禁）——
+        # 否则死斗/积分房可裸发本消息无限自我复活（已复现：respawn=False 房死亡后立即复活）
+        if not p['alive'] and not room.win_pending and room.respawn and \
+                (not p.get('died_at') or now - p['died_at'] >= RESPAWN_MS):
             room.spawn_player(p)
             room.round_ids.add(sess.pid)
             if p.get('user'):
@@ -2139,6 +2228,7 @@ def leave_room(sess, hard=True):
         if not hard and p and others:
             # 断线且房里还有其他真人 → 挂起原蛇等 RESUME_MS 内重连恢复
             p['off_at'] = now_ms()
+            p['off_ip'] = getattr(sess, 'ip', None)   # 批22 M1：匿名恢复须同 IP 的凭据
             p['session'] = None
         else:
             room.drop_player(sess.pid)
