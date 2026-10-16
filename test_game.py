@@ -1,3 +1,5 @@
+import contextlib
+import io
 import time
 
 import serve
@@ -542,6 +544,21 @@ def test_spawn_avoids_snakes_and_faces_open():
         assert r._open_ahead(hx, hy, p["dir"], 1) >= 4, ("spawn faces too little open space", p["dir"])
         assert all((cx, cy) not in other["cells"] for cx, cy in p["cells"]), p["cells"]
     print("spawn placement OK: dir", p["dir"], "head", p["cells"][0])
+
+
+def test_spawn_cost_logged():
+    # 批26⑥：spawn 耗时测量——stdout 日志行 [spawn] + last_spawn_ms 供线上分布取证
+    r = fresh(24)
+    p = serve.make_player(1, S(), "A", 0)
+    r.players[1] = p
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        r.spawn_player(p)
+    out = buf.getvalue()
+    assert "[spawn]" in out and " ms " in out, out
+    assert "grid=24x24" in out, out
+    assert r.last_spawn_ms >= 0.0, r.last_spawn_ms
+    assert p["alive"] and len(p["cells"]) == 3
 
 
 def test_food_has_unique_id():
@@ -2669,7 +2686,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
-           test_spawn_avoids_snakes_and_faces_open, test_food_has_unique_id,
+           test_spawn_avoids_snakes_and_faces_open, test_spawn_cost_logged,
+           test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
             test_store_gacha_fields,
             test_gacha_probability_boundaries, test_gacha_pity90_hard, test_gacha_pity10_four,

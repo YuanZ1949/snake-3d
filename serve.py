@@ -808,6 +808,17 @@ class Room:
         return best
 
     def spawn_player(self, p, fresh_cells=True):
+        # 批26⑥：线上耗时分布取证——journal 抓 "[spawn]" 行；算法本体在 _spawn_player_impl
+        t0 = time.perf_counter()
+        try:
+            self._spawn_player_impl(p, fresh_cells)
+        finally:
+            ms = (time.perf_counter() - t0) * 1000.0
+            self.last_spawn_ms = ms
+            print(f"[spawn] {ms:.1f} ms grid={self.cols}x{self.rows} "
+                  f"snakes={len(self.players)}", flush=True)
+
+    def _spawn_player_impl(self, p, fresh_cells=True):
         self._reach = None          # 批15①：出生点可能跨静态连通区 → 可达集失效
         base = p.get('base_tick', 150)
         p['tick'] = base
