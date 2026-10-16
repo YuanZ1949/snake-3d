@@ -214,6 +214,15 @@
   /* ===== 批25 T6：抽卡动画骨架 ===== */
   #wishAnim { background: rgba(6,8,18,.97); cursor: pointer; overflow: hidden; }
   #giftPop { background: rgba(6,8,18,.96); overflow: hidden; }   /* 批29④：流星飞过需裁切 */
+  #pauseMask {                                             /* 批30③b：挂机提示胶囊（非全屏遮挡，暂停中聊天/HUD 照常可用） */
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    z-index: 850; padding: 12px 22px; border-radius: 26px; cursor: pointer;
+    background: rgba(14,18,32,.94); border: 1px solid #4a90d9; color: #fff;
+    font-size: 15px; letter-spacing: 1px; user-select: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,.5), 0 0 18px rgba(74,144,217,.35);
+  }
+  #pauseMask:hover { border-color: #7fb8f0; }
+  #pauseMask.hidden { display: none; }           /* 无全局 .hidden，组件自写（仓内惯例） */
   .wishSky { position: absolute; inset: -30%; transform: rotate(-25deg) scale(1); pointer-events: none; transition: transform .6s cubic-bezier(.3,.8,.4,1); }
   .wishSky.cue4 { transform: rotate(-25deg) scale(1.12); }
   .wishSky.cue5 { transform: rotate(-25deg) scale(1.28); }
@@ -600,6 +609,7 @@
     <button class="chip" id="btnSkin" aria-label="皮肤">🐍 翠野</button>
     <button class="chip" id="btnWish" aria-label="祈愿">✨ 祈愿</button>
     <button class="chip" id="btnChat" title="聊天（/ 唤出）" aria-label="聊天">💬 聊天</button>
+    <button class="chip" id="btnPauseGame" title="暂停=挂机：原地冻结，其他人正常（点按恢复）" aria-label="暂停游戏">⏸ 暂停</button>
     <span class="chip hidden" id="dustChip">✨ <b id="dustN">0</b></span>
     <button class="chip" id="btnCam" aria-label="镜头模式">🎥跟随</button>
     <span class="chip" id="connChip">● 连接中…</span>
@@ -850,6 +860,8 @@
     <button id="btnAtk" aria-label="攻击">⚔️</button>
   </div>
 
+  <div id="pauseMask" class="hidden" role="button">⏸ 已挂机 · 点按恢复</div>
+
   <div class="tips">
     跟随视角（默认）：只按 <kbd>←</kbd><kbd>→</kbd> 左右转 · 固定视角：<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动
     &nbsp;·&nbsp; <kbd>J</kbd> / ⚔️ 发射打碎岩石 (+5)
@@ -921,7 +933,7 @@
   let spectTarget = null;          // #8 观战目标 ent id（null=自动跟随领先者）
   let wallCells = [], portalCells = [];   // B1 小地图几何缓存（[x,y] 列表）
   let roundNo = -1;
-  let demoPaused = false;
+  let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
   const PROTO_VER = 27;   // 批29④：须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
@@ -1921,6 +1933,7 @@
     rMsgs = [];                     // 批30③：本房消息列表同样清空（公屏历史跨世界保留）
     if (chatOpen && chatTab === 'r') chatRender();
     joined = false; myEnt = null; myId = null;
+    if (pausedGame) setPaused(false);   // 批30③b：断线撤挂机提示（重连 resume 一并解除服务端挂机态）
     myDust = 0; updateDustChip();   // 批25 T5：离局清零当场星尘 HUD
     clearDirQ();
     winRound = false;
@@ -1973,6 +1986,7 @@
     spectating = false;
     spectTarget = null;
     joined = false;
+    if (pausedGame) setPaused(false);   // 批30③b：回主页撤挂机提示
     myEnt = null; myId = null;
     myDust = 0; updateDustChip();   // 批25 T5
     clearDirQ();
@@ -2066,8 +2080,18 @@
     start(); // 复用入局流程（内部会 doJoin）
   }
 
+  function setPaused(on) {                       // 批30③b：挂机回执 → 提示胶囊 + 双暂停键文案同步
+    pausedGame = on;
+    $('pauseMask').classList.toggle('hidden', !on);
+    $('btnPauseGame').textContent = on ? '▶ 恢复' : '⏸ 暂停';
+    btnPause.textContent = on ? '继续' : '暂停';   // dpad 中心键同语义
+  }
+  function toggleGamePause() {
+    if (!joined) return;                         // 仅对局中（主页/观战不发）
+    send({t: 'pause'});                          // toggle：服务端按当前挂机态翻转并回执 pauseres
+  }
   function togglePause() {
-    if (joined) return; // 对战中不可暂停
+    if (joined) { toggleGamePause(); return; }   // 批30③b：对战中=挂机暂停（原地冻结，其他人正常）
     if (demoPaused) {
       demoPaused = false;
       lastTick = performance.now();
@@ -2637,6 +2661,9 @@
         return;
       case 'online':
         setOnline(m.n);
+        return;
+      case 'pauseres':
+        setPaused(!!m.on);                       // 批30③b：暂停/恢复回执
         return;
       case 'rooms':
         renderRooms(m.list);
@@ -3901,6 +3928,8 @@
   $('btnRestart').onclick = () => { if (winRound) sendReady(); else respawn(); };
   $('btnResume').onclick = togglePause;
   btnPause.onclick = togglePause;
+  $('btnPauseGame').onclick = toggleGamePause;   // 批30③b：HUD 暂停键（手机可点）
+  $('pauseMask').onclick = toggleGamePause;       // 挂机提示点按恢复
   $('btnAtk').onclick = fire;
   $('btnSpeed').onclick = () => {
     speedIdx = (speedIdx + 1) % SPEEDS.length;
@@ -3908,7 +3937,7 @@
     speedEl.textContent = speedText(speedIdx);
     if (joined) send({t: 'speed', ms: SPEEDS[speedIdx].ms});
   };
-  ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
+  ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnPauseGame', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
    'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate', 'btnCfgCancel',
    'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));

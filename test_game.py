@@ -3041,6 +3041,76 @@ def test_gchat_batch30():
     print('gchat batch30 OK')
 
 
+def test_pause_afk_batch30():
+    """批30③b：暂停=挂机——toggle 回执/原地冻结/操作拒收/连接保持不超时回收/恢复续动"""
+    import asyncio
+    r = fresh(12)
+    sess = _cfg_sess(sid='s1', user=None, room=r)
+    p = mk(r, 1, "Me", [(4, 4), (4, 5)], (1, 0))
+    p['session'] = sess
+    sess.pid = 1
+    p2 = mk(r, 2, "Other", [(6, 4), (6, 5)], (1, 0))
+    # 观战者（在房但 pid=None）发 pause → 静默无回执（handle_msg 房内守卫）
+    spy = _cfg_sess(sid='s9', user=None, room=r)
+    asyncio.run(serve.handle_msg(spy, {'t': 'pause'}))
+    assert not any(x.get('t') == 'pauseres' for x in spy.ws.sent), "观战者不该收到 pauseres"
+    # 开：置 off_at+pause（复用挂起保护语义）+ pauseres on
+    asyncio.run(serve.handle_msg(sess, {'t': 'pause'}))
+    assert any(x.get('t') == 'pauseres' and x.get('on') for x in sess.ws.sent), sess.ws.sent
+    assert p.get('pause') is True and p.get('off_at'), p
+    # 冻结：暂停蛇原地不动，他蛇照走（批21 冻结语义同轨）
+    cells1 = [tuple(c) for c in p['cells']]
+    now = serve.now_ms()
+    for _ in range(5):
+        now += 200
+        r.step(0.05, now)
+    assert [tuple(c) for c in p['cells']] == cells1, ("暂停蛇应原地冻结", p['cells'])
+    assert p2['cells'][0] != (6, 4), "在场蛇应正常移动"
+    # 暂停期间操作拒收：dir 不入队、atk 不出弹（原地冻结可开火=无敌炮台）
+    sess.ws.sent.clear()
+    asyncio.run(serve.handle_msg(sess, {'t': 'dir', 'x': 0, 'y': 1}))
+    assert not p['queue'], ("暂停中不该入队", p['queue'])
+    asyncio.run(serve.handle_msg(sess, {'t': 'atk'}))
+    assert not r.projectiles, ("暂停中不该发射", r.projectiles)
+    # 连接保持的挂机超过 RESUME_MS 也不回收（与真断线的区别所在）
+    p['off_at'] = serve.now_ms() - serve.RESUME_MS - 5000
+    r.step_wrapper(0.05, serve.now_ms())
+    assert 1 in r.players, "挂机中（session 在）不应超时移出"
+    # 关：清标记 → pauseres off → 恢复移动
+    sess.ws.sent.clear()
+    asyncio.run(serve.handle_msg(sess, {'t': 'pause'}))
+    assert any(x.get('t') == 'pauseres' and not x.get('on') for x in sess.ws.sent), sess.ws.sent
+    assert 'pause' not in p and 'off_at' not in p, p
+    r.step(0.05, serve.now_ms() + 200)
+    assert p['cells'][0] != cells1[0], "恢复后应继续移动"
+    # 挂机中断线（session=None）→ 仍按 RESUME_MS 宽限回收（防幽灵障碍永驻）
+    p2['off_at'] = serve.now_ms() - serve.RESUME_MS - 5000
+    p2['pause'] = True
+    p2['session'] = None
+    r.step_wrapper(0.05, serve.now_ms())
+    assert 2 not in r.players, "挂机+断线超宽限应移出"
+    print("pause afk batch30 OK")
+
+
+def test_pause_counts_as_present_batch30():
+    """批30③b：挂机者仍算在场真人——第二人断线时原蛇挂起等恢复，而非直接移出"""
+    r = fresh(12)
+    sess1 = _cfg_sess(sid='s1', user=None, room=r)
+    p1 = mk(r, 1, "Paused", [(4, 4), (4, 5)], (1, 0))
+    p1['session'] = sess1
+    p1['off_at'] = serve.now_ms()      # 挂机中（连接保持）
+    p1['pause'] = True
+    sess2 = _cfg_sess(sid='s2', user=None, room=r)
+    sess2.pid = 2
+    sess2.ip = '9.9.9.9'
+    mk(r, 2, "Leaver", [(6, 4), (6, 5)], (1, 0))
+    serve.leave_room(sess2, hard=False)   # 断线：房里还有连接中的挂机真人 → 应挂起
+    assert 2 in r.players, ("挂机者在场时断线方不该被直接移出", list(r.players))
+    assert r.players[2].get('off_at'), "断线方应挂起等恢复"
+    assert r.players[2]['session'] is None
+    print("pause counts as present batch30 OK")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3142,6 +3212,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_star_tuning_batch29,
             test_newbie_room_cfg_batch30,
             test_online_count_batch30,
-            test_gchat_batch30]:
+            test_gchat_batch30,
+            test_pause_afk_batch30, test_pause_counts_as_present_batch30]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

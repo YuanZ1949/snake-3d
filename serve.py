@@ -795,6 +795,7 @@ class Room:
             self.spawn_player(p, fresh_cells=True)
         p.pop('off_at', None)
         p.pop('off_ip', None)   # 批22 M1：恢复后清掉挂起 IP 标记
+        p.pop('pause', None)    # 批30③b：暂停中断线重连 → 一并解除挂机态
         p['session'] = sess
         self.subs.add(sess)
         sess.full_sent = False     # 重连恢复 → 首帧补全量
@@ -1654,9 +1655,12 @@ class Room:
 
     def step_wrapper(self, dt, now):
         # 断线宽限超时：挂起的原蛇到点移出（drop 内含"最后真人离开清 AI"）
+        # 批30③b：挂机（pause）且 session 仍在=主动暂停，不按宽限回收；
+        # 挂机中断线（session=None）由 leave_room 重置 off_at 时刻，照旧 10s 回收防幽灵障碍
         for pid in list(self.players):
             p = self.players.get(pid)
-            if p and p.get('off_at') and now - p['off_at'] >= RESUME_MS:
+            if p and p.get('off_at') and now - p['off_at'] >= RESUME_MS and \
+                    (not p.get('pause') or p.get('session') is None):
                 self.drop_player(pid)
         # 复活模式：死亡延迟到点后原地重建（限时内不结算淘汰）
         if self.respawn and not self.win_pending:
@@ -2681,7 +2685,7 @@ async def handle_msg(sess, m):
         room.ready.add(sess.pid)
         room.maybe_start_round()
     elif t == 'dir':
-        if not p['alive'] or room.win_pending:
+        if not p['alive'] or room.win_pending or p.get('pause'):
             return
         x, y = int(m.get('x', 0)), int(m.get('y', 0))
         if x not in (-1, 0, 1) or y not in (-1, 0, 1) or (x == 0 and y == 0):
@@ -2689,7 +2693,7 @@ async def handle_msg(sess, m):
         if len(p['queue']) < 4:
             p['queue'].append((x, y))
     elif t == 'atk':
-        if not p['alive'] or room.win_pending:
+        if not p['alive'] or room.win_pending or p.get('pause'):
             return
         if now - p['last_atk'] < room.atk_cd(p, now) or not p['cells']:
             return
@@ -2700,7 +2704,8 @@ async def handle_msg(sess, m):
                                  'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0})
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
     elif t == 'ult':
-        room.try_ult(p, now)
+        if not p.get('pause'):   # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）
+            room.try_ult(p, now)
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
     elif t == 'skin':
@@ -2717,6 +2722,18 @@ async def handle_msg(sess, m):
             await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
         else:
             p['skin'] = i
+    elif t == 'pause':
+        # 批30③b：暂停=挂机——复用 off_at 挂起语义（原地冻结+批14/21/22 保护不被咬/不顶头），
+        # 但 session 保持连接：step_wrapper 不按 RESUME_MS 回收（挂机≠断线），再点恢复即续走
+        if p.get('pause'):
+            p.pop('pause', None)
+            p.pop('off_at', None)
+            on = False
+        else:
+            p['off_at'] = now
+            p['pause'] = True
+            on = True
+        await send(sess, {'t': 'pauseres', 'on': on})
     elif t == 'respawn':
         # 批22 H4：手动复活仅限复活房且须过 RESPAWN_MS 延迟（与自动复活同门禁）——
         # 否则死斗/积分房可裸发本消息无限自我复活（已复现：respawn=False 房死亡后立即复活）
@@ -2750,7 +2767,8 @@ def leave_room(sess, hard=True):
     if sess.pid is not None:
         p = room.players.get(sess.pid)
         others = [q for q in room.players.values()
-                  if q is not p and not q.get('bot') and not q.get('off_at')]
+                  if q is not p and not q.get('bot') and
+                  (not q.get('off_at') or q.get('pause'))]   # 批30③b：挂机者连接仍在=在场真人
         if not hard and p and others:
             # 断线且房里还有其他真人 → 挂起原蛇等 RESUME_MS 内重连恢复
             p['off_at'] = now_ms()
