@@ -2787,16 +2787,15 @@
       // 批23 P5③：晚加入者/重连者只收到 over 快照、错过 win 事件（ev 只随当次快照下发）→ 补出准备屏
       if (joined && state === 'joining') {
         state = 'win';
-        if (meta.win == null) {
-          $('overTitle').textContent = '平局';
-          $('overSub').textContent = '本局已结束　·　点击准备进入下一局';
-        } else if (meta.win === myId) {
+        if (meta.win === myId) {
+          // resume 赢家本人（新加入的 pid 不可能是上一局赢家）
           $('overTitle').textContent = '🏆 你赢了！';
           $('overSub').textContent = '点击准备进入下一局';
         } else {
-          const we = ents.get(meta.win);
-          $('overTitle').textContent = '🏆 ' + (we ? we.name : '对手') + ' 获胜';
-          $('overSub').textContent = '点击准备进入下一局';
+          // 批29-③：state='joining' = 刚进房、没参与上一局 —— 不把「平局/XX 获胜」
+          // 甩给没参与的人看（用户报「进去后先显示平局」），中性结果 + 准备指引
+          $('overTitle').textContent = '上一局已结束';
+          $('overSub').textContent = '等待其他玩家准备 · 点击准备进入下一局';
         }
         finalScore.textContent = myEnt ? myEnt.score : 0;
         showReadyScreen();
