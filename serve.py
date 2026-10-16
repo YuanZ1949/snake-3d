@@ -4,7 +4,7 @@
 # 架构：多房间（Room），每房间独立棋盘与对局状态；连接（Session）可加入房间
 # 或旁观。账户与战绩持久化到 data/store.json。协议对旧客户端保持向后兼容：
 # 旧客户端不带 room / 账户也能正常游戏（默认进入 "a" 房间、以游客身份游玩）。
-import asyncio, json, os, time, random, http, zipfile, io, hashlib, secrets, traceback
+import asyncio, json, os, time, random, http, zipfile, io, hashlib, secrets, traceback, signal
 from collections import deque
 from pathlib import Path
 import websockets
@@ -1957,6 +1957,8 @@ async def game_cycle(now, n):
 
 async def game_loop():
     while True:
+        if _shutdown_evt is not None and _shutdown_evt.is_set():
+            return                    # 批26③：SIGTERM 优雅关闭已结算 → 主循环返回（≤50ms）
         await asyncio.sleep(CYCLE)
         now = time.monotonic()
         n = now_ms()
@@ -2790,10 +2792,66 @@ async def process_request(path, headers):
 PORT = int(os.environ.get('PORT', '20000'))
 
 
+# ---------------- 批26③：SIGTERM 优雅关闭（systemctl restart 默认信号） ----------------
+MAIN_LOOP = None        # main() 启动时记录，供信号上下文 call_soon_threadsafe 回切
+_shutdown_evt = None    # asyncio.Event：置位后 game_loop 返回 → main 干净退出
+_shutting = False       # 重复 SIGTERM 防重入
+
+
+def shutdown_settle():
+    """优雅关闭：遍历所有房并账在局当场星尘（settle_dust 幂等；匿名无账户只清零
+    不入账）并一次性落盘。只覆盖优雅关闭——kill -9/段错误不走此路径。"""
+    n = 0
+    for room in rooms.values():
+        for q in room.players.values():
+            if q.get('dust', 0) > 0:
+                if q.get('user'):
+                    n += 1
+                settle_dust(q)
+    store.save()
+    return n
+
+
+async def _graceful_shutdown():
+    global _shutting
+    if _shutting:
+        return
+    _shutting = True
+    n = shutdown_settle()
+    print(f'[shutdown] settle ok: {n} players dust granted to store', flush=True)
+    if _shutdown_evt is not None:
+        await asyncio.sleep(0.1)      # 让 best-effort gachainfo 推送跑完（连接尚在）
+        _shutdown_evt.set()
+
+
+def _sigterm():
+    if MAIN_LOOP is None:
+        return
+    try:
+        MAIN_LOOP.call_soon_threadsafe(
+            lambda: MAIN_LOOP.create_task(_graceful_shutdown()))
+    except (RuntimeError, OSError):
+        pass                          # 循环已关闭：进程本就在退出，结算尽力而为
+
+
+def install_shutdown_handlers():
+    """接 SIGTERM：Linux 生产走 loop.add_signal_handler；
+    Windows 无该 API → signal.signal 降级（仅保证可装载，平台不投递 SIGTERM）。"""
+    global _shutdown_evt
+    _shutdown_evt = asyncio.Event()
+    try:
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, _sigterm)
+    except (NotImplementedError, RuntimeError, ValueError, OSError):
+        signal.signal(signal.SIGTERM, lambda *_: _sigterm())
+
+
 async def main():
+    global MAIN_LOOP
     init_rooms()
     load_persist_rooms()   # 重建「保存」过的房间（新#11）
     usage.note('start', port=PORT, pid=os.getpid() if hasattr(os, 'getpid') else None)
+    MAIN_LOOP = asyncio.get_running_loop()
+    install_shutdown_handlers()   # 批26③：SIGTERM → 优雅结算当场星尘后退出
     async with websockets.serve(handler, '0.0.0.0', PORT,
                                 process_request=process_request,
                                 ping_interval=20, ping_timeout=20,

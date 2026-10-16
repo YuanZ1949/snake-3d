@@ -2681,6 +2681,38 @@ def test_late_join_starts_round_when_all_ready():
     print('late join start OK')
 
 
+def test_shutdown_settle():
+    """批26③：SIGTERM 优雅关闭——遍历所有房并账当场星尘落盘（有账户入账、
+    匿名丢弃、幂等）+ 信号接线（Linux add_signal_handler / Windows signal.signal 降级）"""
+    import asyncio
+    import signal as _sig
+    r = fresh(12)
+    a = mk(r, 1, 'A', [(4, 4)], (1, 0)); a['user'] = 'shut_alice'
+    b = mk(r, 2, 'B', [(5, 4)], (1, 0)); b['user'] = None
+    a['dust'] = 70; b['dust'] = 30
+    serve.rooms['sd'] = r
+    try:
+        serve.store.register('shut_alice', '135790')   # add_stardust 对未知账号直接丢 → 先确保建户（密码须 6 位数字；已存在时返回 err 元组，无害）
+        before = serve.store.stardust('shut_alice')
+        n = serve.shutdown_settle()
+        assert n == 1, n
+        assert serve.store.stardust('shut_alice') == before + 70, '在局星尘并账'
+        assert a['dust'] == 0 and b['dust'] == 0, (a['dust'], b['dust'])   # 匿名也清零=丢弃
+        n2 = serve.shutdown_settle()
+        assert n2 == 0, n2                                                 # 幂等
+        assert serve.store.stardust('shut_alice') == before + 70, '二次调用不双计'
+        # 信号接线：事件槽创建 + SIGTERM 注册（不支持 add_signal_handler 的平台降级）
+        async def go():
+            serve._shutdown_evt = None
+            serve.install_shutdown_handlers()
+            assert serve._shutdown_evt is not None, 'shutdown 事件槽未创建'
+        asyncio.run(go())
+        _sig.signal(_sig.SIGTERM, _sig.SIG_DFL)   # 还原默认，避免影响测试进程
+    finally:
+        serve.rooms.pop('sd', None)
+    print('shutdown settle OK')
+
+
 def test_proto_ver_handshake():
     """批26⑤：room-ok 三路（入局/resume/观战）必带 ver == PROTO_VER——
     客户端内置常量不等则 location.reload()，关闭 stale-tab 拿旧 JS 续玩"""
@@ -2720,7 +2752,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_spawn_cost_logged,
-           test_proto_ver_handshake,
+           test_proto_ver_handshake, test_shutdown_settle,
            test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
             test_store_gacha_fields,

@@ -65,6 +65,11 @@ user 字典新增:
 ```
 局内当场星尘：Session/Player 上挂临时字段（不持久化，死亡/离房时并账）。
 
+> **批26③ 回写（优雅关闭）**：进程收到 SIGTERM（`systemctl restart` 默认信号）时，
+> 服务端先遍历所有房间把在局当场星尘并账落盘（`shutdown_settle` → `settle_dust` 幂等 +
+> `store.save`）再退出——**常规部署重启不再丢当场星尘**；崩溃（kill -9/段错误）与
+> 未登录玩家的当场星尘仍然丢弃（原「不持久化」语义对崩溃路径不变）。
+
 ### 5.2 消息协议（新增两条，均需已登录）
 - `{t:'gacha', n:1|10}` → 余额不足回 `error`；成功回 `{t:'gachares', items:[{skin, star, dup, refund}], balance, gained}`（items 顺序 = 抽取顺序；客户端负责压轴排布展示）。
 - `{t:'gachainfo'}` → `{t:'gachainfo', balance, skins:[...], p5, p4, lose}`（进祈愿界面时拉取；局内 balance 含当场星尘）。
