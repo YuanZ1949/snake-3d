@@ -2852,6 +2852,45 @@ def test_proto_ver_handshake():
     print('proto ver handshake OK')
 
 
+def test_update_gift_claim_once():
+    """批29④：更新庆祝回馈 90 抽（=GACHA_PRICE×90=14,400）——
+    room-ok 带未领标记；claimgift 入账一次性；重复拒零副作用；未登录拒"""
+    import asyncio
+    d, old = _gacha_setup()          # 临时账号库（注册 alice），teardown 还原
+    try:
+        serve.rooms['gt'] = fresh(12)
+        s = _cfg_sess(sid='gt1', user='alice'); s.ip = '9.9.9.1'; s.joins = 0
+        asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 'gt', 'name': 'G'}))
+        last = s.ws.sent[-1]
+        assert last.get('t') == 'room-ok', last
+        assert last.get('gift') == 1, '未领标记应随 room-ok 下发：' + repr(last)
+        # 领取：+14400 且记录已领版本
+        asyncio.run(serve.handle_msg(s, {'t': 'claimgift'}))
+        r = s.ws.sent[-1]
+        assert r.get('t') == 'giftres' and r.get('ok'), r
+        assert r.get('amount') == 14400, r
+        assert serve.store.stardust('alice') == 14400, serve.store.stardust('alice')
+        assert serve.store.users['alice'].get('update_ver_claimed') == serve.PROTO_VER
+        # 重复领取：拒绝 + 零副作用
+        asyncio.run(serve.handle_msg(s, {'t': 'claimgift'}))
+        r2 = s.ws.sent[-1]
+        assert r2.get('t') == 'error', r2
+        assert serve.store.stardust('alice') == 14400, '重复领取不得双计'
+        # 已领后 room-ok 不再带 gift 标记
+        asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 'gt', 'name': 'G'}))
+        last2 = s.ws.sent[-1]
+        assert last2.get('gift') in (None, 0), last2
+        # 未登录：拒
+        s2 = _cfg_sess(sid='gt2', user=None); s2.ip = '9.9.9.2'; s2.joins = 0
+        asyncio.run(serve.handle_msg(s2, {'t': 'claimgift'}))
+        r3 = s2.ws.sent[-1]
+        assert r3.get('t') == 'error' and '登录' in r3.get('err', ''), r3
+    finally:
+        serve.rooms.pop('gt', None)
+        _gacha_teardown(d, old)
+    print('update gift claim OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -2948,6 +2987,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_token_ttl_expired,
             test_room_info_humans_vs_bots,
             test_win_pending_timeout_forces_new_round,
-            test_late_join_starts_round_when_all_ready]:
+            test_late_join_starts_round_when_all_ready,
+            test_update_gift_claim_once]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

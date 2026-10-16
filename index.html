@@ -213,6 +213,7 @@
   .wishSkn .st { font-size: 10px; color: #ffd166; letter-spacing: 1px; }
   /* ===== 批25 T6：抽卡动画骨架 ===== */
   #wishAnim { background: rgba(6,8,18,.97); cursor: pointer; overflow: hidden; }
+  #giftPop { background: rgba(6,8,18,.96); overflow: hidden; }   /* 批29④：流星飞过需裁切 */
   .wishSky { position: absolute; inset: -30%; transform: rotate(-25deg) scale(1); pointer-events: none; transition: transform .6s cubic-bezier(.3,.8,.4,1); }
   .wishSky.cue4 { transform: rotate(-25deg) scale(1.12); }
   .wishSky.cue5 { transform: rotate(-25deg) scale(1.28); }
@@ -797,6 +798,16 @@
       <button class="chip" id="btnPauseHome">🏠 返回主页</button>
     </div>
 
+    <!-- 批29④：版本更新庆祝弹窗（room-ok 带 gift 标记时弹出，每会话至多一次；claimgift 一次性入账 14,400 星尘） -->
+    <div class="overlay hidden" id="giftPop">
+      <i class="meteor"></i><i class="meteor m2"></i><i class="meteor m3"></i>
+      <h2>🎉 版本更新，感谢有你</h2>
+      <div class="sub">90 抽等值星尘回馈 · 本版本限领一次</div>
+      <div class="big" id="giftAmt">14,400</div>
+      <button class="primary" id="btnGiftClaim">✨ 领取星尘</button>
+      <button class="chip" id="btnGiftClose">稍后再说</button>
+    </div>
+
     <div class="overlay hidden" id="overScreen">
       <h2 id="overTitle">游戏结束</h2>
       <div class="sub" id="overSub"></div>
@@ -894,7 +905,7 @@
   let demoPaused = false;
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 26;   // 批26⑤：须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
+  const PROTO_VER = 27;   // 批29④：须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
@@ -2644,6 +2655,8 @@
         if (m.id != null) myId = m.id;
         if (m.resumed) $('connTip').textContent = '已恢复原蛇，继续对战';
         if (m.user) { loggedUser = m.user; updateAcctUI(); send({t: 'gachainfo'}); }   // 终审 NIT-6：入局/重连后重同步当场星尘 HUD（resume 后 p.dust 仍在服务端）
+        // 批29④：本版本更新回馈未领 → 弹庆祝窗（每会话至多一次，领过服务端不再带 gift）
+        if (m.gift && !giftShown) { giftShown = true; openGiftPop(); }
         return;
       case 'auth':
         if (m.ok) {
@@ -2693,6 +2706,15 @@
         // 批25 T6：抽卡回包 → 流星动画（meteor→flash→reveal）；gachainfo 回包刷新余额
         playWish(m);
         send({t: 'gachainfo'});   // 刷新余额/皮肤集合
+        return;
+      case 'giftres':
+        // 批29④：更新回馈领取回执 → 关窗 + 余额/皮肤重同步 + 到账提示（失败走通用 error toast）
+        closeGiftPop();
+        if (m.ok) {
+          showToast('更新回馈已到账：+' + (m.amount || 14400) + ' 星尘');
+          sfxChord();
+          send({t: 'gachainfo'});
+        }
         return;
     }
     if (m.t === 'snap') {
@@ -4126,6 +4148,15 @@
   $('btnWish').onclick = openWish;
   $('btnWishLobby').onclick = openWish;   // 批25 T5：大厅入口（startScreen 全屏遮罩盖住顶栏）
   $('btnWishClose').onclick = closeWish;
+  // ===== 批29④：版本更新庆祝弹窗 =====
+  let giftShown = false;   // 每会话至多弹一次（服务端另有每版本一次性入账兜底）
+  function openGiftPop() { $('giftPop').classList.remove('hidden'); sfxChord(); }
+  function closeGiftPop() { $('giftPop').classList.add('hidden'); }
+  $('btnGiftClose').onclick = closeGiftPop;
+  $('btnGiftClaim').onclick = () => {
+    if (!loggedUser) { showToast('请先登录再领取'); return; }
+    send({t: 'claimgift'});   // 回执 giftres：成功关窗+刷余额；失败走通用 error toast
+  };
   $('tabGacha').onclick = () => setWishTab('gacha');
   $('tabSkins').onclick = () => setWishTab('skins');
   $('wish1').onclick = () => { if (loggedUser) send({t: 'gacha', n: 1}); else showToast('抽卡需要登录'); };

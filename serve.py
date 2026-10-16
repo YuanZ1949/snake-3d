@@ -44,7 +44,7 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 26          # 批26⑤：协议版本——room-ok 必带；改协议必须同步 bump 双端
+PROTO_VER = 27          # 批29④：协议版本——room-ok 必带；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
@@ -196,7 +196,9 @@ class Store:
         self.users[name] = {'salt': salt, 'hash': _hash_pw(pw, salt),
                             'created': int(time.time()), 'stats': blank_stats(),
                             # 批25 抽卡：星尘总账/皮肤库存/保底（老账号走防御式读取）
-                            'stardust': 0, 'skins': [], 'gacha_p5': 0, 'gacha_p4': 0, 'gacha_lose': False}
+                            'stardust': 0, 'skins': [], 'gacha_p5': 0, 'gacha_p4': 0, 'gacha_lose': False,
+                            # 批29④：已领更新回馈的协议版本（老账号防御式读取）
+                            'update_ver_claimed': 0}
         self.save()
         return True, None
 
@@ -275,6 +277,7 @@ class Store:
 
 GACHA_POOL = {3: [5, 6, 7, 8, 9, 10], 4: [11, 12, 13], 'up': 15, 'std': 14}
 GACHA_PRICE = 160          # 批25：单抽星尘价（十连 = 10×，无折扣，spec §4.3）
+UPDATE_GIFT = GACHA_PRICE * 90   # 批29④：版本更新庆祝回馈 = 90 抽 = 14,400 星尘（每账号每版本一次）
 GACHA_P5 = 0.016      # 5★ 基础概率
 GACHA_P4 = 0.146      # 4★ 基础概率（含 5★ 之后的判定，即 13% 名义）
 GACHA_PITY5 = 89      # 90 抽硬保底（0 基计数：第 90 抽必出，即 pity5==89 触发）
@@ -2157,6 +2160,17 @@ def can_edit_room(sess, room, otok=None):
     return room.owner is not None and room.owner == sess.sid
 
 
+def _update_gift_pending(user):
+    """批29④：更新庆祝奖励是否待领（room-ok 附带 gift:1，客户端据此弹窗）。
+    键 = 当前协议版本 PROTO_VER：只有本版本没领过才提示（登录态才有意义）。"""
+    if not user:
+        return 0
+    u = store.users.get(user)
+    if not u:
+        return 0
+    return 1 if u.get('update_ver_claimed', 0) != PROTO_VER else 0
+
+
 async def handle_msg(sess, m):
     global next_pid
     t = m.get('t')
@@ -2230,6 +2244,21 @@ async def handle_msg(sess, m):
         return
     if t == 'gachainfo':
         await send(sess, gacha_state(sess))
+        return
+    if t == 'claimgift':
+        # 批29④：领取版本更新庆祝回馈（90 抽 = 14,400 星尘），每账号每版本一次。
+        # 校验与写入之间无 await → 单事件循环内天然原子，重复点击不会双计。
+        u = store.users.get(sess.user) if sess.user else None
+        if u is None:
+            await send(sess, {'t': 'error', 'err': '请先登录再领取更新奖励'})
+            return
+        if u.get('update_ver_claimed', 0) == PROTO_VER:
+            await send(sess, {'t': 'error', 'err': '本版本更新奖励已领取'})
+            return
+        u['update_ver_claimed'] = PROTO_VER   # 先记版本（防重入）再入账
+        bal = store.add_stardust(sess.user, UPDATE_GIFT)   # 内部 save()，两写同一次落盘
+        await send(sess, {'t': 'giftres', 'ok': 1, 'amount': UPDATE_GIFT, 'balance': bal})
+        usage.note('claimgift', user=sess.user, ip=sess.ip, amount=UPDATE_GIFT)
         return
     if t == 'leaderboard':
         await send(sess, {'t': 'leaderboard', 'list': store.leaderboard()})
@@ -2503,6 +2532,7 @@ async def handle_msg(sess, m):
                        user=sess.user, ip=sess.ip)
             await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
                               'user': sess.user, 'id': prev['id'], 'resumed': True,
+                              'gift': _update_gift_pending(sess.user),
                               'ver': PROTO_VER})
             await broadcast_rooms()
             return
@@ -2554,7 +2584,9 @@ async def handle_msg(sess, m):
                    user=sess.user, ip=sess.ip)
         gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
-                          'user': sess.user, 'id': pid, 'ver': PROTO_VER})
+                          'user': sess.user, 'id': pid,
+                          'gift': _update_gift_pending(sess.user),
+                          'ver': PROTO_VER})
         await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
         return
 
