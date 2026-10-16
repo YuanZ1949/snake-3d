@@ -883,6 +883,7 @@
   let dirQ = [];                   // 本地镜像的已发送方向队列（跟随视角计算用）
   let predGateOn = false;          // 批28 C：探针闸门（true=拦截丢弃真实 snap，仅放行 __gachaDbg 注入件）
   let pred = null;                 // 批28 C：自机预测状态（spec §4.1 pred 结构；停用/重置点见 §6）
+  function clearDirQ() { dirQ = []; pred = null; }   // 批28 C §6：所有方向队列清点同步重置预测基准
   let rockKey = '', bonusKey = '', projKey = '';
   let projMeshes = [];             // 服务器弹药的渲染体
   let winRound = false;            // 本轮已出胜负
@@ -1889,7 +1890,7 @@
     $('chatLog').textContent = '';   // 换世界不带旧聊天
     joined = false; myEnt = null; myId = null;
     myDust = 0; updateDustChip();   // 批25 T5：离局清零当场星尘 HUD
-    dirQ = [];
+    clearDirQ();
     winRound = false;
     spectating = false;
     $('btnJoinIn').classList.add('hidden');
@@ -1942,7 +1943,7 @@
     joined = false;
     myEnt = null; myId = null;
     myDust = 0; updateDustChip();   // 批25 T5
-    dirQ = [];
+    clearDirQ();
     winRound = false;
     demoPaused = false;
     clearEnts();
@@ -1985,7 +1986,7 @@
     // 服务器要求满 RESPAWN_MS 才放行：立即发一次（到点即活），点早了 3.2s 自动补发
     send({t: 'respawn'});
     setTimeout(() => { if (state === 'over' && myEnt && !myEnt.alive) send({t: 'respawn'}); }, 3200);
-    dirQ = [];
+    clearDirQ();
     lastTick = performance.now();
   }
 
@@ -2305,7 +2306,7 @@
   function predFrameHook(now) {
     if (!PRED_ENABLED) return;
     if (pred && (!myEnt || pred.id !== myEnt.id)) pred = null;   // §6 通用重置（实体消失/换房）
-    if (!pred || !joined || !myEnt || !myEnt.alive || myEnt.off || spectating ||
+    if (!pred || !pred.active || !joined || !myEnt || !myEnt.alive || myEnt.off || spectating ||
         state !== 'playing' || winRound || !wsOpen) return;
     pred.interval = predInterval(myEnt.tick, myEnt.eff);   // §4.3 每帧取最新
     if (now < predNextMoveAt(pred)) return;
@@ -2379,7 +2380,7 @@
           e.cells = nc;
           e.spine.length = 0;
           e.rotT = nc.map(() => Math.atan2(e.dir.x, e.dir.y));
-          dirQ = [];
+          clearDirQ();
         }
         e.alive = p.alive;
       }
@@ -2691,18 +2692,45 @@
       const now = performance.now();
       if (m.cols || m.rows) ensureBoard(m.cols, m.rows);
       applyTheme(m.theme || 'default');
+      // 批28 C hook3 前置：applyPlayers 覆写前暂存本 snap 服务器自机快照（对账 serverMy，spec §5.0）
+      let serverMy = null;
+      if (pred) {
+        const pm = (m.players || []).find(pp => pp.id === myId);
+        if (pm && pm.cells && pm.cells.length && pm.dir) {
+          serverMy = {cells: pm.cells.map(c => ({x: c[0], y: c[1]})), dir: {x: pm.dir[0], y: pm.dir[1]},
+                      q: pm.q, tick: pm.tick, at: now};
+        }
+      }
       applyPlayers(m.players, now);
+      if (pred && myEnt && !myEnt.alive) pred.active = false;   // §6 停用点：死亡即停（复活走 clearDirQ 重建基准）
       // 方向队列镜像：服务器已应用队首时出队
       if (myEnt && dirQ.length) {
+        const dirLen0 = dirQ.length;
         while (dirQ.length && dirQ[0].x === myEnt.dir.x && dirQ[0].y === myEnt.dir.y) dirQ.shift();
+        const nDir = dirLen0 - dirQ.length;
         // 批13①：服务端队列权威对账——服务端清队(deflect/clash/955-959)或
         // 队满丢新项(1761)后本地镜像会永久失步并锁死在 length==4，
         // 以快照 q 为准截断/回收，保证 dirQ 有界且收敛
+        let nQ = 0;
         if (typeof myEnt.q === 'number') {
-          if (dirQ.length > myEnt.q) dirQ.length = myEnt.q;
+          if (dirQ.length > myEnt.q) { nQ = dirQ.length - myEnt.q; dirQ.length = myEnt.q; }
         }
+        // 批28 C 游标同步（§4.2-1）：服务器已应用/丢弃的输入 = dir 循环出队 N + q 截断 M
+        if (pred) syncApplied(pred, nDir + nQ);
       }
-      // 批28 C：首拍有效 snap 建预测基准（spec §4.3；对账 hook3 在 Task 4）
+      // 批28 C hook3（spec §5.0/§4.2-3）：对账 → 三分支投影处置 → 相位重锚 → snapsApplied++
+      if (pred && pred.active && serverMy) {
+        const r = predReconcile(pred, serverMy, dirQ, predStatics(), predFoods(), myEnt.eff);
+        if (r === 'seamless' || r === 'reanchor') {
+          myEnt.cells = pred.cells.map(c => ({x: c.x, y: c.y}));
+          myEnt.lastCells = pred.prevCells.map(c => ({x: c.x, y: c.y}));
+          myEnt.moveAt = pred.lastMoveAt;
+          myEnt.moveDt = pred.interval;
+        }   // rollback：渲染沿用 applyPlayers 锚点不覆写（pred 已在 reconcile 内就地改写）
+        if (pred.leadCells === 0) pred.lastMoveAt = now;   // 无状态相位重锚（§4.2-3 末尾）
+        pred.snapsApplied += 1;
+      }
+      // 批28 C：首拍有效 snap 建预测基准（spec §4.3）
       if (PRED_ENABLED && !pred && joined && myEnt && myEnt.alive && !myEnt.off &&
           !spectating && state === 'playing' && !winRound && wsOpen) {
         pred = mkPred(myEnt.cells, myEnt.dir, predInterval(myEnt.tick, myEnt.eff), now);
@@ -2731,7 +2759,7 @@
         state = 'playing';
         overScreen.classList.add('hidden');
         btnRestart.textContent = '重新入局';
-        dirQ = [];
+        clearDirQ();
         lastTick = now;
       }
       updateBoard();
@@ -2745,7 +2773,7 @@
     else if (meta.round !== roundNo) {
       roundNo = meta.round;
       winRound = false;
-      dirQ = [];   // 批13②：新回合清残留方向（上一回合 win_pending 丢弃期按键会积压）
+      clearDirQ();   // 批13②：新回合清残留方向（上一回合 win_pending 丢弃期按键会积压）
       overScreen.classList.add('hidden');
       btnRestart.textContent = '重新入局';
       btnRestart.disabled = false;
@@ -2837,7 +2865,7 @@
       }
       case 'clash': {
         shake = Math.max(shake, .8);
-        if (ev.ids && ev.ids.includes(myId)) { dirQ = []; sTurn(); }
+        if (ev.ids && ev.ids.includes(myId)) { clearDirQ(); sTurn(); }
         break;
       }
       case 'respawn': {
@@ -2881,7 +2909,7 @@
       }
       case 'round': {
         winRound = false;
-        dirQ = [];   // 批13②：与 handleRound 同步清队
+        clearDirQ();   // 批13②：与 handleRound 同步清队
         overScreen.classList.add('hidden');
         lastTick = performance.now();
         break;
@@ -2928,7 +2956,7 @@
     } else {
       recordTip.textContent = '最高分 ' + best;
     }
-    dirQ = [];
+    clearDirQ();
     $('btnOverSpectate').classList.remove('hidden');   // 批16 G：死亡结算可直接观战
     setTimeout(() => { if (state === 'over') overScreen.classList.remove('hidden'); }, 500);
   }
@@ -2960,7 +2988,7 @@
       setTimeout(() => { if (state === 'win') showReadyScreen(); }, 400);
     } else {
       $('overTitle').textContent = '🏆 ' + (ev.name || '对手') + ' 获胜';
-      dirQ = [];   // 批13②：我仍存活但回合已定——win_pending 期按键全被服务端丢弃，先清队
+      clearDirQ();   // 批13②：我仍存活但回合已定——win_pending 期按键全被服务端丢弃，先清队
       showReadyScreen();
     }
   }
