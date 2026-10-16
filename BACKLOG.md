@@ -11,6 +11,7 @@
 | --- | --- | --- |
 | ① 新手村配置 | `DEFAULT_ROOMS` a 16→24；`NEWBIE_ROOM_CFG={rock_mult:0.5, bots:2, respawn:True}` 由 `init_rooms` 注入房 a（岩石覆盖主题值、2 条 AI 陪练、死亡可复活；respawn init 兜底自动限时 120s 比分结算）；b 标准局/c 大神场全默认不动 | `test_newbie_room_cfg_batch30` 先红（cols 16≠24）后绿：a 五项新值 + `eff_rock()==0.5` + AI×2 实生成 + b/c 不变 guard；`local_ci` ALL GREEN |
 | ② 在线人数 | serve `online_count()`（登录按用户名去重、匿名按会话计）+ `broadcast_online()`：welcome 附 `online` 字段、会话建立/断开 + 身份变化四消息（register/login/authtoken/logout，handler 层单点）广播 `{'t':'online','n'}`；首页 `.roomHead` 新增 `#onlineBox`「🌐 当前在线 N 人」；纯增量不 bump PROTO_VER（设计获批：显示位置/去重口径/推送不轮询；不做峰值与战局内 HUD） | `test_online_count_batch30` 先红（AttributeError）后绿（同账号双标签去重 4→3）；e2e/rooms.spec.js「首页显示当前在线人数≥1」GREEN；单测/静态（ids=107）/`local_ci` 全绿 |
+| ③a 公屏聊天+面板 | serve：`gchatin`（1s 限速/80字/空白拒，限速槽先于校验与房内同口径）+ `gchat_log`=deque(50) 内存 + `broadcast_gchat` 全体会话 + `welcome_payload()`（组包从 handler 拆出，带 `gchat` 历史）；客户端：`#chatPanel` 双 Tab（💬公屏/🏠本房）、三入口（首页房间行「💬 公屏」/顶栏「💬 聊天」手机可点/键盘 `/`），旧 `chatIn` 与 `.chatLog.up` 移除，本房 Tab 局外回退公屏，断线/换世界清本房列表（公屏保留） | `test_gchat_batch30` 先红（no attribute gchat_log）后绿（历史50 头淘汰/限速/空白拒/截断/登录名/广播含自己/welcome 历史）；e2e/gchat.spec.js ×3 GREEN（发言回显/新连接 welcome 历史/回退）；静态 ids=114 dup=0；`local_ci` ALL GREEN（Playwright 26 passed） |
 
 待办（逐项对齐后补充行）：③ 公屏聊天 + 暂停交互（语义待澄清：现聊天仅房内、暂停仅主页演示）；④ 管理员账户（倾向轻量 admin 标记 + 踢人/禁言/公告）。
 

@@ -2642,6 +2642,19 @@ async def handle_msg(sess, m):
         await send(sess, {'t': 'left', 'room': left})
         return
 
+    # -------- 公屏聊天（批30③：大厅全局，登录/匿名都可发，复用 1s 限速） --------
+    if t == 'gchatin':
+        now = now_ms()
+        if not chat_throttle(sess, now):
+            return
+        text = str(m.get('text') or '')[:CHAT_MAX].strip()
+        if not text:
+            return
+        msg = {'name': gchat_name(sess), 'text': text}
+        gchat_log.append(msg)
+        await broadcast_gchat(msg)
+        return
+
     # -------- 房间聊天（观战者/玩家都可发） --------
     if t == 'chat':
         room = sess.room
@@ -2771,6 +2784,26 @@ async def broadcast_online():
         await send(s, {'t': 'online', 'n': n})
 
 
+gchat_log = deque(maxlen=50)      # 批30③ 公屏聊天历史（内存环形，不落盘，重启清空）
+
+
+def gchat_name(sess):
+    """公屏显示名：登录名 / 匿名「路人+会话尾号」，同房内口径截 12 字"""
+    return str(sess.user or f'路人{sess.sid}')[:12]
+
+
+async def broadcast_gchat(msg):
+    """批30③ 公屏：广播到全体连接（含未进房/观战）"""
+    for s in list(all_sessions):
+        await send(s, {'t': 'gchat', 'm': msg})
+
+
+def welcome_payload(sess):
+    """welcome 组包：房间列表 + 在线人数（批30②） + 公屏历史 50 条（批30③）"""
+    return {'t': 'welcome', 'id': sess.sid, 'rooms': room_list(),
+            'online': online_count(), 'gchat': list(gchat_log)}
+
+
 async def handler(ws):
     sess = Session(ws)
     try:
@@ -2785,8 +2818,7 @@ async def handler(ws):
     all_sessions.add(sess)
     usage.note('conn', sid=sess.sid, ip=sess.ip, ua=sess.ua)
     try:
-        await send(sess, {'t': 'welcome', 'id': sess.sid, 'rooms': room_list(),
-                          'online': online_count()})
+        await send(sess, welcome_payload(sess))
         await broadcast_online()   # 批30②：新连接上线，刷新所有人的在线人数
         async for raw in ws:
             try:

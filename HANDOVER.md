@@ -148,15 +148,17 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `gachainfo` | — | **批25 T3 新增**：拉抽卡状态（进祈愿界面/入局时各拉一次）；未登录回零值占位（防客户端卡死）；**批26**：登录账号与入局玩家 `p.user` 不一致（换号场景）同样回零值占位（与 `gacha` 同口径的身份校验，防跨账号混显总账/当场星尘） |
 | `persist` | `room, otok?` | **批6 新增（新#11）**：把房间标记为常驻（成功后广播刷新列表；写盘 `data/persist_rooms.json`，重启重建、永不回收）。鉴权 **批23 P6** 从「仅在线 `owner==sid`」扩为 `can_edit_room()` 三轨（账号 / 在线 sid / `otok` owner 凭据常数时间比对）——匿名断线重连后仍可保存 |
 | `chat` | `text` | **批5 新增**：房间聊天（≤80 字，空白不发，1s 限速超限静默丢弃）；观战者也可发，走快照 `ev` 通道 |
+| `gchatin` | `text` | **批30③ 新增**：公屏发言（≤80 字截断、空白拒、每连接 1s 限速复用 `chat_throttle`——**限速槽先于内容校验消耗**，与房内 chat 同口径）；登录/匿名都可发，无需在房 |
 | `respawn` | — | 死亡后重生。**批22 H4**：仅复活房（`room.respawn=true`）且死亡满 `RESPAWN_MS=3s` 才生效，否则服务端拒绝；客户端非复活房死亡直接转观战 |
 
 ### 5.2 服务端 → 客户端
 
 | `t` | 关键字段 | 说明 |
 |---|---|---|
-| `welcome` | `rooms[], online` | 连接建立，带完整房间列表；**批30②** `online`=当前在线人数（去重口径，见下 `online` 行） |
+| `welcome` | `rooms[], online, gchat` | 连接建立，带完整房间列表；**批30②** `online`=当前在线人数（去重口径，见下 `online` 行）；**批30③** `gchat`=公屏最近 50 条历史 |
 | `rooms` | `list[]` | 房间列表（加入/离开/创建时主动广播） |
 | `online` | `n` | **批30② 新增**：当前在线人数推送。口径=登录按用户名去重（同账号多标签=1）、匿名按会话计（`online_count()`）；广播时机=会话建立/断开 + 身份变化四消息（register/login/authtoken/logout）；首页 `.roomHead` `#onlineBox` 渲染「🌐 当前在线 N 人」。**纯增量不 bump PROTO_VER**（老客户端忽略未知字段/消息即兼容；bump 会强制 reload 且触发批29④ 每账号 14,400 回馈） |
+| `gchat` | `m{name, text}` | **批30③ 新增**：公屏新消息，广播到全体连接（含未进房/观战）；历史仅 welcome 下发（`gchat_log=deque(maxlen=50)` 内存环形、不落盘、重启清空）；显示名=登录名 / 「路人+会话尾号」截 12 字 |
 | `created` | `room, name, tok` | 创建成功。**批23 P6**：`tok` = 一次性 owner 凭据（`secrets.token_hex(16)`），仅创建者回执携带，客户端存 `localStorage['snake-owner-toks']`（rid→tok 跨刷新），后续 `roomcfg`/`persist` 附 `otok` 恢复修改权；`info()`/room_list 不下发 |
 | `room-ok` | `room, spectate, user, id, ver, gift?` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生）；**批26⑤**：`ver`=协议版本（`serve.PROTO_VER`，入局/resume/观战三路必带），客户端内置常量不等即 `location.reload()`（关闭「跨部署存活的旧标签页拿旧 JS 续玩」窗口；`ver` 缺省=服务端更旧时不重载，防死循环）。**改协议必须同步 bump 双端常量**（serve.py `PROTO_VER` 与 index.html `PROTO_VER`，忘 bump 的后果=退化为无保护现状而非坏行为）；**批29④**：join/resume 两路附 `gift`=待领更新回馈金额（0=已领/未登录；`_update_gift_pending()`，单调比较 `claimed < PROTO_VER`），客户端据此弹 `#giftPop`；观战（watch）路不带 |
 | `left` | `room` | 离开房间回执 |
@@ -253,6 +255,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **单人练习（批4，新#5）**：主页「🐍 单人练习」→ 建房 `{size:24, bots:3}` → `created` 自动入局（断线重连 onopen 补建房）；建房面板「AI蛇」下拉 0/1/2/3/5/7；房间卡片 meta 显示 `🤖AI×N`。
 - **断线恢复（批5，B2）**：断线时若房内**还有其他真人** → 原蛇置 `off_at` 挂起（原地冻结、不移动不参与转向）等待 `RESUME_MS=10s`；单人房/无其他真人则立即清房（保空房回收语义）。重连（同账号精确匹配；匿名仅当恰一个无账户挂起者）走原 `join` → `room-ok` 带 `resumed:true`，**原 id/身体/分数全保留不重新出生**；超 10s 未归 → drop（含清 AI）。客户端本有的自动重连（onDisconnect→2s→join）自动命中新路径。挂起者对 `maybe_start_round` 视为 ready。
 - **房间聊天（批5，B3）**：`chat` 消息（≤80 字、空白不发、每连接 1s 限速超限静默丢弃）→ 快照 `ev` 通道广播 `{t:'chat',name,text}`；观战者可发（发件人=房内玩家名，否则账户名/'观众'）。客户端按 `/` 或点击输入框进入聊天（输入框早退方向键），左下角消息流 7s 淡出、上限 30 条、textContent 防注入，断线清空。
+- **公屏聊天与聊天面板（批30③）**：服务端 `gchatin` → `gchat_log`（`deque(maxlen=50)` 内存不落盘）→ `broadcast_gchat` 全体会话，`welcome_payload()` 带历史（组包已从 handler 拆出）。客户端 `#chatPanel` 双 Tab（💬公屏 / 🏠本房），入口三处：首页房间行「💬 公屏」（恒公屏）、顶栏「💬 聊天」（局内默认本房，**手机可点**，批30 拍板「都做+按钮适配手机」）、键盘 `/`（局内本房/局外公屏）；本房 Tab 局外自动回退公屏；Enter 发送、Esc 关闭。本房消息仍走批5 `ev` 通道（左下角 7s 淡出流不变），面板持久列各 100 条、textContent 防注入；旧 `chatIn` 输入框与 `.chatLog.up` 已移除；断线/换世界清本房列表，公屏历史跨世界保留。
 - **房间口令（批6，C3）**：建房可设口令 `pass`（6-20 位字母+数字混合、`WEAK_PASSES` 黑名单前后端同步校验），非法 `error` 拒绝创建；口令房 `join`/`watch` 必须带对口令（先校验再动状态，避免把自己踢出原房）。`info` 带 `hasPass`（口令本身不下发）。客户端：建房面板「口令」输入框（可选）、进房 `prompt` 要一次口令后内存记忆（页面生命周期免重输，含断线自动重连）、创建者免重输、口令错误清记忆并 toast 提示。
 - **空房保留/保存（批6，新#11）**：自定义房间创建后 **24h 内不回收**（`ROOM_KEEP_SECS=86400`，之后仍按"没人+没观战+创建者不在线"才删）；创建者可在房间卡片点「⭐ 保存」→ `persist` 消息 → `persist=True` 写盘 `data/persist_rooms.json`，**常驻不回收 + 重启后重建**（`load_persist_rooms()` 于 `main()` 启动时调用）。`info` 带 `persist`，meta 显示「🔒口令」「⭐常驻」。
 - **丝滑移动插值（批7，新#3）**：逻辑仍按格走（服务端不动）；客户端渲染在 `prev→next` 格间按 tick 进度**线性插值**——实体位移时记 `moveAt/moveDt`（按观测间隔自适应，夹 60–400ms），`syncBody` 按 `phase=(now-moveAt)/moveDt` 在两格间取插值目标再走脊柱平滑；头部大跳变（>6 格，传送门/跨图出生）不插值直接贴新位置。演示蛇同理按 `(now-lastTick)/180` 插值。

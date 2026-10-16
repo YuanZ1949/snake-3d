@@ -2990,6 +2990,57 @@ def test_online_count_batch30():
     print('online count batch30 OK')
 
 
+def test_gchat_batch30():
+    """批30③ 公屏聊天：历史 50 条上限 + 1s 限速 + 空白拒/超长截断 +
+    全体会话广播 + welcome 携带历史 + 显示名（登录名 / 路人+会话尾号）"""
+    import asyncio
+    old = set(serve.all_sessions)
+    saved_log = list(serve.gchat_log)
+    try:
+        serve.gchat_log.clear()
+        a = _cfg_sess(sid='ga1')                      # 匿名
+        b = _cfg_sess(sid='gb1', user='bob')          # 登录
+        serve.all_sessions.update({a, b})
+        # 1) 匿名发言：去空白进历史 + 广播到全体（含自己）
+        asyncio.run(serve.handle_msg(a, {'t': 'gchatin', 'text': ' 你好公屏 '}))
+        assert len(serve.gchat_log) == 1, serve.gchat_log
+        m0 = serve.gchat_log[0]
+        assert m0['text'] == '你好公屏', m0
+        assert str(m0['name']).startswith('路人'), m0
+        for s in (a, b):
+            got = [x for x in s.ws.sent if x.get('t') == 'gchat']
+            assert got and got[-1]['m']['text'] == '你好公屏', s.ws.sent
+        # 2) welcome 携带公屏历史
+        w = serve.welcome_payload(a)
+        assert w.get('t') == 'welcome', w
+        assert w.get('gchat') and w['gchat'][0]['text'] == '你好公屏', w
+        # 3) 1s 限速：同会话立刻再发被丢
+        asyncio.run(serve.handle_msg(a, {'t': 'gchatin', 'text': '第二条'}))
+        assert len(serve.gchat_log) == 1, '限速应丢弃'
+        # 4) 空白拒（不进历史不广播；注意限速槽先于内容校验消耗，与房内 chat 同口径）
+        asyncio.run(serve.handle_msg(b, {'t': 'gchatin', 'text': '   '}))
+        assert len(serve.gchat_log) == 1, '空白应拒'
+        # 5) 超长截断 + 登录显示名（c 新会话，避免撞 b 已消耗的限速槽）
+        c = _cfg_sess(sid='gc1', user='carol')
+        asyncio.run(serve.handle_msg(c, {'t': 'gchatin', 'text': 'x' * 200}))
+        assert len(serve.gchat_log) == 2, serve.gchat_log
+        assert serve.gchat_log[-1]['text'] == 'x' * serve.CHAT_MAX
+        assert serve.gchat_log[-1]['name'] == 'carol'
+        # 6) 历史上限 50（新会话避限速）：发 55 条只留尾 50
+        serve.gchat_log.clear()
+        for i in range(55):
+            s = _cfg_sess(sid=f'f{i}', user=f'u{i}')
+            asyncio.run(serve.handle_msg(s, {'t': 'gchatin', 'text': f'm{i}'}))
+        assert len(serve.gchat_log) == 50, len(serve.gchat_log)
+        assert serve.gchat_log[0]['text'] == 'm5', serve.gchat_log[0]
+    finally:
+        serve.all_sessions.clear()
+        serve.all_sessions.update(old)
+        serve.gchat_log.clear()
+        serve.gchat_log.extend(saved_log)
+    print('gchat batch30 OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3090,6 +3141,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_update_gift_claim_once,
             test_star_tuning_batch29,
             test_newbie_room_cfg_batch30,
-            test_online_count_batch30]:
+            test_online_count_batch30,
+            test_gchat_batch30]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

@@ -545,13 +545,20 @@
   }
   /* ---- 房间聊天（批5）：左下角消息流 + 输入框 ---- */
   .chatLog { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; max-width: 64%; z-index: 5; transition: bottom .15s; }
-  .chatLog.up { bottom: 42px; }
   .chatLog .msg { font-size: 12px; line-height: 1.35; color: #e8ebff; background: rgba(10,12,26,.62); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; padding: 2px 7px; word-break: break-all; text-shadow: 0 1px 2px #000; opacity: 1; transition: opacity .6s; }
   .chatLog .msg.fade { opacity: 0; }
-  .chatIn { position: absolute; left: 10px; bottom: 10px; width: 46%; max-width: 320px; z-index: 8; background: rgba(10,12,26,.85); border: 1px solid rgba(255,255,255,.22); border-radius: 7px; color: #e8ebff; font-size: 12px; padding: 5px 8px; outline: none; }
+  /* ---- 聊天面板（批30③：公屏 + 本房双 Tab，首页/对局通用，手机按钮唤出） ---- */
+  .chatPanel { position: fixed; right: 12px; bottom: 12px; width: min(340px, calc(100vw - 24px)); height: min(46vh, 400px); display: flex; flex-direction: column; gap: 6px; background: rgba(10,12,26,.95); border: 1px solid rgba(255,255,255,.20); border-radius: 10px; padding: 8px; z-index: 900; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+  .chatPanel.hidden { display: none; }
+  .cpHead { display: flex; gap: 6px; }
+  .cpTab { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); color: #cdd3f5; cursor: pointer; }
+  .cpTab.on { background: rgba(120,140,255,.30); color: #fff; border-color: rgba(150,170,255,.65); }
+  .cpX { margin-left: auto; }
+  .cpLog { flex: 1; overflow-y: auto; font-size: 12px; line-height: 1.45; color: #e8ebff; display: flex; flex-direction: column; gap: 3px; }
+  .cpLog .cm { word-break: break-all; }
+  .cpIn { font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.22); background: rgba(0,0,0,.4); color: #e8ebff; outline: none; }
   .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(24,20,34,.96); color: #ffb3b3; border: 1px solid rgba(255,120,120,.45); padding: 8px 18px; border-radius: 10px; font-size: 13px; z-index: 999; max-width: 80%; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
   .toast.hidden { display: none; }
-  .chatIn.hidden { display: none; }
 
   /* ===== 小地图（批8 B1） ===== */
   .miniMap {
@@ -575,7 +582,7 @@
     /* 批23 P2：小地图可见时给 HUD 让出右列（内容右缘 W-130 < 小地图左缘 W-112，任意宽度恒 18px 间隙） */
     body.minimapOn .hud { padding-right: 116px; }
     .chatLog { max-width: 78%; font-size: 12px; }
-    .chatIn { max-width: 78%; font-size: 14px; }
+    .chatPanel { left: 8px; right: 8px; width: auto; height: 44vh; bottom: 8px; }
   }
 </style>
 </head>
@@ -592,6 +599,7 @@
     <button class="chip" id="btnMute" aria-label="静音">🔊</button>
     <button class="chip" id="btnSkin" aria-label="皮肤">🐍 翠野</button>
     <button class="chip" id="btnWish" aria-label="祈愿">✨ 祈愿</button>
+    <button class="chip" id="btnChat" title="聊天（/ 唤出）" aria-label="聊天">💬 聊天</button>
     <span class="chip hidden" id="dustChip">✨ <b id="dustN">0</b></span>
     <button class="chip" id="btnCam" aria-label="镜头模式">🎥跟随</button>
     <span class="chip" id="connChip">● 连接中…</span>
@@ -604,7 +612,15 @@
     <div id="bonusEdge" class="edgeHint hidden">⭐</div>
     <div id="effects" class="effects"></div>
     <div id="chatLog" class="chatLog" aria-live="polite"></div>
-    <input id="chatIn" class="chatIn hidden" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
+    <div id="chatPanel" class="chatPanel hidden" aria-label="聊天面板">
+      <div class="cpHead">
+        <button class="cpTab on" id="cpTabG" aria-label="公屏聊天">💬 公屏</button>
+        <button class="cpTab" id="cpTabR" aria-label="房间聊天">🏠 本房</button>
+        <button class="cpTab cpX" id="cpClose" aria-label="关闭聊天">✕</button>
+      </div>
+      <div class="cpLog" id="cpLog" aria-live="polite"></div>
+      <input class="cpIn" id="cpIn" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
+    </div>
     <canvas id="miniMap" class="miniMap hidden" width="150" height="150" aria-label="小地图"></canvas>
     <div id="toast" class="toast hidden" role="alert"></div>
     <button id="btnJoinIn" class="hidden">入局</button>
@@ -634,6 +650,7 @@
           <button class="chip" id="btnRoomRefresh" title="刷新房间" aria-label="刷新房间">↻ 刷新</button>
           <button class="chip" id="btnRoomCreate" title="创建房间" aria-label="创建房间">＋ 创建房间</button>
           <button class="chip" id="btnSolo" title="单人练习：24×24 + 3 条 AI，建好自动开局">🐍 单人练习</button>
+          <button class="chip" id="btnGchat" title="大厅公屏聊天" aria-label="打开公屏聊天">💬 公屏</button>
         </div>
         <div class="roomList" id="roomList" aria-label="房间列表"></div>
 
@@ -1901,6 +1918,8 @@
     clearEnts();
     reset(); // 恢复本地演示世界
     $('chatLog').textContent = '';   // 换世界不带旧聊天
+    rMsgs = [];                     // 批30③：本房消息列表同样清空（公屏历史跨世界保留）
+    if (chatOpen && chatTab === 'r') chatRender();
     joined = false; myEnt = null; myId = null;
     myDust = 0; updateDustChip();   // 批25 T5：离局清零当场星尘 HUD
     clearDirQ();
@@ -2611,6 +2630,10 @@
       case 'welcome':
         if (m.rooms) renderRooms(m.rooms);
         if (m.online != null) setOnline(m.online);
+        if (m.gchat) { gMsgs = m.gchat.slice(); if (chatOpen && chatTab === 'g') chatRender(); }   // 批30③ 公屏历史
+        return;
+      case 'gchat':
+        pushG(m.m || {});                          // 批30③ 公屏新消息（全体广播）
         return;
       case 'online':
         setOnline(m.n);
@@ -2965,6 +2988,7 @@
       }
       case 'chat': {
         appendChat(ev);
+        pushR({name: ev.name, text: ev.text});     // 批30③：本房消息进面板持久列表
         break;
       }
     }
@@ -3710,33 +3734,56 @@
   }
   $('btnCfgCancel').onclick = hideCreatePanel;
 
-  // ================= 房间聊天（批5） =================
-  function focusChat() {
-    if (!joined && !spectating) return;
-    const el = $('chatIn');
-    el.classList.remove('hidden');
-    $('chatLog').classList.add('up');
-    el.focus();
+  // ================= 聊天面板（批30③：公屏 + 本房双 Tab，首页/对局通用） =================
+  let gMsgs = [], rMsgs = [], chatTab = 'g', chatOpen = false;
+  function chatRender() {
+    const arr = chatTab === 'g' ? gMsgs : rMsgs;
+    const box = $('cpLog');
+    box.textContent = '';
+    for (const mm of arr.slice(-100)) {
+      const d = document.createElement('div');
+      d.className = 'cm';
+      d.textContent = (mm.name || '…') + '：' + (mm.text || '');
+      box.appendChild(d);
+    }
+    box.scrollTop = box.scrollHeight;
   }
-  function blurChat() {
-    const el = $('chatIn');
-    el.classList.add('hidden');
-    el.blur();
-    $('chatLog').classList.remove('up');
+  function openChatPanel(tab) {
+    if (tab === 'r' && !(joined || spectating)) tab = 'g';   // 本房 Tab 仅局内有效
+    chatTab = tab;
+    chatOpen = true;
+    $('chatPanel').classList.remove('hidden');
+    $('cpTabG').classList.toggle('on', chatTab === 'g');
+    $('cpTabR').classList.toggle('on', chatTab === 'r');
+    chatRender();
+    $('cpIn').focus();
   }
-  $('chatIn').addEventListener('keydown', e => {
+  function closeChatPanel() {
+    chatOpen = false;
+    $('chatPanel').classList.add('hidden');
+    $('cpIn').blur();
+  }
+  function pushG(m) { gMsgs.push(m); if (gMsgs.length > 100) gMsgs.shift(); if (chatOpen && chatTab === 'g') chatRender(); }
+  function pushR(m) { rMsgs.push(m); if (rMsgs.length > 100) rMsgs.shift(); if (chatOpen && chatTab === 'r') chatRender(); }
+  $('btnGchat').onclick = () => openChatPanel('g');                        // 首页房间行入口（恒公屏）
+  $('btnChat').onclick = () => openChatPanel(joined || spectating ? 'r' : 'g');  // 顶栏入口（手机可点）
+  $('cpTabG').onclick = () => openChatPanel('g');
+  $('cpTabR').onclick = () => openChatPanel('r');
+  $('cpClose').onclick = closeChatPanel;
+  $('cpIn').addEventListener('keydown', e => {
     e.stopPropagation();                     // 输入时不触发全局游戏按键
     if (e.key === 'Enter') {
-      const t = ($('chatIn').value || '').trim();
-      if (t) send({t: 'chat', text: t});
-      $('chatIn').value = '';
-      blurChat();
+      const txt = ($('cpIn').value || '').trim();
+      if (txt) {
+        if (chatTab === 'g') send({t: 'gchatin', text: txt});
+        else if (joined || spectating) send({t: 'chat', text: txt});
+      }
+      $('cpIn').value = '';
     } else if (e.key === 'Escape') {
-      $('chatIn').value = '';
-      blurChat();
+      $('cpIn').value = '';
+      closeChatPanel();
     }
   });
-  $('chatIn').addEventListener('blur', blurChat);
   function appendChat(ev) {
     const box = $('chatLog');
     const d = document.createElement('div');
@@ -3766,7 +3813,7 @@
     if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
     else if (k === 'j') { if (!e.repeat) fire(); }
     else if (k === 'k') { if (!e.repeat) fireUlt(); }
-    else if (k === '/') { e.preventDefault(); if (!e.repeat) focusChat(); }
+    else if (k === '/') { e.preventDefault(); if (!e.repeat) openChatPanel(joined || spectating ? 'r' : 'g'); }
     else if (k === ' ') {
       if (joined) fire();
       else if (demoPaused) togglePause();
