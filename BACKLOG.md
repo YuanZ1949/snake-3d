@@ -3,6 +3,20 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批28（2026-10-16 · A+B 房间列表杂项 + C 转向手感「自机预测+回滚」）
+
+A+B（`c024579`）：房间列表显示自己创建的空房 + roomcfg 回执标注「下局生效」字段。C 来源：转向手感差 → brainstorming 架构路径获批 → spec 落盘 `9203e8c` → 四轮 oracle 审阅闭合至 v5 `320fb8a` → 计划落盘 `ffdefdc`（writing-plans 自评通过）→ executing-plans 原地执行 5 任务。
+
+| 层 | 内容 | 证据 |
+| --- | --- | --- |
+| 门禁基建 | `scripts/static_check.js` 从 Temp 正式入仓；`local_ci.ps1` 静态段改指仓内脚本、缺失即 FAIL（`1b854bd`） | `node scripts/static_check.js index.html` → ALL STATIC CHECKS PASSED |
+| 探针 | `__predState`（真值观测）+ `__predGate`（拦截真实 snap 并重置基准）+ `__predDbg`（固件直测）+ `__gachaDbg` 打标注入；`e2e/pred.spec.js` 四探针 RED 基线（`fc1533d`） | 两轮 RED 达成计划 Step 2 Expected（skin 载荷修正后） |
+| 预测内核 | predictor 纯函数集（mkPred/advanceStep/predAdvance/predReconcile/syncApplied/predInterval/previewDirOf）+ applyPlayers `e.tick` 落位 + hook2 本地推进/朝向投影（`37af98b`） | T4 固件 GREEN（§5.0 用例①④②③⑤+悬停+上限+interval=90） |
+| 对账回滚 | hook3：serverMy 载荷暂存 → 裁剪游标差分 N+M → syncApplied → 三分支投影处置（seamless/reanchor/rollback 就地改写）→ lead==0 相位重锚；死亡停用 + `clearDirQ()` 10 处重置点 + hook2 停用门（`06e5af9`） | pred 四探针 4/4 GREEN（5.7s） |
+| 全量门禁 | `pwsh scripts\local_ci.ps1` 全量 | ALL GREEN：8/8 E2E Exit 0 + test_game.py ALL PASSED + 静态 js=741/741 ids=102 + Playwright 14 passed（含 pred 4） |
+
+遗留：部署生产后 §7.3 转向手感实操验收（8090）；退路开关 `PRED_ENABLED=true` 常量（异常时改 false 全关）。部署与 push：交付后单独询问（本批累计未 push：`25f1b5d`/`c024579`/`9203e8c`/`320fb8a`/`ffdefdc`/`1b854bd`/`fc1533d`/`37af98b`/`06e5af9` + 本段 commit）。
+
 ## 批27（2026-10-16 · 祈愿动画全套分镜改造）
 
 来源：用户粘贴分镜稿（四阶段：逐颗流星颜色判定/差异化揭示 1.75-2.5s/5★爆点运镜/捕获明光回溯/陈列金光 New 标）→ brainstorming(bounded) 三问拍板：全套分镜改造（推荐）；十连逐颗揭示（原神式，点击=快进）；做轻量 WebAudio 合成音效（零素材）。流程：vertical-slice（服务端 cap → gachares 协议 → 客户端四阶段+音效 → 测试/探针/文档）。
