@@ -2681,12 +2681,46 @@ def test_late_join_starts_round_when_all_ready():
     print('late join start OK')
 
 
+def test_proto_ver_handshake():
+    """批26⑤：room-ok 三路（入局/resume/观战）必带 ver == PROTO_VER——
+    客户端内置常量不等则 location.reload()，关闭 stale-tab 拿旧 JS 续玩"""
+    import asyncio
+    ver = serve.PROTO_VER
+    try:
+        # ---- 路径1：新入局 ----
+        serve.rooms['t'] = fresh(12)
+        s1 = _cfg_sess(sid='pv1'); s1.ip = '1.1.1.1'; s1.joins = 0
+        asyncio.run(serve.handle_msg(s1, {'t': 'join', 'room': 't', 'name': 'V'}))
+        last = s1.ws.sent[-1]
+        assert last.get('t') == 'room-ok', last
+        assert last.get('ver') == ver, last
+        # ---- 路径2：断线 resume（挂起者同 IP 复活） ----
+        r2 = fresh(12)
+        p = mk(r2, 1, 'A', [(4, 4)], (1, 0))
+        p['off_at'] = serve.now_ms(); p['off_ip'] = '1.1.1.1'
+        serve.rooms['t'] = r2
+        s2 = _cfg_sess(sid='pv2'); s2.ip = '1.1.1.1'; s2.joins = 0
+        asyncio.run(serve.handle_msg(s2, {'t': 'join', 'room': 't', 'name': 'V'}))
+        last = s2.ws.sent[-1]
+        assert last.get('t') == 'room-ok' and last.get('resumed') is True, last
+        assert last.get('ver') == ver, last
+        # ---- 路径3：观战 ----
+        s3 = _cfg_sess(sid='pv3'); s3.ip = '2.2.2.2'
+        asyncio.run(serve.handle_msg(s3, {'t': 'watch', 'room': 't'}))
+        last = s3.ws.sent[-1]
+        assert last.get('t') == 'room-ok' and last.get('ver') == ver, last
+    finally:
+        serve.rooms.pop('t', None)
+    print('proto ver handshake OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_spawn_cost_logged,
+           test_proto_ver_handshake,
            test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
             test_store_gacha_fields,

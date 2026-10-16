@@ -44,6 +44,8 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
+PROTO_VER = 26          # 批26⑤：协议版本——room-ok 必带；改协议必须同步 bump 双端
+                        # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
@@ -2439,7 +2441,8 @@ async def handle_msg(sess, m):
         room.subs.add(sess)
         sess.full_sent = False     # 观战订阅 → 首帧补全量
         gc_empty_rooms()   # 换房后旧房间若已空则回收
-        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True, 'user': sess.user})
+        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True,
+                          'user': sess.user, 'ver': PROTO_VER})
         return
 
     if t == 'join':
@@ -2473,7 +2476,8 @@ async def handle_msg(sess, m):
             usage.note('resume', sid=sess.sid, room=room.id, name=prev['name'],
                        user=sess.user, ip=sess.ip)
             await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
-                              'user': sess.user, 'id': prev['id'], 'resumed': True})
+                              'user': sess.user, 'id': prev['id'], 'resumed': True,
+                              'ver': PROTO_VER})
             await broadcast_rooms()
             return
         sess.room = room
@@ -2523,7 +2527,8 @@ async def handle_msg(sess, m):
         usage.note('join', sid=sess.sid, room=room.id, name=p['name'],
                    user=sess.user, ip=sess.ip)
         gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
-        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False, 'user': sess.user, 'id': pid})
+        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
+                          'user': sess.user, 'id': pid, 'ver': PROTO_VER})
         await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
         return
 

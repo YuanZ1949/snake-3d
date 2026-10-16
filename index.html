@@ -840,6 +840,7 @@
   let demoPaused = false;
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
+  const PROTO_VER = 26;   // 批26⑤：须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
@@ -2439,6 +2440,9 @@
         }
         return;
       case 'room-ok':
+        // 批26⑤：版本握手——跨部署存活的旧标签页收到不匹配 ver 立即重载拿新 JS；
+        // ver 缺省（服务端更旧，反向部署窗口）不重载，防死循环
+        if (m.ver !== undefined && m.ver !== PROTO_VER) { location.reload(); return; }
         curRoom = m.room;
         localStorage.setItem(ROOM_KEY, curRoom);
         if (m.id != null) myId = m.id;
