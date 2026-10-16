@@ -147,10 +147,13 @@ THEME_CFG = {
 
 # 地图尺寸档位 → 房间名（用于默认房间）
 DEFAULT_ROOMS = [
-    ('a', '新手村', 16),
+    ('a', '新手村', 24),   # 批30①：16→24（用户拍板：地图 24×24、主题保持随每局随机）
     ('b', '标准局', 24),
     ('c', '大神场', 32),
 ]
+# 批30①：新手村专属配置（默认房每次重启重建即生效）——岩石密度固定 0.5 覆盖主题值、
+# 2 条 AI 陪练（上限 BOTS_MAX）、死亡可复活（init 兜底自动限时 120s，比分最高者胜）
+NEWBIE_ROOM_CFG = {'rock_mult': 0.5, 'bots': 2, 'respawn': True}
 
 
 # ============================================================ 持久化 / 账户
@@ -1833,7 +1836,8 @@ def new_room_id():
 
 def init_rooms():
     for rid, name, size in DEFAULT_ROOMS:
-        rooms[rid] = Room(rid, name, size)
+        rooms[rid] = Room(rid, name, size,
+                          **(NEWBIE_ROOM_CFG if rid == 'a' else {}))  # 批30①：新手村专属配置
 
 
 # ---- 持久化房间（新#11）：「保存」过的房间重启后重建，常驻不回收 ----

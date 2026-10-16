@@ -2933,6 +2933,37 @@ def test_star_tuning_batch29():
     print('star tuning batch29 OK')
 
 
+def test_newbie_room_cfg_batch30():
+    """批30① 新手村配置（用户拍板：24×24、主题保持随每局随机）：
+    岩石密度覆盖 0.5、2 条 AI 陪练、死亡可复活（init 自动限时 120s 兜底）；
+    b 标准局 / c 大神场保持全默认不动。"""
+    saved = {k: serve.rooms.get(k) for k in ('a', 'b', 'c')}
+    try:
+        serve.init_rooms()                       # 按当前 DEFAULT_ROOMS + 新手村专属配置重建
+        a = serve.rooms['a']
+        assert a.name == '新手村' and a.cols == 24 and a.rows == 24, (a.name, a.cols, a.rows)
+        assert a.theme_fixed is None, '主题保持随每局随机'
+        assert a.rock_mult == 0.5, a.rock_mult
+        assert a.eff_rock() == 0.5, '岩石覆盖生效（随机到 lava 也按 0.5）'
+        assert a.respawn is True, '死亡可复活（解决死一次出局）'
+        assert a.limit == 120, '复活房限时兜底'  # limit==0 → respawn 自动补 120s
+        assert a.bots == 2, a.bots
+        assert len([p for p in a.players.values() if p.get('bot')]) == 2, '2 条 AI 已生成'
+        b = serve.rooms['b']
+        assert b.cols == 24 and b.theme_fixed is None and b.rock_mult is None, '标准局不动'
+        assert b.respawn is False and b.limit == 0 and b.bots == 0, '标准局不动'
+        c = serve.rooms['c']
+        assert c.cols == 32 and c.theme_fixed is None and c.rock_mult is None, '大神场不动'
+        assert c.respawn is False and c.limit == 0 and c.bots == 0, '大神场不动'
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                serve.rooms.pop(k, None)
+            else:
+                serve.rooms[k] = v
+    print('newbie room cfg batch30 OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3031,6 +3062,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_win_pending_timeout_forces_new_round,
             test_late_join_starts_round_when_all_ready,
             test_update_gift_claim_once,
-            test_star_tuning_batch29]:
+            test_star_tuning_batch29,
+            test_newbie_room_cfg_batch30]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
