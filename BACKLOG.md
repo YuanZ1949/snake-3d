@@ -15,7 +15,7 @@ A+B（`c024579`）：房间列表显示自己创建的空房 + roomcfg 回执标
 | 对账回滚 | hook3：serverMy 载荷暂存 → 裁剪游标差分 N+M → syncApplied → 三分支投影处置（seamless/reanchor/rollback 就地改写）→ lead==0 相位重锚；死亡停用 + `clearDirQ()` 10 处重置点 + hook2 停用门（`06e5af9`） | pred 四探针 4/4 GREEN（5.7s） |
 | 全量门禁 | `pwsh scripts\local_ci.ps1` 全量 | ALL GREEN：8/8 E2E Exit 0 + test_game.py ALL PASSED + 静态 js=741/741 ids=102 + Playwright 14 passed（含 pred 4） |
 
-遗留：部署生产后 §7.3 转向手感实操验收（8090）；退路开关 `PRED_ENABLED=true` 常量（异常时改 false 全关）。部署与 push：交付后单独询问（本批累计未 push：`25f1b5d`/`c024579`/`9203e8c`/`320fb8a`/`ffdefdc`/`1b854bd`/`fc1533d`/`37af98b`/`06e5af9` + 本段 commit）。
+遗留：部署生产后 §7.3 转向手感实操验收（8090，待用户实操）；退路开关 `PRED_ENABLED=true` 常量（异常时改 false 全关）。push 双远端 + 部署生产 8090 已于 2026-10-16 完成（origin/server 均至 `b5ae801`；漂移零：生产原为批26 `b191c9f` blob；回滚点 `snake-3d-predeploy-20261016-181919.tar.gz`；部署后 active/200/journal 零 error/生产隔离单测 ALL PASSED/`/` 含 pred 探针符号 5 处）。
 
 ## 批27（2026-10-16 · 祈愿动画全套分镜改造）
 

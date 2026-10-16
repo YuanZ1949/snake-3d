@@ -414,7 +414,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`4c48660`**（批23 全量 8 项 + 批末收尾 + 四文档回写，2026-10-15 16:04 部署，origin/server 双远端均已推送，纯 LF；运行时 `serve.py` sha256 与 `4c48660` blob 一致 `469583de…`、`index.html` 一致 `86a34dcc…`（4c48660 相对 39bc6be 仅文档变更，二进制一致）、生产 venv 单测 106 PASS（在 `/tmp/b24test` 隔离跑，防污染生产 data）、journal 零 error）。回滚点：`snake-3d-predeploy-20261015-160322.tar.gz`（另有 `153153`、`120032`、`113629`、`091402`、`062936`、`020636`）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py`、批22 探针 `/tmp/repro_respawn.py` 跑完已删。批22 注册/建房/口令限速以单测 6 用例 + local_ci 为证据（未在生产做破坏性探针，避免污染生产 store/usage 数据）；批23 生产验证同样未做破坏性探针（建房类走本地 local_ci，生产仅只读探针 + 单测隔离跑）。
+当前生产版本：**dev@`b5ae801`**（批27 分镜 + 批28 A+B + 批28 C 预测特性全链 + 文档回写，2026-10-16 18:19 部署，origin/server 双远端均已推送；运行时 `serve.py` 与 `b5ae801` blob 一致 `d467c981…`、`index.html` 一致 `8f6a7db4…`、首页含 pred 探针符号（`__predState` 等 5 处命中）、200 187471B、journal 零 error、生产 venv 隔离单测 ALL PASSED（`/tmp/b28test`，防污染生产 data）。部署前漂移零（生产原为批26 `b191c9f` blob）。回滚点：`snake-3d-predeploy-20261016-181919.tar.gz`（另有批26 `113444` 及 `20261015-160322`、`153153`、`120032`、`113629`、`091402`、`062936`、`020636`）。批19 已清理服务器残留：部署目录 9 个 `*.bak-*`（2026-10-14 旧 scp 流程产物）与 `/tmp/delta_prod.py`、`/tmp/probe1.py`；批20/21 探针 `/tmp/probe21.py`、批22 探针 `/tmp/repro_respawn.py` 跑完已删。批22 注册/建房/口令限速以单测 6 用例 + local_ci 为证据（未在生产做破坏性探针，避免污染生产 store/usage 数据）；批23 生产验证同样未做破坏性探针（建房类走本地 local_ci，生产仅只读探针 + 单测隔离跑）。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 
