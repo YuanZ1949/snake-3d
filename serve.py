@@ -2759,6 +2759,18 @@ async def broadcast_rooms(sess=None):
 all_sessions = set()
 
 
+def online_count():
+    """批30② 在线人数：登录按用户名去重（同账号多标签=1），匿名按会话计"""
+    return len({(s.user or ('anon', s.sid)) for s in all_sessions})
+
+
+async def broadcast_online():
+    """批30② 轻量推送：{'t':'online','n':N} 到全体连接"""
+    n = online_count()
+    for s in list(all_sessions):
+        await send(s, {'t': 'online', 'n': n})
+
+
 async def handler(ws):
     sess = Session(ws)
     try:
@@ -2773,7 +2785,9 @@ async def handler(ws):
     all_sessions.add(sess)
     usage.note('conn', sid=sess.sid, ip=sess.ip, ua=sess.ua)
     try:
-        await send(sess, {'t': 'welcome', 'id': sess.sid, 'rooms': room_list()})
+        await send(sess, {'t': 'welcome', 'id': sess.sid, 'rooms': room_list(),
+                          'online': online_count()})
+        await broadcast_online()   # 批30②：新连接上线，刷新所有人的在线人数
         async for raw in ws:
             try:
                 m = json.loads(raw)
@@ -2781,6 +2795,8 @@ async def handler(ws):
                 continue
             try:
                 await handle_msg(sess, m)
+                if isinstance(m, dict) and m.get('t') in ('register', 'login', 'authtoken', 'logout'):
+                    await broadcast_online()   # 批30②：身份变化影响去重计数
             except Exception:
                 traceback.print_exc()
     except websockets.ConnectionClosed:
@@ -2800,6 +2816,7 @@ async def handler(ws):
         try:
             gc_empty_rooms()
             await broadcast_rooms()   # 有人退出，刷新其它客户端看到的房间列表
+            await broadcast_online()  # 批30②：有人下线，刷新在线人数
         except Exception:
             pass
 

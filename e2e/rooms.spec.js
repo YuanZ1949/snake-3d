@@ -86,3 +86,11 @@ test('有活跃房时改名 → 两房仍可见', async ({ page, browser }) => {
   expect(shown).toContain(b2);
   await ctx2.close();
 });
+
+test('首页显示当前在线人数（≥1，去重口径）', async ({ page }) => {
+  // 批30②：welcome/online 推送渲染；toHaveText 自带重试等首帧推送落地
+  const box = page.locator('#onlineBox');
+  await expect(box).toHaveText(/当前在线\s*\d+\s*人/);
+  const n = parseInt((await box.textContent()).match(/\d+/)[0], 10);
+  expect(n).toBeGreaterThanOrEqual(1);
+});

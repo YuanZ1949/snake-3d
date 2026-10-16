@@ -2964,6 +2964,32 @@ def test_newbie_room_cfg_batch30():
     print('newbie room cfg batch30 OK')
 
 
+def test_online_count_batch30():
+    """批30②：在线人数去重计数——登录按用户名去重（同账号多标签=1），
+    匿名按会话计；welcome 字段与 'online' 事件的 n 即此值"""
+    from types import SimpleNamespace
+
+    class S:                      # 可哈希的最小会话桩
+        def __init__(self, sid, user=None):
+            self.sid = sid
+            self.user = user
+
+    old = set(serve.all_sessions)
+    try:
+        serve.all_sessions.clear()
+        assert serve.online_count() == 0, '空连接 = 0'
+        serve.all_sessions.add(S(1))                       # 匿名A
+        serve.all_sessions.add(S(2))                       # 匿名B
+        serve.all_sessions.add(S(3, 'u1'))                 # 登录
+        serve.all_sessions.add(S(4, 'u1'))                 # 同账号第二标签 → 去重
+        assert serve.online_count() == 3, serve.online_count()
+        assert isinstance(serve.online_count(), int)
+    finally:
+        serve.all_sessions.clear()
+        serve.all_sessions.update(old)
+    print('online count batch30 OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3063,6 +3089,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_late_join_starts_round_when_all_ready,
             test_update_gift_claim_once,
             test_star_tuning_batch29,
-            test_newbie_room_cfg_batch30]:
+            test_newbie_room_cfg_batch30,
+            test_online_count_batch30]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

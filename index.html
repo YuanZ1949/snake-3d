@@ -630,6 +630,7 @@
 
         <div class="roomHead">
           <span class="label">房间</span>
+          <span class="tiny" id="onlineBox" aria-label="当前在线人数">🌐 当前在线 …</span>
           <button class="chip" id="btnRoomRefresh" title="刷新房间" aria-label="刷新房间">↻ 刷新</button>
           <button class="chip" id="btnRoomCreate" title="创建房间" aria-label="创建房间">＋ 创建房间</button>
           <button class="chip" id="btnSolo" title="单人练习：24×24 + 3 条 AI，建好自动开局">🐍 单人练习</button>
@@ -2601,10 +2602,18 @@
   }
 
   // ================= 消息与事件 =================
+  function setOnline(n) {                    // 批30②：首页在线人数（去重口径）
+    const el = $('onlineBox');
+    if (el) el.textContent = '🌐 当前在线 ' + n + ' 人';
+  }
   function onMsg(m) {
     switch (m.t) {
       case 'welcome':
         if (m.rooms) renderRooms(m.rooms);
+        if (m.online != null) setOnline(m.online);
+        return;
+      case 'online':
+        setOnline(m.n);
         return;
       case 'rooms':
         renderRooms(m.list);

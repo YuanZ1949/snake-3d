@@ -154,8 +154,9 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 
 | `t` | 关键字段 | 说明 |
 |---|---|---|
-| `welcome` | `rooms[]` | 连接建立，带完整房间列表 |
+| `welcome` | `rooms[], online` | 连接建立，带完整房间列表；**批30②** `online`=当前在线人数（去重口径，见下 `online` 行） |
 | `rooms` | `list[]` | 房间列表（加入/离开/创建时主动广播） |
+| `online` | `n` | **批30② 新增**：当前在线人数推送。口径=登录按用户名去重（同账号多标签=1）、匿名按会话计（`online_count()`）；广播时机=会话建立/断开 + 身份变化四消息（register/login/authtoken/logout）；首页 `.roomHead` `#onlineBox` 渲染「🌐 当前在线 N 人」。**纯增量不 bump PROTO_VER**（老客户端忽略未知字段/消息即兼容；bump 会强制 reload 且触发批29④ 每账号 14,400 回馈） |
 | `created` | `room, name, tok` | 创建成功。**批23 P6**：`tok` = 一次性 owner 凭据（`secrets.token_hex(16)`），仅创建者回执携带，客户端存 `localStorage['snake-owner-toks']`（rid→tok 跨刷新），后续 `roomcfg`/`persist` 附 `otok` 恢复修改权；`info()`/room_list 不下发 |
 | `room-ok` | `room, spectate, user, id, ver, gift?` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生）；**批26⑤**：`ver`=协议版本（`serve.PROTO_VER`，入局/resume/观战三路必带），客户端内置常量不等即 `location.reload()`（关闭「跨部署存活的旧标签页拿旧 JS 续玩」窗口；`ver` 缺省=服务端更旧时不重载，防死循环）。**改协议必须同步 bump 双端常量**（serve.py `PROTO_VER` 与 index.html `PROTO_VER`，忘 bump 的后果=退化为无保护现状而非坏行为）；**批29④**：join/resume 两路附 `gift`=待领更新回馈金额（0=已领/未登录；`_update_gift_pending()`，单调比较 `claimed < PROTO_VER`），客户端据此弹 `#giftPop`；观战（watch）路不带 |
 | `left` | `room` | 离开房间回执 |
