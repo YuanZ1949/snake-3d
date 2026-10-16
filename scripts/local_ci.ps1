@@ -73,14 +73,15 @@ Write-Host (($u -split "`n" | Select-Object -Last 8) -join "`n")
 Check "单测 ($([string]$ucode))" ($ucode -eq 0)
 
 Say "4.5/5 前端静态检查"
-$staticJs = 'C:\Users\yuan\AppData\Local\Temp\opencode\static_check.js'
+$staticJs = Join-Path $root 'scripts\static_check.js'
 if (Test-Path $staticJs) {
     $s = & node $staticJs 'index.html' 2>&1 | Out-String
     $scode = $LASTEXITCODE
     Write-Host ($s.Trim())
     Check "静态检查" ($scode -eq 0 -and $s -match 'ALL STATIC CHECKS PASSED')
 } else {
-    Write-Host "  (static_check.js 不存在，跳过)" -ForegroundColor Yellow
+    Write-Host "  (static_check.js 缺失)" -ForegroundColor Red
+    Check "静态检查(缺失)" $false
 }
 
 if (-not $SkipPlaywright) {
