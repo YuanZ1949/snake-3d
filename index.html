@@ -882,6 +882,7 @@
   let myEnt = null;
   let dirQ = [];                   // 本地镜像的已发送方向队列（跟随视角计算用）
   let predGateOn = false;          // 批28 C：探针闸门（true=拦截丢弃真实 snap，仅放行 __gachaDbg 注入件）
+  let pred = null;                 // 批28 C：自机预测状态（spec §4.1 pred 结构；停用/重置点见 §6）
   let rockKey = '', bonusKey = '', projKey = '';
   let projMeshes = [];             // 服务器弹药的渲染体
   let winRound = false;            // 本轮已出胜负
@@ -2197,6 +2198,132 @@
     return false;
   }
 
+  // ==== 批28 C：predictor 纯函数集（spec §4.1，纯逻辑、零 DOM、可独立推理） ====
+  const PRED_ENABLED = true;   // §9 退路开关：false → hook 条件恒假、全链路停用（降级回现状）
+  function predInterval(tick, eff) {
+    // §4.3：speed 道具不改 tick（tick_of 不含 ×0.6），须显式折算；吃果/档位改 tick 本身自然跟随
+    return (eff && eff.speed > 0) ? Math.max(60, Math.floor((tick || 150) * 0.6)) : (tick || 150);
+  }
+  function mkPred(cells, dir, interval, now) {
+    return {
+      cells: cells.map(c => ({x: c.x, y: c.y})),
+      prevCells: cells.map(c => ({x: c.x, y: c.y})),
+      moveDir: {x: dir.x, y: dir.y},
+      appliedInputs: 0, leadCells: 0, snapsApplied: 0,
+      lastMoveAt: now, interval, active: true,
+    };
+  }
+  function predNextMoveAt(pred) { return pred.lastMoveAt + pred.interval; }
+  const pkey = (x, y) => x + ',' + y;
+  const previewDirOf = () => dirQ.length ? dirQ[dirQ.length - 1] : (pred ? pred.moveDir : null);
+  function predStatics() {   // world = {walls:Set, rocks:Set, portals:Set, cols, rows}（spec §4.1）
+    return {
+      walls: new Set(wallCells.map(p => p[0] + ',' + p[1])),
+      rocks: new Set(rocks.map(r => r.x + ',' + r.y)),
+      portals: new Set(portalCells.map(p => p[0] + ',' + p[1])),
+      cols: COLS, rows: ROWS,
+    };
+  }
+  function predFoods() {
+    const s = new Set(foods.map(f => f.x + ',' + f.y));
+    if (bonus && bonus.x !== undefined) s.add(bonus.x + ',' + bonus.y);
+    return s;
+  }
+  // 唯一转移内核（与服务器 step 同构，NEW-M3）：换向（反向照吃不转向，镜像 :1314-1318 pop 语义）→
+  // 幽灵环绕 → 门入口/墙/岩/出界悬停（shield/deflect 期不悬停 §4.1；ghost 穿墙绕界）→
+  // 落已知果/星保留尾巴，否则去尾（grow 长度差不预测，§5.3）
+  function advanceStep(state, input, statics, foods, eff) {
+    let d = state.dir;
+    if (input && !(input.x === -d.x && input.y === -d.y)) d = input;
+    const head = state.cells[0];
+    let nx = head.x + d.x, ny = head.y + d.y;
+    const ghost = !!(eff && eff.ghost > 0);
+    if (ghost) { nx = (nx + statics.cols) % statics.cols; ny = (ny + statics.rows) % statics.rows; }
+    const k = pkey(nx, ny);
+    const blocked = statics.portals.has(k) ||
+      (!ghost && (nx < 0 || ny < 0 || nx >= statics.cols || ny >= statics.rows ||
+                  statics.walls.has(k) || statics.rocks.has(k)));
+    if (blocked && !(eff && (eff.shield > 0 || eff.deflect > 0))) {
+      return {cells: state.cells, dir: d, hovered: true};
+    }
+    const keep = foods.has(k);
+    return {cells: [{x: nx, y: ny}].concat(state.cells.slice(0, keep ? undefined : -1)), dir: d, hovered: false};
+  }
+  // 到期推进一格（spec §4.1/§5.4）：leadCells≥1 → 本拍按悬停（强制领先 ≤1）；
+  // 悬停 = 不改 cells、不消费输入、lastMoveAt += interval（否则 now≥predNextMoveAt 恒真每帧重入）
+  function predAdvance(pred, dirQ, statics, foods, eff) {
+    if (!pred.active) return false;
+    if (pred.leadCells >= 1) { pred.lastMoveAt += pred.interval; return false; }
+    const input = pred.appliedInputs < dirQ.length ? dirQ[pred.appliedInputs] : null;
+    const r = advanceStep({cells: pred.cells, dir: pred.moveDir}, input, statics, foods, eff);
+    if (r.hovered) { pred.lastMoveAt += pred.interval; return false; }
+    pred.prevCells = pred.cells;
+    pred.cells = r.cells;
+    pred.moveDir = r.dir;
+    pred.leadCells += 1;
+    if (input) pred.appliedInputs += 1;   // 本拍消费了输入才 +1（服务器同拍 pop）
+    pred.lastMoveAt += pred.interval;
+    return true;
+  }
+  function syncApplied(pred, n) { pred.appliedInputs = Math.max(0, pred.appliedInputs - n); }
+  function predCellsEq(a, b) {   // 精确等式（§5.0 位置等式递减；勿复用 :2192 cellsChanged）
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i].x !== b[i].x || a[i].y !== b[i].y) return false;
+    return true;
+  }
+  function predCellsMatch(a, b) {   // 比较域：公共前缀 + 尾长 ±1 容差（§5.0）
+    if (!a || !b || Math.abs(a.length - b.length) > 1) return false;
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) if (a[i].x !== b[i].x || a[i].y !== b[i].y) return false;
+    return true;
+  }
+  // 对账（spec §5.0）：位置等式递减 → 回放 expected = advanceN(server, dirQ[0..min(applied,lead)-1], lead 步，
+  // 缺输入直行）→ 比较 {cells(±1), moveDir} → 三分支。rollback 就地改写 pred（渲染沿用 applyPlayers 锚点）；
+  // reanchor 仅校正相位，锚点 serverMy.at（hook3 传 snap 到达时刻）缺省不判 → 位置一致即 seamless。
+  function predReconcile(pred, serverMy, dirQ, statics, foods, eff) {
+    if (predCellsEq(serverMy.cells, pred.cells)) pred.leadCells = 0;   // 无状态等式递减（MAJOR-1）
+    const steps = pred.leadCells;
+    const nIn = Math.min(pred.appliedInputs, steps);
+    let st = {cells: serverMy.cells.map(c => ({x: c.x, y: c.y})), dir: {x: serverMy.dir.x, y: serverMy.dir.y}};
+    for (let i = 0; i < steps; i++) {
+      const r = advanceStep(st, i < nIn ? dirQ[i] : null, statics, foods, eff);
+      st = {cells: r.cells, dir: r.dir};
+    }
+    if (!predCellsMatch(st.cells, pred.cells) || st.dir.x !== pred.moveDir.x || st.dir.y !== pred.moveDir.y) {
+      pred.prevCells = serverMy.cells.map(c => ({x: c.x, y: c.y}));   // 服务器旧位置
+      pred.cells = st.cells;
+      pred.moveDir = st.dir;
+      return 'rollback';
+    }
+    if (serverMy.at != null && Math.abs(pred.lastMoveAt - serverMy.at) > pred.interval / 3) {
+      pred.lastMoveAt = serverMy.at;
+      return 'reanchor';
+    }
+    return 'seamless';
+  }
+  // hook2（spec §4.2-2）：渲染循环内到期本地推进；投影写在插值 syncEnt 之前（滑动从本地时刻起步）
+  function predFrameHook(now) {
+    if (!PRED_ENABLED) return;
+    if (pred && (!myEnt || pred.id !== myEnt.id)) pred = null;   // §6 通用重置（实体消失/换房）
+    if (!pred || !joined || !myEnt || !myEnt.alive || myEnt.off || spectating ||
+        state !== 'playing' || winRound || !wsOpen) return;
+    pred.interval = predInterval(myEnt.tick, myEnt.eff);   // §4.3 每帧取最新
+    if (now < predNextMoveAt(pred)) return;
+    predAdvance(pred, dirQ, predStatics(), predFoods(), myEnt.eff);
+    myEnt.lastCells = myEnt.cells.map(c => ({x: c.x, y: c.y}));   // 旧投影
+    myEnt.cells = pred.cells.map(c => ({x: c.x, y: c.y}));
+    myEnt.moveAt = pred.lastMoveAt;        // 推进后值（与 hook3 还原式同源，§4.2 NIT 对齐）
+    myEnt.moveDt = pred.interval;
+  }
+  // hook2 帧末（syncEnt 之后）：dir/rotT 投影覆写——预览朝向只走投影层（NEW-B2），
+  // 裁剪依赖的 myEnt.dir==服务器 dir 在 snap 分支里由 applyPlayers 先行复位，不受此覆写影响
+  function predRotateHook() {
+    if (!PRED_ENABLED || !pred || !pred.active || !myEnt) return;
+    myEnt.dir = {x: pred.moveDir.x, y: pred.moveDir.y};
+    const pv = previewDirOf();
+    if (pv && myEnt.rotT.length) myEnt.rotT[0] = Math.atan2(pv.x, pv.y);
+  }
+
   function applyPlayers(plist, now) {
     const seen = new Set();
     for (const p of plist) {
@@ -2218,6 +2345,7 @@
         e.inv = p.inv || 0;
         e.combo = p.combo | 0;
         e.q = (typeof p.q === 'number') ? p.q : null;   // 批13① dirQ 对账
+        e.tick = (typeof p.tick === 'number') ? p.tick : 150;   // 批28 C：interval 数据源（客户端原先不落位）
         e.off = !!p.off;
         e.eff = p.eff || {};
         paintEnt(e);   // 末尾的 applyOffTint 会按 e.off 应用挂起灰化
@@ -2238,6 +2366,7 @@
         e.inv = p.inv || 0;
         e.combo = p.combo | 0;
         e.q = (typeof p.q === 'number') ? p.q : e.q;
+        e.tick = (typeof p.tick === 'number') ? p.tick : (e.tick || 150);   // 批28 C：interval 数据源
         e.eff = p.eff || {};
         if (!!p.off !== e.off) { e.off = !!p.off; applyOffTint(e); }
         if (e.name !== p.name) e.name = p.name || '';
@@ -2572,6 +2701,12 @@
         if (typeof myEnt.q === 'number') {
           if (dirQ.length > myEnt.q) dirQ.length = myEnt.q;
         }
+      }
+      // 批28 C：首拍有效 snap 建预测基准（spec §4.3；对账 hook3 在 Task 4）
+      if (PRED_ENABLED && !pred && joined && myEnt && myEnt.alive && !myEnt.off &&
+          !spectating && state === 'playing' && !winRound && wsOpen) {
+        pred = mkPred(myEnt.cells, myEnt.dir, predInterval(myEnt.tick, myEnt.eff), now);
+        pred.id = myEnt.id;
       }
       if (!joined && myEnt) {
         joined = true;
@@ -3058,10 +3193,12 @@
       syncSnake(dt);
       syncFood(now);
     } else {
+      predFrameHook(now);   // 批28 C hook2：到期本地推进 + 渲染投影（插值前，spec §4.2-2）
       for (const e of ents.values()) syncEnt(e, dt, now);
       syncFood(now);
       updateProjectiles(now);
       if (myEnt) updateHud();
+      predRotateHook();     // 批28 C 帧末：dir/rotT 投影覆写（NEW-B2 预览层，syncEnt 之后）
     }
 
     updateWorldExtras(now);
@@ -3934,17 +4071,25 @@
     else wishSkip(layer);
   };
   window.__gachaDbg = m => { m.__dbg = 1; onMsg(m); };   // 探针钩子：模拟服务端消息（__dbg 标记 = 注入件，predGate 放行）
-  // —— 批28 C 预测探针（spec §7.1）：空壳先行取真 RED，Task 3/4 填充真实字段 ——
+  // —— 批28 C 预测探针（spec §7.1）——
   window.__predState = () => ({
-    active: false,
+    active: pred ? pred.active : false,
     id: myEnt ? myEnt.id : null,
     skin: myEnt ? myEnt.skin : 0,
     round: roundNo, cols: COLS, rows: ROWS,
-    cells: null, moveDir: null, previewDir: null,
-    leadCells: 0, appliedInputs: 0, snapsApplied: 0, lastMoveAt: 0, proj: null,
+    cells: pred ? pred.cells.map(c => ({x: c.x, y: c.y})) : null,
+    moveDir: pred ? {x: pred.moveDir.x, y: pred.moveDir.y} : null,
+    previewDir: (() => { const pv = previewDirOf(); return pv ? {x: pv.x, y: pv.y} : null; })(),
+    leadCells: pred ? pred.leadCells : 0,
+    appliedInputs: pred ? pred.appliedInputs : 0,
+    snapsApplied: pred ? pred.snapsApplied : 0,
+    lastMoveAt: pred ? pred.lastMoveAt : 0,
+    proj: myEnt ? {cells: myEnt.cells.map(c => ({x: c.x, y: c.y})),
+                  lastCells: myEnt.lastCells.map(c => ({x: c.x, y: c.y})),
+                  moveAt: myEnt.moveAt, moveDt: myEnt.moveDt} : null,
   });
-  window.__predGate = on => { predGateOn = !!on; };
-  window.__predDbg = {};
+  window.__predGate = on => { predGateOn = !!on; if (on) pred = null; };   // gate 开 = 拦截真实 snap + 重置预测基准（首个注入件重建，spec §7.1 隔离语义）
+  window.__predDbg = { mkPred, predNextMoveAt, advanceStep, predAdvance, predReconcile, syncApplied, predInterval };
   $('btnWish').onclick = openWish;
   $('btnWishLobby').onclick = openWish;   // 批25 T5：大厅入口（startScreen 全屏遮罩盖住顶栏）
   $('btnWishClose').onclick = closeWish;

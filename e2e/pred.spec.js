@@ -21,7 +21,7 @@ async function waitPred(page, pred, timeoutMs = 4000) {
 // 注入件公共壳：空世界字段保证预测空间确定（applyWorld 各字段均有 !==undefined 守卫 :2267-2344）
 const snapShell = st0 => ({
   t: 'snap', round: st0.round, cols: st0.cols, rows: st0.rows,
-  walls: [], portals: [], rocks: [], foods: [], bonus: [],
+  walls: [], portals: [], rocks: [], foods: [], bonus: null,   // bonus 必须是 null（[] 为 truthy 会造出 garbage bonus）
 });
 
 // 基准 snap：蛇 [[10,12],[9,12],[8,12]] 头朝东；q = 声明的服务器在途队列长
@@ -162,7 +162,7 @@ test('T4 predictor 固件对账（用例①④②③⑤ + 悬停 + 上限 + inte
   expect(r.clamp5).toBe(0);
   expect(r.clamp1).toBe(1);
   expect(r.hover.cells).toEqual([[5, 5], [4, 5], [3, 5]]);
-  expect(r.hover.lastMoveAt).toBe(150);
+  expect(r.hover.lastMoveAt).toBe(150);   // mkPred(now=0) 悬停拍 → 0+150：证明 lastMoveAt += interval（§5.4），不动才是 bug
   expect(r.hover.lead).toBe(0);
   expect(r.hover.applied).toBe(0);
   expect(r.cap.lead).toBe(1);
