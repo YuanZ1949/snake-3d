@@ -110,7 +110,7 @@ test('T3 alive:false 停用预测', async ({ page }) => {
   await page.evaluate(() => window.__predGate(false));
 });
 
-test('T4 predictor 固件对账（用例①④②③⑤ + 悬停 + 上限 + interval）', async ({ page }) => {
+test('T4 predictor 固件对账（用例固件对账（用例①④②③⑤ + 悬停 + 上限 + interval + 相位守卫）', async ({ page }) => {
   await page.goto('/');   // 无需入局：纯函数直测
   const r = await page.evaluate(() => {
     const D = window.__predDbg;
@@ -153,6 +153,14 @@ test('T4 predictor 固件对账（用例①④②③⑤ + 悬停 + 上限 + inte
     };
     // interval：speed 道具不改 tick，×0.6 下限 60 → floor(150*0.6)=90
     out.interval = D.predInterval(150, { speed: 2000 });
+    // ⑧ 相位守卫（spec v5 :80 仅 lead==0 重锚）：lead>0 时 at 注入不得拉平相位；lead==0 才按阈值重锚
+    const pp = D.mkPred(mk(), E, 150, 150);                       // lastMoveAt=150
+    D.predAdvance(pp, [{ x: 0, y: -1 }], world([]), foods, {});   // 消费 ↑ → lead=1、lastMoveAt=300、moveDir=N
+    out.rLead = D.predReconcile(pp, { cells: mk(), dir: { x: 1, y: 0 }, at: 1000 }, [{ x: 0, y: -1 }], world([]), foods, {});
+    out.lmLead = pp.lastMoveAt;
+    const p0 = D.mkPred(mk(), E, 150, 150);
+    out.rZero = D.predReconcile(p0, { cells: mk(), dir: { x: 1, y: 0 }, at: 1000 }, [], world([]), foods, {});
+    out.lmZero = p0.lastMoveAt;
     return out;
   });
   expect(r.r14).toBe('seamless');
@@ -168,4 +176,9 @@ test('T4 predictor 固件对账（用例①④②③⑤ + 悬停 + 上限 + inte
   expect(r.cap.lead).toBe(1);
   expect(r.cap.same).toBe(true);
   expect(r.interval).toBe(90);
+  // 用例⑧：lead>0 时 at 不得重锚（oracle 终审 Critical 回归网）；lead==0 才重锚
+  expect(r.rLead).toBe('seamless');
+  expect(r.lmLead).toBe(300);
+  expect(r.rZero).toBe('reanchor');
+  expect(r.lmZero).toBe(1000);
 });

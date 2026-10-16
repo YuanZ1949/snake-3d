@@ -2296,7 +2296,9 @@
       pred.moveDir = st.dir;
       return 'rollback';
     }
-    if (serverMy.at != null && Math.abs(pred.lastMoveAt - serverMy.at) > pred.interval / 3) {
+    // reanchor 仅 lead==0（v5 :80 仅此时重锚；lead>0 相位禁拉平）；锚点 serverMy.at 缺省不判 → 位置一致即 seamless。
+    // 末尾无状态重锚在 hook3（lead==0 → lastMoveAt=now），与此分支同源（at 即 snap 到达 now）。
+    if (pred.leadCells === 0 && serverMy.at != null && Math.abs(pred.lastMoveAt - serverMy.at) > pred.interval / 3) {
       pred.lastMoveAt = serverMy.at;
       return 'reanchor';
     }
