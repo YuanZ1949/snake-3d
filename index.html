@@ -881,6 +881,7 @@
   const ents = new Map();          // id -> ent
   let myEnt = null;
   let dirQ = [];                   // 本地镜像的已发送方向队列（跟随视角计算用）
+  let predGateOn = false;          // 批28 C：探针闸门（true=拦截丢弃真实 snap，仅放行 __gachaDbg 注入件）
   let rockKey = '', bonusKey = '', projKey = '';
   let projMeshes = [];             // 服务器弹药的渲染体
   let winRound = false;            // 本轮已出胜负
@@ -2557,6 +2558,7 @@
     }
     if (m.t === 'snap') {
       if (!wsOpen) return;
+      if (predGateOn && !m.__dbg) return;   // 批28 C：闸门开 → 丢弃真实 snap（注入件经 __gachaDbg 打 __dbg 标记放行）
       const now = performance.now();
       if (m.cols || m.rows) ensureBoard(m.cols, m.rows);
       applyTheme(m.theme || 'default');
@@ -3931,7 +3933,18 @@
     if (layer.dataset.phase === 'done') wishAnimClose();
     else wishSkip(layer);
   };
-  window.__gachaDbg = m => { onMsg(m); };   // 探针钩子：模拟服务端消息（如 error）
+  window.__gachaDbg = m => { m.__dbg = 1; onMsg(m); };   // 探针钩子：模拟服务端消息（__dbg 标记 = 注入件，predGate 放行）
+  // —— 批28 C 预测探针（spec §7.1）：空壳先行取真 RED，Task 3/4 填充真实字段 ——
+  window.__predState = () => ({
+    active: false,
+    id: myEnt ? myEnt.id : null,
+    skin: myEnt ? myEnt.skin : 0,
+    round: roundNo, cols: COLS, rows: ROWS,
+    cells: null, moveDir: null, previewDir: null,
+    leadCells: 0, appliedInputs: 0, snapsApplied: 0, lastMoveAt: 0, proj: null,
+  });
+  window.__predGate = on => { predGateOn = !!on; };
+  window.__predDbg = {};
   $('btnWish').onclick = openWish;
   $('btnWishLobby').onclick = openWish;   // 批25 T5：大厅入口（startScreen 全屏遮罩盖住顶栏）
   $('btnWishClose').onclick = closeWish;
