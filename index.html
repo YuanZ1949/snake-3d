@@ -3443,19 +3443,15 @@
     renderRooms(roomList);
   }
 
-  // 房间列表：默认只列出至少有一人的对局，另外始终显示当前选中的房间（如刚创建的空房）
+  // 房间列表：显示全部房间（活跃 + 空闲）。批29-② 方案 B：空闲房不再按 curRoom/isMine 过滤
+  // （生产无活跃对局时列表只剩自己那间）；空闲垃圾房由服务端 gc 兜底（非持久空房 24h 回收）。
   function renderRooms(list) {
     roomList = list || [];
     if (!roomList.some(r => r.id === curRoom)) {
       curRoom = (roomList.find(r => r.players > 0) || roomList[0] || {}).id || curRoom;
     }
     const active = roomList.filter(r => r.players > 0);
-    const shown = active.slice();
-    // 批28-A：自己创建过的空房（owner 凭据持久 / 本会话记录）始终显示，
-    // 避免开了单人练习或建了新房把 curRoom 顶走后，等朋友的空联机房从列表消失（误以为被覆盖）
-    for (const r of roomList) {
-      if (r.players <= 0 && (r.id === curRoom || isMine(r.id))) shown.push(r);
-    }
+    const shown = roomList.slice();
     shown.sort((a, b) => (b.players - a.players) || String(a.id).localeCompare(String(b.id)));
 
     const box = $('roomList');
