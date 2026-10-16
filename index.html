@@ -2280,9 +2280,13 @@
   }
   // 对账（spec §5.0）：位置等式递减 → 回放 expected = advanceN(server, dirQ[0..min(applied,lead)-1], lead 步，
   // 缺输入直行）→ 比较 {cells(±1), moveDir} → 三分支。rollback 就地改写 pred（渲染沿用 applyPlayers 锚点）；
-  // reanchor 仅校正相位，锚点 serverMy.at（hook3 传 snap 到达时刻）缺省不判 → 位置一致即 seamless。
+  // 相位重锚（v5 :80 lead==0 允许/lead>0 禁）批29① 收紧为**仅等式递减转移当拍**（服务器刚追平）：
+  // 水平触发在真实 50ms snap 节奏下每拍把 lastMoveAt 拉回到达时刻 → 到期线无限后推 → pred 永不推进
+  // （本地实证 lead 0/75，e2e T5 回归网）；at 缺省不判 → 位置一致即 seamless（T4 固件依赖）。
   function predReconcile(pred, serverMy, dirQ, statics, foods, eff) {
+    const leadBefore = pred.leadCells;
     if (predCellsEq(serverMy.cells, pred.cells)) pred.leadCells = 0;   // 无状态等式递减（MAJOR-1）
+    const caught = leadBefore > 0 && pred.leadCells === 0;   // 等式递减转移（1→0）
     const steps = pred.leadCells;
     const nIn = Math.min(pred.appliedInputs, steps);
     let st = {cells: serverMy.cells.map(c => ({x: c.x, y: c.y})), dir: {x: serverMy.dir.x, y: serverMy.dir.y}};
@@ -2291,14 +2295,17 @@
       st = {cells: r.cells, dir: r.dir};
     }
     if (!predCellsMatch(st.cells, pred.cells) || st.dir.x !== pred.moveDir.x || st.dir.y !== pred.moveDir.y) {
-      pred.prevCells = serverMy.cells.map(c => ({x: c.x, y: c.y}));   // 服务器旧位置
+      // 批29① F2：prevCells 取改写前的 pred 位（渲染正展示的段；rollback 拍渲染走 applyPlayers 锚点）——
+      // 若置为 serverMy.cells 则 lead==0 时 prevCells==cells，后续空闲 snap 写回退化成钉死段（T7 回归网）
+      pred.prevCells = pred.cells.map(c => ({x: c.x, y: c.y}));
       pred.cells = st.cells;
       pred.moveDir = st.dir;
+      // 批29① F2：pred 与服务器同拍（lead==0）时相位同步到本 snap 到达时刻，与 applyPlayers 锚点(now)同源，
+      // 空闲写回不再把插值进度拉飞（v5 :80 lead==0 允许；lead>0 仍禁拉平）
+      if (pred.leadCells === 0 && serverMy.at != null) pred.lastMoveAt = serverMy.at;
       return 'rollback';
     }
-    // reanchor 仅 lead==0（v5 :80 仅此时重锚；lead>0 相位禁拉平）；锚点 serverMy.at 缺省不判 → 位置一致即 seamless。
-    // 末尾无状态重锚在 hook3（lead==0 → lastMoveAt=now），与此分支同源（at 即 snap 到达 now）。
-    if (pred.leadCells === 0 && serverMy.at != null && Math.abs(pred.lastMoveAt - serverMy.at) > pred.interval / 3) {
+    if (caught && serverMy.at != null && Math.abs(pred.lastMoveAt - serverMy.at) > pred.interval / 3) {
       pred.lastMoveAt = serverMy.at;
       return 'reanchor';
     }
@@ -2720,7 +2727,7 @@
         // 批28 C 游标同步（§4.2-1）：服务器已应用/丢弃的输入 = dir 循环出队 N + q 截断 M
         if (pred) syncApplied(pred, nDir + nQ);
       }
-      // 批28 C hook3（spec §5.0/§4.2-3）：对账 → 三分支投影处置 → 相位重锚 → snapsApplied++
+      // 批28 C hook3（spec §5.0/§4.2-3）：对账 → 三分支投影处置 → snapsApplied++
       if (pred && pred.active && serverMy) {
         const r = predReconcile(pred, serverMy, dirQ, predStatics(), predFoods(), myEnt.eff);
         if (r === 'seamless' || r === 'reanchor') {
@@ -2729,7 +2736,8 @@
           myEnt.moveAt = pred.lastMoveAt;
           myEnt.moveDt = pred.interval;
         }   // rollback：渲染沿用 applyPlayers 锚点不覆写（pred 已在 reconcile 内就地改写）
-        if (pred.leadCells === 0) pred.lastMoveAt = now;   // 无状态相位重锚（§4.2-3 末尾）
+        // 批29①：原"末尾无状态重锚（lead==0 → lastMoveAt=now）"已移入 predReconcile 并收紧为仅
+        // 等式递减转移当拍触发——水平触发在 50ms snap 节奏下死锁 pred（e2e T5 回归网）
         pred.snapsApplied += 1;
       }
       // 批28 C：首拍有效 snap 建预测基准（spec §4.3）
