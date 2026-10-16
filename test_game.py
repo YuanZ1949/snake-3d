@@ -2863,7 +2863,7 @@ def test_update_gift_claim_once():
         asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 'gt', 'name': 'G'}))
         last = s.ws.sent[-1]
         assert last.get('t') == 'room-ok', last
-        assert last.get('gift') == 1, '未领标记应随 room-ok 下发：' + repr(last)
+        assert last.get('gift') == 14400, '未领标记（金额）应随 room-ok 下发：' + repr(last)
         # 领取：+14400 且记录已领版本
         asyncio.run(serve.handle_msg(s, {'t': 'claimgift'}))
         r = s.ws.sent[-1]
@@ -2880,6 +2880,25 @@ def test_update_gift_claim_once():
         asyncio.run(serve.handle_msg(s, {'t': 'join', 'room': 'gt', 'name': 'G'}))
         last2 = s.ws.sent[-1]
         assert last2.get('gift') in (None, 0), last2
+        # oracle F5-②：观战（watch）路不带 gift——弹窗从属对局链路，观战不触发
+        asyncio.run(serve.handle_msg(s, {'t': 'watch', 'room': 'gt'}))
+        wl = next(m for m in reversed(s.ws.sent) if m.get('t') == 'room-ok')   # leave_room 会附发 gachainfo，取 room-ok 本体
+        assert wl.get('spectate') and wl.get('gift') in (None, 0), wl
+        # oracle F5-①：老版本已领（claimed=PROTO_VER-1）在当前版本仍放行（版本键语义）
+        serve.store.users['alice']['update_ver_claimed'] = serve.PROTO_VER - 1
+        assert serve._update_gift_pending('alice') == 14400, '上一版本领过 → 当前版本应再标待领'
+        serve.store.users['alice']['update_ver_claimed'] = serve.PROTO_VER   # 还原为本版本已领
+        # oracle F3：降级（PROTO_VER 调小）期间已领大版本 → 拒且不覆写
+        real_ver = serve.PROTO_VER
+        try:
+            serve.PROTO_VER = real_ver - 1
+            assert serve._update_gift_pending('alice') == 0, '降级不得再标待领'
+            asyncio.run(serve.handle_msg(s, {'t': 'claimgift'}))
+            r4 = s.ws.sent[-1]
+            assert r4.get('t') == 'error', r4
+            assert serve.store.users['alice']['update_ver_claimed'] == real_ver, '降级不得覆写已领版本'
+        finally:
+            serve.PROTO_VER = real_ver
         # 未登录：拒
         s2 = _cfg_sess(sid='gt2', user=None); s2.ip = '9.9.9.2'; s2.joins = 0
         asyncio.run(serve.handle_msg(s2, {'t': 'claimgift'}))

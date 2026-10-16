@@ -3,6 +3,24 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批29（2026-10-16 · 3 修 3 增：卡顿/房间列表/进房平局 + 更新庆祝领星尘/星星调参/效果条中文）
+
+来源：用户原话「游戏有点卡 房间修改完后房间列表会只有一个房间看不到其他房间了 房间进去后会先显示平局感觉不太对 每次推送更新都弹窗庆祝更新反馈玩家90抽 继续调高星星的数量」+ 修正「果子数量不增加 增加星星数量 然后给道具效果加上中文」。流程：backlog-sprint（顺序 ②→③→①→④→⑤→⑥，bug 优先）。设计终稿获批后执行。
+
+| 层 | 内容 | 证据 |
+| --- | --- | --- |
+| ② 房间列表 | renderRooms 去掉 curRoom/isMine 过滤，显示全部房间（方案B 用户拍板）（`f74f15f`） | e2e/rooms.spec.js 4 项 GREEN（含翻转 guard/改名/活跃房回归） |
+| ③ 进房平局 | P5③ 晚加入补屏改中性文案「上一局已结束」，仅 `win===myId` 保留🏆（`b51837e`） | e2e/latejoin.spec.js GREEN（积分赛双自杀→第三者进房断言中性文案） |
+| ① 卡顿根因 | 实证：hook3 `lead==0 → lastMoveAt=now` 水平重锚在 50ms snap 节奏死锁 pred（lead 0/75、maxSince 63ms）+ rollback `prevCells=serverMy.cells` 退化钉死投影（deg 50/75）→ 蛇一格只滑 1/3 即钉住。修=转移触发重锚（`caught`）+ rollback prevCells 取改写前 pred 位 + lead==0 相位同步 + 删 hook3 重锚（`ccb67de`） | pred.spec.js 新 T5/T6/T7 + T4⑧/⑧b，7/7 GREEN；修复后实测 lead 17/76、maxSince 151、deg 2/76；两版帧率均 60fps 顶格（非帧率问题） |
+| ④ 更新庆祝 | PROTO_VER 26→27 双端；store `update_ver_claimed`；room-ok join/resume 附 `gift`=待领金额（watch 不带）；`claimgift`→`giftres`，每账号每版本一次性入账 14,400（GACHA_PRICE×90，校验与写入无 await 原子）；客户端 `#giftPop` 每会话一弹（`3ebe80a`）+ oracle 后续强化：版本键单调比较（降级不重放不覆写）+ 金额服务端下发（消硬编码）+ watch 口径测试 | `test_update_gift_claim_once`（14400/一次性/重复拒/未登录拒/降级拒/老版本放行/watch 不带）；e2e/gift.spec.js 真实注册→弹窗→领取→刷新不再弹 GREEN |
+| ⑤ 星星调参 | `BONUS_SPAWN_P` 0.004→**0.015**（新常量）、`BONUS_LIFE` 8000→**12000**（客户端三处镜像）、`ULT_STAR` 15→**25**、吃星星星尘 +10→**+15**（客户端镜像）；果子数量/收益 +10 明确不动（`0b6d39a`） | `test_star_tuning_batch29` 四新值断言 + 吃果 +10 不变 guard |
+| ⑥ 效果条中文 | `updateEffectsHud` chip 加 `.lb` 中文 span（七道具 `ITEMS[k].label`：护盾/加速/穿墙/磁铁/双倍/狂暴/偏转 + inv「无敌」）（`9a85641`） | e2e/effects.spec.js：gate 注入带 eff/inv 快照，8 chip 全中文 + emoji 保留 GREEN |
+| oracle 终审 | **APPROVE_WITH_NITS**；R-a/R-b/R-c/R-d/R-c2 五裁决全接受。落地修复：F3 版本键 `!=`→`<` 单调、F4 金额服务端下发、F5 三回归网（watch 口径/版本键语义/`static_check.js` 双端 PROTO_VER 一致性）；F1/F2 文档回写（本 commit） | 三门禁复跑全绿 + oracle 独立复跑 exit 0×3 |
+
+门禁（终态）：`test_game.py` ALL GAME UNIT TESTS PASSED（含 2 新测）；`static_check` ids=106 css=281 js=747 + PROTO_VER 双端一致；`local_ci.ps1` ALL GREEN + 手动全量 Playwright **22/22**。
+
+遗留（oracle NIT，记录在案未处理）：F6 dir-only rollback 单拍退化边（非本批回归）；F7 空态文案/列表规模化；F8 弹窗全屏遮挡与观战不触发（设计可解释）；F5-④ 非 gate 真实流断言（现全部 pred e2e 在 gate 内，真实节奏靠 T5 合成代理 + 人工实证）；经济面：今后每次 PROTO_VER bump = 每账号 +14,400。部署与 push：交付后单独询问。
+
 ## 批28（2026-10-16 · A+B 房间列表杂项 + C 转向手感「自机预测+回滚」）
 
 A+B（`c024579`）：房间列表显示自己创建的空房 + roomcfg 回执标注「下局生效」字段。C 来源：转向手感差 → brainstorming 架构路径获批 → spec 落盘 `9203e8c` → 四轮 oracle 审阅闭合至 v5 `320fb8a` → 计划落盘 `ffdefdc`（writing-plans 自评通过）→ executing-plans 原地执行 5 任务。

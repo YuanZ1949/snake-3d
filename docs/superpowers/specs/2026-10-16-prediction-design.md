@@ -1,6 +1,6 @@
 # 自机预测 + 回滚（转向跟手）设计 Spec
 
-> 批28 · 项 C。2026-10-16 · 状态：v5（四轮 oracle 审阅后修订）。v4 关闭 MAJOR-2/MINOR-2/NIT-1/NIT-2；v5 关闭 MAJOR-R（相位重锚改无状态条件 leadCells==0 → 重锚、领先不动，与 §5.0 递减同族）、MINOR-c1（:60 echo 同步 (N+M)）、MINOR-c2（predAdvance 强制 leadCells≤1）、NIT（hook2 moveAt=pred.lastMoveAt 对齐）。四审推演结论：§5.0 位置等式规则四场景自洽、硬边界全满足。待 writing-plans 出实施计划。
+> 批28 · 项 C。2026-10-16 · 状态：**v6（批29① 修订）**。v5 关闭 MAJOR-R/MINOR-c1/c2/NIT；**v6 依批29 实测死锁（lead 0/75、maxSince 63ms）修订三处偏离并经 oracle 终审裁决接受**：R-a §4.2-3/§4.3 相位重锚从无状态 `lead==0` 改**转移触发 `caught`**（原设计每 50ms snap 水平重锚把 predNextMoveAt 无限后推致死锁，hook3 尾部同族重锚一并删除）；R-b rollback 的 `prevCells` 从「服务器旧位置」字面改**改写前 pred 投影位**（否则 lead==0 时 prevCells==cells 退化钉死投影，deg 50/75）；R-c rollback 分支新增 `lead==0` 相位同步（spec 原未写）。回归网：T4⑧/⑧b + T5（50ms 节奏死锁）+ T6（空转不拉相位）+ T7（回滚非退化）。待 writing-plans 出实施计划（批28 语境，已由 ccb67de 实现）。
 
 ## 1. 目标与意图
 
@@ -72,12 +72,12 @@ predReconcile(pred, serverMy, inputs, statics, foods, eff)
 3. **snap 处理（:2563 applyPlayers 之后、:2565 dirQ 裁剪之后）**：先跑既有裁剪——**任何从 dirQ 头部的移除都同步游标**：dir 匹配循环移除 N 条 + `q` 截断移除 M 条（:2570-2571，服务端清队时的唯一收敛路径）→ `pred.appliedInputs = max(0, pred.appliedInputs - (N+M))` → `predReconcile`，按返回值处置渲染投影：
    - `seamless`（重放 == pred）：**还原本地投影**（NEW-M1：applyPlayers 的 cellsChanged 覆盖已改写四元组，须用 pred 持有的 `prevCells` 还原）——`myEnt.cells = pred.cells; myEnt.lastCells = pred.prevCells; myEnt.moveAt = pred.lastMoveAt; myEnt.moveDt = pred.interval`——渲染零抖动（moveAt 有来源，不沿用 applyPlayers 的 snap 到达时刻，防滑动相位每次回跳）。
    - `reanchor`（服务器与 pred 位置相同但相位漂移，如量化/网络抖动）：同 seamless 还原投影，仅 `pred.lastMoveAt` 校正。
-   - `rollback`：`pred.cells = pred.moveDir = 重放结果`（`pred.prevCells = 服务器旧位置`），渲染投影**直接采用 applyPlayers 本次设的锚点**（lastCells=旧服务器位置, cells=服务器位置, moveAt=snap 到达时刻, moveDt=下限插值）——沿用既有滑动，不瞬移。
-   - **相位重锚归属（NEW-M2/MAJOR-R）**：reconcile 末尾（§5.0 位置等式递减**之后**）以无状态条件判定——`leadCells == 0`（已被追平/未超前）→ `pred.lastMoveAt = 本次 snap 到达时刻（hook3 的 now）`；`leadCells == 1`（pred 领先）→ **不动相位**（领先时保留自由时钟，防相位被逐 snap 推平、预测收益归零）。恰在 rollback/追平后防 `now ≥ predNextMoveAt` 立即再推进一格。**勿用「本次 snap 发生 cells 变化」作条件**（hook3 在 applyPlayers 之后，无前一拍服务器 cells 可比，谓词语义反转）。
+   - `rollback`：`pred.cells = pred.moveDir = 重放结果`（`pred.prevCells = **改写前 pred 的投影位**`——批29① R-b 修订，原「服务器旧位置」字面会使 lead==0 时 prevCells==cells，下次 seamless 写回退化成钉死段；与 `applyPlayers` 的 `e.lastCells=改写前展示位` 同源），渲染投影**直接采用 applyPlayers 本次设的锚点**（lastCells=旧服务器位置, cells=服务器位置, moveAt=snap 到达时刻, moveDt=下限插值）——沿用既有滑动，不瞬移。**批29① R-c 新增**：若此分支命中时 `leadCells == 0`（pred 刚被拉平），同步 `pred.lastMoveAt = 本次 snap 到达时刻`（与渲染锚 moveAt 同源，防下次 seamless 写回把锚拉走造成整段回跳）；`leadCells > 0` 仍禁拉平。
+   - **相位重锚归属（NEW-M2/MAJOR-R，批29① R-a 修订为转移触发）**：reconcile 末尾以**pred 侧状态转移**判定——`caught = (leadBefore > 0 && leadCells === 0)`（上一拍还领先、本拍被追平）→ `pred.lastMoveAt = 本次 snap 到达时刻（hook3 的 now）`；未转移（`leadCells` 保持 0，即服务器未动）→ **不动相位**。原无状态条件 `leadCells == 0 → 重锚`（每次 snap）在真实 50ms 节奏下与 hook3 的水平重锚叠加，把 `predNextMoveAt` 无限后推 → pred 永不推进死锁（批29 实测：lead 0/75、maxSince 63ms；修复后 lead 17/76、maxSince 151）。`leadCells == 1`（pred 领先）恒不动相位（领先时保留自由时钟，防相位被逐 snap 推平、预测收益归零）。**勿用「本次 snap 发生 cells 变化」作条件**（hook3 在 applyPlayers 之后，无前一拍服务器 cells 可比，谓词语义反转）；`caught` 是 pred 自身状态的转移，非被禁谓词。
 
 ### 4.3 相位锚定与 interval（M1 闭合）
 
-- 首次收到自机有效 snap 建基准；此后**仅当 `leadCells == 0`（未超前服务器）**才以本次 snap 到达时刻重锚 `pred.lastMoveAt`（MAJOR-R 无状态条件，与 hook3 一致；pred 领先时不动相位，防推平）（服务器移动量化在 50ms cycle，到达误差 ±50ms，由 150ms/格的插值滑动吸收）。
+- 首次收到自机有效 snap 建基准；此后**仅当发生「领先→追平」转移（`caught`，批29① R-a 修订——原 `leadCells == 0` 无状态条件会死锁，见 §4.2）**才以本次 snap 到达时刻重锚 `pred.lastMoveAt`；pred 领先或未转移均不动相位（服务器移动量化在 50ms cycle，到达误差 ±50ms，由 150ms/格的插值滑动吸收）。
 - **interval 公式（每帧取最新）**：`interval = (myEnt.eff && myEnt.eff.speed > 0) ? Math.max(60, Math.floor(myEnt.tick * 0.6)) : myEnt.tick`——`p['tick']` 不含 speed 道具 ×0.6（tick_of，serve.py:1044-1048），漏算会导致道具期每拍错相连续回滚。吃果/档位改的是 `tick` 本身，自然跟随。
 - **超前上限一格**：本地绝不预测超过「上次移动 + interval」的下一格（`leadCells ≤ 1`，也是 §5.0 无状态递减规则成立的前提）。**相位三处更新点**：成功推进（lastMoveAt += interval）、悬停（§5.4 同款累加）、cells 变化锚点校正（§4.2 hook3 相位重锚）。
 

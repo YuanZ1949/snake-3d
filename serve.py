@@ -2162,14 +2162,15 @@ def can_edit_room(sess, room, otok=None):
 
 
 def _update_gift_pending(user):
-    """批29④：更新庆祝奖励是否待领（room-ok 附带 gift:1，客户端据此弹窗）。
-    键 = 当前协议版本 PROTO_VER：只有本版本没领过才提示（登录态才有意义）。"""
+    """批29④：更新庆祝奖励待领金额（room-ok 附 gift，0=未登录/已领；客户端据此弹窗并渲染金额）。
+    版本键单调比较（oracle 终审 F3）：claimed < PROTO_VER 才待领——
+    部署回滚（27→26）时已领 27 不会被降级判成可重复领取，也不会被覆写。"""
     if not user:
         return 0
     u = store.users.get(user)
     if not u:
         return 0
-    return 1 if u.get('update_ver_claimed', 0) != PROTO_VER else 0
+    return UPDATE_GIFT if u.get('update_ver_claimed', 0) < PROTO_VER else 0
 
 
 async def handle_msg(sess, m):
@@ -2253,7 +2254,8 @@ async def handle_msg(sess, m):
         if u is None:
             await send(sess, {'t': 'error', 'err': '请先登录再领取更新奖励'})
             return
-        if u.get('update_ver_claimed', 0) == PROTO_VER:
+        if u.get('update_ver_claimed', 0) >= PROTO_VER:
+            # 单调比较（F3）：降级期间不放行、不覆写，防回滚-重部署双领
             await send(sess, {'t': 'error', 'err': '本版本更新奖励已领取'})
             return
         u['update_ver_claimed'] = PROTO_VER   # 先记版本（防重入）再入账

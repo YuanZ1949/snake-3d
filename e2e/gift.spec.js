@@ -25,7 +25,7 @@ test('更新弹窗：领取入账 14400，同账号二次进房不再弹', async
   // 领取 → giftres 关窗 + 到账 toast
   await page.click('#btnGiftClaim');
   await expect(pop).toBeHidden({ timeout: 5000 });
-  await expect(page.locator('#toast')).toContainText('14400');
+  await expect(page.locator('#toast')).toContainText('14,400');   // F4 后 toast 走服务端金额+千分位
 
   // 新会话（刷新拿新 giftShown）再入局：服务端已记版本 → 不再带 gift → 不弹
   await page.reload();

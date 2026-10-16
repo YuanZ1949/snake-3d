@@ -19,7 +19,7 @@
 | 排行榜/战绩 | 全服排行榜、个人战绩（胜场/击杀/死亡/场次/最高分/吃果数） |
 | 界面 | 统一 `.chip` 按钮风格、开始页布局、房间列表、创建面板、排行榜屏、暂停屏、结束屏、**三处 🏠 返回主页**、移动端触屏方向盘 |
 | 视听 | 环境光+半球光+平行光、粒子/飘字、音效与背景音乐、**16 款皮肤（5 免费 + 11 抽卡）**、5 种地图主题（常规/熔岩/冰原/星空/白天） |
-| 抽卡（祈愿） | **批25**：星尘货币（局内吃果 10/颗 + 局末并账）、卡池 12 款（3★×6 / 4★×3 / 5★ 白金圣蛇+UP 辉夜）、160 星尘/抽、1.6% 5★ + 90 抽硬保底 + 50/50 歪则下个 5★ 必 UP、10 抽必出 4★、重复返还 10/50/200、流星抽卡动画（单抽/十连、最高档压轴、跳过）、我的皮肤页签（按星级分组点选）、大厅入口 ✨祈愿 |
+| 抽卡（祈愿） | **批25**：星尘货币（局内吃果 10/颗、**吃星星 15/颗（批29⑤，原 10）** + 局末并账）、卡池 12 款（3★×6 / 4★×3 / 5★ 白金圣蛇+UP 辉夜）、160 星尘/抽、1.6% 5★ + 90 抽硬保底 + 50/50 歪则下个 5★ 必 UP、10 抽必出 4★、重复返还 10/50/200、流星抽卡动画（单抽/十连、最高档压轴、跳过）、我的皮肤页签（按星级分组点选）、大厅入口 ✨祈愿；**批29④**：版本更新庆祝回馈（每账号每 `PROTO_VER` 一次，14,400 = 90 抽×160，room-ok `gift` 触发弹窗） |
 | 后台 | 服务器使用情况记录（`usage.log`/`usage.json` + 报表脚本），**不体现在页面上** |
 
 ---
@@ -157,13 +157,15 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `welcome` | `rooms[]` | 连接建立，带完整房间列表 |
 | `rooms` | `list[]` | 房间列表（加入/离开/创建时主动广播） |
 | `created` | `room, name, tok` | 创建成功。**批23 P6**：`tok` = 一次性 owner 凭据（`secrets.token_hex(16)`），仅创建者回执携带，客户端存 `localStorage['snake-owner-toks']`（rid→tok 跨刷新），后续 `roomcfg`/`persist` 附 `otok` 恢复修改权；`info()`/room_list 不下发 |
-| `room-ok` | `room, spectate, user, id, ver` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生）；**批26⑤**：`ver`=协议版本（`serve.PROTO_VER`，入局/resume/观战三路必带），客户端内置常量不等即 `location.reload()`（关闭「跨部署存活的旧标签页拿旧 JS 续玩」窗口；`ver` 缺省=服务端更旧时不重载，防死循环）。**改协议必须同步 bump 双端常量**（serve.py `PROTO_VER` 与 index.html `PROTO_VER`，忘 bump 的后果=退化为无保护现状而非坏行为） |
+| `room-ok` | `room, spectate, user, id, ver, gift?` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生）；**批26⑤**：`ver`=协议版本（`serve.PROTO_VER`，入局/resume/观战三路必带），客户端内置常量不等即 `location.reload()`（关闭「跨部署存活的旧标签页拿旧 JS 续玩」窗口；`ver` 缺省=服务端更旧时不重载，防死循环）。**改协议必须同步 bump 双端常量**（serve.py `PROTO_VER` 与 index.html `PROTO_VER`，忘 bump 的后果=退化为无保护现状而非坏行为）；**批29④**：join/resume 两路附 `gift`=待领更新回馈金额（0=已领/未登录；`_update_gift_pending()`，单调比较 `claimed < PROTO_VER`），客户端据此弹 `#giftPop`；观战（watch）路不带 |
 | `left` | `room` | 离开房间回执 |
 | `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
 | `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
 | `gachares` | `items, balance, dust, gained` | **批25 T3 新增**：抽卡结果；`items[]` 按抽取顺序 `{skin, star, up, dup, refund, cap?}`（3★/4★/5★ 星级、up=本次 5★ 是否 UP、dup=重复已拥有、refund=重复返还星尘；**批27**：赢 50/50 的 5★ 额外带 `cap:true`=捕获明光——客户端对单项播「缩回→双星变形 glitch→二次飞行」演出，非 5★/保底/歪均不带此键）；`balance`=抽后纯总账、`dust`=抽后当场星尘（回包时点，refund 已入账）、`gained`=本次总返还 |
 | `gachainfo` | `balance, dust, skins, p5, p4, lose` | **批25 T3 新增**：抽卡状态；`balance`=纯总账、`dust`=当前房当场星尘（不在局内=0）、`skins`=已拥有皮肤 id 列表、`p5/p4`=保底计数（距上次 5★/4★ 的抽数）、`lose`=50/50 是否已歪（下个 5★ 必 UP）；未登录回零值 |
+| `claimgift`（C→S） | （无） | **批29④ 新增**：领取版本更新庆祝回馈 = `UPDATE_GIFT`（`GACHA_PRICE×90`=14,400 星尘）；**每账号每 `PROTO_VER` 版本一次性**（store 键 `update_ver_claimed`，单调比较防降级重放），校验与入账间无 `await`（单事件循环原子，连发不双计）；未登录/已领回 `error` |
+| `giftres` | `ok, amount, balance` | **批29④ 新增**：领取回执；客户端关弹窗 + 刷余额 + 到账 toast |
 | `snap` | 见下 | **50ms 一次快照（批11 起为增量协议）** |
 
 **`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, foods[], bonus`。
@@ -201,7 +203,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `CYCLE` | 0.05 | 主循环 50ms |
 | `PROJ_SPEED` | 22.0 | 子弹格/秒 |
 | `ATK_COOL` | 800 | 攻击冷却 ms |
-| `BONUS_LIFE` | 8000 | 星星存活 ms（+50 分）；实际 = 基础 × `life_mult()`（批3，随地图放大） |
+| `BONUS_LIFE` | **12000**（批29⑤，原 8000） | 星星存活 ms（+50 分）；实际 = 基础 × `life_mult()`（批3，随地图放大） |
+| `BONUS_SPAWN_P` | **0.015**（批29⑤，原 0.004） | 每 tick 刷新星星概率 |
 | `WIN_SCORE` | 200 | 达到该分数触发胜利判定 |
 | `SPAWN_INV` | 2500 | 重生无敌 ms |
 | `ITEM_LIFE` | 12000 | 道具在地上存活 ms；实际 = 基础 × `life_mult()`（批3，随地图放大） |
@@ -216,7 +219,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `RESPAWN_MS` | 3000 | 无限复活模式下死亡到重生的等待 ms |
 | `LIMIT_MAX` | 3600 | 限时模式上限（秒） |
 | `ULT_MAX` | 100 | 大招蓄力上限（攒满才可释放） |
-| `ULT_FRUIT / ULT_STAR / ULT_KILL` | 10 / 15 / 30 | 大招充能：吃水果 / 吃星星 / 咬蛇淘汰 |
+| `ULT_FRUIT / ULT_STAR / ULT_KILL` | 10 / **25**（批29⑤，原 15） / 30 | 大招充能：吃水果 / 吃星星 / 咬蛇淘汰 |
 | `ULT_COOL` | 3000 | 大招释放冷却 ms |
 | `FRUITS` | 10/15/20/15/15 | 5 种水果分值 |
 | `USAGE_MAX` | 8 MB | 用量日志轮转阈值 |
@@ -227,7 +230,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **连击 Combo**：`COMBO_MS=3s` 窗口内连续吃果 `combo+1`，超时/死亡/新回合重置；只有**水果**计数（星星/道具/咬蛇不打断也不加）。倍率 `combo_mult()`：1-4→x1、5-9→x1.5、10-14→x2、15+→x2.5 封顶；`snap.players[]` 带 `combo`，`eat` 事件带 `combo/mult`。
 - **道具 7 种**（`ITEM_TYPES`）：`shield 护盾 / speed 加速 / ghost 穿墙` + `magnet 磁铁`（食物/星星每 tick 朝自己拉 1 格、绕障碍、停在蛇头旁不落格）、`double 双倍`（一切得分 ×2，走 `score_gain()` 统一入口）、`rage 狂暴`（攻击 CD 减半 + 子弹速度 ×1.5，`proj[]` 带 `spd` 字段）、**`deflect 偏转`（批2：仅撞边界墙时折返不死；场内岩石照死、咬到 <2 照样淘汰）**。
 - **护盾强化（批2）**：`shield` 除原被咬免疫外，**任何地形碰撞（边界墙/岩石墙块/自己身体）都折返不死**——折返方向取蛇头垂直两方向中空间最大的可走格（无路可走仍照死），折返时清空转向队列。
-- **大招（批2，A6）**：`p.ult` 蓄力 0–100，吃水果 +10、吃星星 +15、咬蛇淘汰 +30（封顶 100）；满 100 发 `ult` 消息 → 从蛇头向 **8 方向**发射环形弹幕（对角线方向归一化、`spd=1.5`、命中仍只截断 `BULLET_CUT=1` 格），冷却 `ULT_COOL=3s`，死亡/重生清零。客户端 HUD 蓄力条（满时脉冲高亮），键 `K` 或点按钮释放。
+- **大招（批2，A6）**：`p.ult` 蓄力 0–100，吃水果 +10、吃星星 +25（批29⑤，原 15）、咬蛇淘汰 +30（封顶 100）；满 100 发 `ult` 消息 → 从蛇头向 **8 方向**发射环形弹幕（对角线方向归一化、`spd=1.5`、命中仍只截断 `BULLET_CUT=1` 格），冷却 `ULT_COOL=3s`，死亡/重生清零。客户端 HUD 蓄力条（满时脉冲高亮），键 `K` 或点按钮释放。
 - **子弹**：命中截断 `BULLET_CUT=1` 格，对无敌/护盾无效，不打自己。
 - **传送门扩容（批3，新#2）**：`portal_pairs()` = `max(1, min(4, cols/16 就近取整))` 对（12/16→1、24/32→2、40/48→3、64+→4；24×24 起成对）；`portals` 格表按 `[a,b,a2,b2,...]` 扁平存储，`portal_map()` 两两配对互逆；生成时保证两口不同、曼哈顿距离 >6 且不与障碍重叠。**传送后蛇头朝向**取出口处上下左右四方向中 `_open_ahead` 最开阔者（不朝最近的墙；仅改即时朝向，不改玩家转向队列）。
 - **资源有效期随地图放大（批3，新#6）**：`life_mult() = clamp((cols×rows)/576, 1, 4)`，星星 `bonus_life()` 与道具 `item_life()` = 基础值 × mult（12×12→×1、24×24→×1、48×48→×4，更大夹 4），`step_wrapper` 过期判断使用放大后的值。

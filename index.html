@@ -2660,8 +2660,8 @@
         if (m.id != null) myId = m.id;
         if (m.resumed) $('connTip').textContent = '已恢复原蛇，继续对战';
         if (m.user) { loggedUser = m.user; updateAcctUI(); send({t: 'gachainfo'}); }   // 终审 NIT-6：入局/重连后重同步当场星尘 HUD（resume 后 p.dust 仍在服务端）
-        // 批29④：本版本更新回馈未领 → 弹庆祝窗（每会话至多一次，领过服务端不再带 gift）
-        if (m.gift && !giftShown) { giftShown = true; openGiftPop(); }
+        // 批29④：本版本更新回馈未领 → 弹庆祝窗（每会话至多一次；gift=待领金额，领过服务端不再带）
+        if (m.gift && !giftShown) { giftShown = true; openGiftPop(m.gift); }
         return;
       case 'auth':
         if (m.ok) {
@@ -2716,7 +2716,7 @@
         // 批29④：更新回馈领取回执 → 关窗 + 余额/皮肤重同步 + 到账提示（失败走通用 error toast）
         closeGiftPop();
         if (m.ok) {
-          showToast('更新回馈已到账：+' + (m.amount || 14400) + ' 星尘');
+          showToast('更新回馈已到账：+' + (m.amount || 0).toLocaleString('en-US') + ' 星尘');
           sfxChord();
           send({t: 'gachainfo'});
         }
@@ -4155,7 +4155,10 @@
   $('btnWishClose').onclick = closeWish;
   // ===== 批29④：版本更新庆祝弹窗 =====
   let giftShown = false;   // 每会话至多弹一次（服务端另有每版本一次性入账兜底）
-  function openGiftPop() { $('giftPop').classList.remove('hidden'); sfxChord(); }
+  function openGiftPop(amt) {
+    if (amt) $('giftAmt').textContent = Number(amt).toLocaleString('en-US');   // 金额来自服务端（F4：不硬编码）
+    $('giftPop').classList.remove('hidden'); sfxChord();
+  }
   function closeGiftPop() { $('giftPop').classList.add('hidden'); }
   $('btnGiftClose').onclick = closeGiftPop;
   $('btnGiftClaim').onclick = () => {
