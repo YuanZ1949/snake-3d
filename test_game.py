@@ -2681,6 +2681,47 @@ def test_late_join_starts_round_when_all_ready():
     print('late join start OK')
 
 
+def test_occupied_foods_cache():
+    """批26①：occupied() 果占用集缓存——key=(列表对象身份, 长度)，重绑/append/
+    过滤重绑全部失效；构建计数 _food_builds 供断言缓存确实命中（零重建）。"""
+    r = fresh(12)
+    taken = {c for pl in r.players.values() for c in pl['cells']}
+
+    def free_xy(*ex):
+        for xx in range(r.cols):
+            for yy in range(r.rows):
+                if (xx, yy) in ex or (xx, yy) in taken:
+                    continue
+                if (xx, yy) in r.walls or (xx, yy) in r.rocks or (xx, yy) in r.portals:
+                    continue
+                if r.bonus and (r.bonus['x'], r.bonus['y']) == (xx, yy):
+                    continue
+                return xx, yy
+        raise AssertionError('no free cell')
+
+    p = free_xy()
+    q = free_xy(p)
+    s = free_xy(p, q)
+    r.foods = [{'id': 1, 'x': p[0], 'y': p[1], 'score': 10, 'color': '#fff'}]   # fresh() 会清空 foods → 自播一颗
+    r._food_cells()                                    # 预热（本次构建）
+    b0 = r._food_builds
+    cells = r._food_cells()
+    assert r._food_builds == b0 and p in cells, r._food_builds   # ① 命中缓存=零重建
+    assert r.occupied(*p), '既有果仍被占用拦截'
+    # ② append（同对象、len+1）→ 失效重建
+    r.foods.append({'id': 9991, 'x': q[0], 'y': q[1], 'score': 10, 'color': '#fff'})
+    assert q in r._food_cells()
+    assert r._food_builds == b0 + 1, r._food_builds
+    assert r.occupied(*q), '新果应被占用判定拦截'
+    # ③ 整体重绑（换对象）→ 失效重建且旧果从集合移除
+    r.foods = [{'id': 9992, 'x': s[0], 'y': s[1], 'score': 10, 'color': '#fff'}]
+    cells = r._food_cells()
+    assert r._food_builds == b0 + 2, r._food_builds
+    assert s in cells and p not in cells and q not in cells, (cells, p, q, s)
+    assert r.occupied(*s) and not r.occupied(*q), '重绑后占用判定未刷新'
+    print('occupied foods cache OK')
+
+
 def test_shutdown_settle():
     """批26③：SIGTERM 优雅关闭——遍历所有房并账当场星尘落盘（有账户入账、
     匿名丢弃、幂等）+ 信号接线（Linux add_signal_handler / Windows signal.signal 降级）"""
@@ -2752,7 +2793,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_bite_min_len_eliminates, test_bite_immunity,
            test_bullet_shortens_snake, test_bullet_ignores_owner_and_immunity,
            test_spawn_avoids_snakes_and_faces_open, test_spawn_cost_logged,
-           test_proto_ver_handshake, test_shutdown_settle,
+           test_proto_ver_handshake, test_shutdown_settle, test_occupied_foods_cache,
            test_food_has_unique_id,
             test_multi_foods_target_and_unique, test_multi_foods_eat_replenishes, test_multi_foods_bot_target_nearest,
             test_store_gacha_fields,

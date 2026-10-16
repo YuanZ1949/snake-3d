@@ -524,6 +524,9 @@ class Room:
         self.round_ids = set()
         self.ready = set()
         self.foods = []
+        self._food_cells_cache = None   # 批26①：果占用集缓存（key=列表身份+长度；重绑/append 失效）
+        self._food_cells_key = None
+        self._food_builds = 0           # 真实构建次数（测试断言缓存命中=零重建）
         self.bonus = None
         self.rocks = []            # [(x,y)] 可被子弹击碎
         self._reach = None         # 批15①：静态地形可达集缓存（失效点见 reach_set）
@@ -670,6 +673,17 @@ class Room:
         return [p['cells'][0] for p in self.players.values() if p['alive'] and p['cells']]
 
     # -------- 基础查询 --------
+    def _food_cells(self):
+        """批26①：果坐标占用集，带缓存。key=(id(foods), len(foods))：
+        重绑（吃果过滤/init/测试赋值）换对象 id、append 改长度 → 均触发重建。
+        已知盲区=同对象同长度的原地内容变更（当前代码与测试零此路径，新增须改用重绑或失效本缓存）。"""
+        key = (id(self.foods), len(self.foods))
+        if key != self._food_cells_key:
+            self._food_cells_cache = {(f['x'], f['y']) for f in self.foods}
+            self._food_cells_key = key
+            self._food_builds += 1
+        return self._food_cells_cache
+
     def occupied(self, x, y, skip_pid=None):
         # 批14：出界格视为占用（spawn 主路径以本函数替代 _solid，须与 _solid 同等拦截 OOB）
         if not (0 <= x < self.cols and 0 <= y < self.rows):
@@ -678,7 +692,7 @@ class Room:
             return True
         if (x, y) in self.portals:
             return True
-        if (x, y) in {(f['x'], f['y']) for f in self.foods}:
+        if (x, y) in self._food_cells():
             return True
         if self.bonus and (self.bonus['x'], self.bonus['y']) == (x, y):
             return True
