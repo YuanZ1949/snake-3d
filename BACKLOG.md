@@ -3,7 +3,7 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
-## 批30（2026-10-17 · ①新手村/②在线人数/③公屏聊天+暂停 已交付 / ④管理员 待对齐）
+## 批30（2026-10-17 · ①新手村/②在线人数/③公屏聊天+暂停/④管理员 已交付）
 
 来源：用户原话「新手村不新手 我觉得配置应该调整一点」「网站当前多少人也可以显示一下」「另外有没有必要增加一个聊天界面 支持暂停（这个也要支持）后公屏聊天 另外还有要不要加个管理员账户」。流程：backlog-sprint，逐项 brainstorming 拍板后独立交付。① 痛点票选 4 项（地图小被围死 / 主题随机地形复杂 / 无 AI 陪练被真人虐 / 死一次整局出局），参数拍板：**地图 24×24、主题保持随机**。
 
@@ -13,8 +13,7 @@
 | ② 在线人数 | serve `online_count()`（登录按用户名去重、匿名按会话计）+ `broadcast_online()`：welcome 附 `online` 字段、会话建立/断开 + 身份变化四消息（register/login/authtoken/logout，handler 层单点）广播 `{'t':'online','n'}`；首页 `.roomHead` 新增 `#onlineBox`「🌐 当前在线 N 人」；纯增量不 bump PROTO_VER（设计获批：显示位置/去重口径/推送不轮询；不做峰值与战局内 HUD） | `test_online_count_batch30` 先红（AttributeError）后绿（同账号双标签去重 4→3）；e2e/rooms.spec.js「首页显示当前在线人数≥1」GREEN；单测/静态（ids=107）/`local_ci` 全绿 |
 | ③a 公屏聊天+面板 | serve：`gchatin`（1s 限速/80字/空白拒，限速槽先于校验与房内同口径）+ `gchat_log`=deque(50) 内存 + `broadcast_gchat` 全体会话 + `welcome_payload()`（组包从 handler 拆出，带 `gchat` 历史）；客户端：`#chatPanel` 双 Tab（💬公屏/🏠本房）、三入口（首页房间行「💬 公屏」/顶栏「💬 聊天」手机可点/键盘 `/`），旧 `chatIn` 与 `.chatLog.up` 移除，本房 Tab 局外回退公屏，断线/换世界清本房列表（公屏保留） | `test_gchat_batch30` 先红（no attribute gchat_log）后绿（历史50 头淘汰/限速/空白拒/截断/登录名/广播含自己/welcome 历史）；e2e/gchat.spec.js ×3 GREEN（发言回显/新连接 welcome 历史/回退）；静态 ids=114 dup=0；`local_ci` ALL GREEN（Playwright 26 passed） |
 | ③b 暂停=挂机 | serve：`pause` toggle 置/清 `off_at`+`pause`（复用挂起保护+冻结；`dir`/`atk`/`ult` 拒收防原地开火炮台；`step_wrapper` 对 session 在的挂机者不按 `RESUME_MS` 回收、挂机中断线由 `leave_room` 重置宽限照旧 10s；`leave_room` others 把挂机者算在场真人→他人断线挂起不移出；`resume` 重连一并清 `pause`）；客户端 HUD `#btnPauseGame`「⏸ 暂停」+ dpad 中心键 joined 分支（主页 demo 暂停不变）+ `#pauseMask` 胶囊（居中小胶囊非全屏遮挡，暂停中聊天照常）+ `pauseres` 回执，断线/回主页撤提示；协议纯增量不 bump | `test_pause_afk_batch30` 先红（无 pauseres，`AssertionError: []`）后绿（toggle 回执/冻结他蛇照走/dir·atk 拒收/超 RESUME_MS 不回收/恢复续动/挂机+断线照回收）+ `test_pause_counts_as_present_batch30`（挂机者在场→他人断线挂起不移出）；e2e/pause.spec.js×2 GREEN（HUD 链路+暂停中聊天不锁 / dpad 键同语义）；静态 ids=116 dup=0 |
-
-待办（逐项对齐后补充行）：④ 管理员账户（倾向轻量 admin 标记 + 踢人/禁言/公告）。
+| ④ 管理员账户 | serve：`ADMIN_USERS={'yuan'}` 白名单 + `is_admin()`/`mutes{}`/`is_muted()`；五消息 `adkick`（发 `kicked` 后关该用户全部在线连接）/`admute`（内存到期自动失效，缺省 10 分、钳 1~1440，仅登录账号；`gchatin`+房内 `chat` 同拒）/`adnotice`（「📢 公告」进 gchat_log 全体广播）/`adgrant`（`add_stardust` 钳 1~100000+用户须存在，在线受奖者收 `toast`）/`adreport`（`admin_report()` 从 usage.data 现算：实时/今日/累计/近7日/活跃 Top10）；非 admin 静默拒+`usage.note('adm_denied')`；`welcome`/`auth` 携带 `admin` 标记。客户端：聊天面板第三 Tab「🛡 管理」`#cpTabA`（白名单才 hidden 去除）→ `#admPane`（用户名输入+踢出/禁言10分/发奖数额/公告框/报告按钮+`#admOut` 结果区），登出/过期收权；纯增量不 bump | `test_admin_core_batch30` 先红（AttributeError: no attribute is_admin）后绿（白名单判定/welcome·auth 标记/非 admin 五消息全拒零副作用/踢人断连/禁言拒聊到期恢复）+ `test_admin_notice_grant_report_batch30`（公告历史+广播/发奖入账+超额·不存在拒零副作用+在线提醒/报告五关键词）；e2e/admin.spec.js×2 GREEN（公告回显+报告渲染 / 发奖 toast+踢人 kicked+非管理员无入口）；静态 ids=127 dup=0；`local_ci` ALL GREEN（Playwright 30 passed） |
 
 ## 批29（2026-10-16 · 3 修 3 增：卡顿/房间列表/进房平局 + 更新庆祝领星尘/星星调参/效果条中文）
 

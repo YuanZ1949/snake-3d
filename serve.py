@@ -47,6 +47,7 @@ PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（�
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
 PROTO_VER = 27          # 批29④：协议版本——room-ok 必带；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
+ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
@@ -126,6 +127,25 @@ def chat_throttle(src, now):
     if now - last < CHAT_COOL:
         return False
     src.chat_at = now
+    return True
+
+
+mutes = {}              # 批30④：禁言表 {用户名: 到期 epoch 秒}（内存不落盘，重启清空）
+
+
+def is_admin(sess):
+    """批30④：管理员判定——登录名在白名单；匿名恒否"""
+    return bool(sess.user) and sess.user in ADMIN_USERS
+
+
+def is_muted(name):
+    """批30④：是否禁言中（到期自动失效并清除条目）"""
+    exp = mutes.get(name)
+    if not exp:
+        return False
+    if time.time() >= exp:
+        mutes.pop(name, None)
+        return False
     return True
 
 
@@ -2058,7 +2078,7 @@ async def send(sess, obj):
 
 def auth_payload(name):
     return {'t': 'auth', 'ok': True, 'user': name, 'token': tokens_inv(name),
-            'stats': store.stats(name)}
+            'stats': store.stats(name), 'admin': name in ADMIN_USERS}
 
 
 def tokens_inv(name):
@@ -2651,6 +2671,9 @@ async def handle_msg(sess, m):
         now = now_ms()
         if not chat_throttle(sess, now):
             return
+        if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（匿名无账号不可禁）
+            await send(sess, {'t': 'error', 'err': '你已被禁言'})
+            return
         text = str(m.get('text') or '')[:CHAT_MAX].strip()
         if not text:
             return
@@ -2667,11 +2690,77 @@ async def handle_msg(sess, m):
         now = now_ms()
         if not chat_throttle(sess, now):
             return
+        if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（公屏/本房同禁）
+            await send(sess, {'t': 'error', 'err': '你已被禁言'})
+            return
         if sess.pid is not None and sess.pid in room.players:
             who = room.players[sess.pid]['name']
         else:
             who = sess.user or '观众'
         room.chat(who, m.get('text'))
+        return
+
+    # -------- 管理员指令（批30④：白名单五权限——踢人/禁言/公告/发奖/报告） --------
+    if t in ('adkick', 'admute', 'adnotice', 'adgrant', 'adreport'):
+        if not is_admin(sess):
+            usage.note('adm_denied', t=t, sid=sess.sid, user=sess.user,
+                       ip=getattr(sess, 'ip', None))
+            return                      # 非管理员静默拒（只记明细，不回执不报错）
+        if t == 'adkick':
+            name = str(m.get('name') or '')[:20]
+            n = 0
+            for s in list(all_sessions):
+                if s.user == name:
+                    await send(s, {'t': 'kicked', 'msg': '你已被管理员移出'})
+                    try:
+                        await s.ws.close()       # 断连 → handler finally 正常清理（leave_room 等）
+                    except Exception:
+                        pass
+                    n += 1
+            await send(sess, {'t': 'adminres', 'act': 'adkick', 'ok': n > 0,
+                              'msg': f'已踢出 {name}（{n} 个会话）' if n else f'{name} 不在线'})
+        elif t == 'admute':
+            name = str(m.get('name') or '')[:20]
+            try:
+                mins = int(m.get('mins', 10) or 10)
+            except (TypeError, ValueError):
+                mins = 10
+            mins = max(1, min(1440, mins))        # 钳 1 分钟~24 小时
+            mutes[name] = time.time() + mins * 60
+            usage.note('adm_mute', by=sess.user, name=name, mins=mins)
+            await send(sess, {'t': 'adminres', 'act': 'admute', 'ok': True,
+                              'msg': f'已禁言 {name} {mins} 分钟'})
+        elif t == 'adnotice':
+            text = str(m.get('text') or '')[:200].strip()
+            if not text:
+                await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': False, 'msg': '公告不能为空'})
+                return
+            msg2 = {'name': '📢 公告', 'text': text}
+            gchat_log.append(msg2)
+            await broadcast_gchat(msg2)
+            usage.note('adm_notice', by=sess.user, len=len(text))
+            await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': True, 'msg': '公告已发布'})
+        elif t == 'adgrant':
+            name = str(m.get('name') or '')[:20]
+            try:
+                amt = int(m.get('amt', 0) or 0)
+            except (TypeError, ValueError):
+                amt = 0
+            if not (1 <= amt <= 100000):
+                await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': '数额需 1~100000'})
+                return
+            if name not in store.users:
+                await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': f'用户 {name} 不存在'})
+                return
+            new = store.add_stardust(name, amt)
+            usage.note('adm_grant', by=sess.user, name=name, amt=amt)
+            for s in list(all_sessions):          # 在线受奖者收提醒
+                if s.user == name:
+                    await send(s, {'t': 'toast', 'msg': f'管理员发放 {amt} ✨星尘'})
+            await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': True,
+                              'msg': f'已发 {amt} 给 {name}，余额 {new}'})
+        elif t == 'adreport':
+            await send(sess, {'t': 'adreportres', 'lines': admin_report()})
         return
 
     # 其余消息需要已在房间中
@@ -2817,9 +2906,41 @@ async def broadcast_gchat(msg):
 
 
 def welcome_payload(sess):
-    """welcome 组包：房间列表 + 在线人数（批30②） + 公屏历史 50 条（批30③）"""
+    """welcome 组包：房间列表 + 在线人数（批30②） + 公屏历史 50 条（批30③） + 管理标记（批30④）"""
     return {'t': 'welcome', 'id': sess.sid, 'rooms': room_list(),
-            'online': online_count(), 'gchat': list(gchat_log)}
+            'online': online_count(), 'gchat': list(gchat_log),
+            'admin': is_admin(sess)}
+
+
+def admin_report():
+    """批30④：游玩汇总报告（实时在线/房间 + 今日/累计/近7日/活跃榜，全部现算不落盘）"""
+    d = usage.data
+    tot = d.get('totals', {})
+    today = d.get('days', {}).get(_day_key(), {})
+
+    def hm(sec):
+        sec = int(sec or 0)
+        return f'{sec // 3600}h{(sec % 3600) // 60}m'
+
+    lines = [f'🌐 实时：在线 {online_count()} 人 · 房间 {len(rooms)} 个']
+    lines.append('今日：连接 {} · 玩局 {} · 进房 {} · 登录 {} · 注册 {} · 胜场 {}'.format(
+        today.get('sessions', 0), hm(today.get('play_s')), today.get('joins', 0),
+        today.get('logins', 0), today.get('registers', 0), today.get('wins', 0)))
+    lines.append('累计：连接 {} · 玩局 {} · 进房 {} · 登录 {} · 注册 {} · 胜场 {}'.format(
+        tot.get('sessions', 0), hm(tot.get('play_s')), tot.get('joins', 0),
+        tot.get('logins', 0), tot.get('registers', 0), tot.get('wins', 0)))
+    lines.append('近7日：')
+    for k, v in sorted(d.get('days', {}).items())[-7:]:
+        lines.append('  {} 连接{} 玩局{} 登录{} 胜{}'.format(
+            k, v.get('sessions', 0), hm(v.get('play_s')), v.get('logins', 0), v.get('wins', 0)))
+    top = sorted(d.get('users', {}).items(),
+                 key=lambda kv: int(kv[1].get('play_s', 0) or 0), reverse=True)[:10]
+    if top:
+        lines.append('活跃榜 Top10（按玩局时长）：')
+        for name, v in top:
+            lines.append('  {} 玩局{} 进房{} 胜{} 最高分{}'.format(
+                name, hm(v.get('play_s')), v.get('joins', 0), v.get('wins', 0), v.get('best', 0)))
+    return lines
 
 
 async def handler(ws):

@@ -2087,10 +2087,14 @@ def _cfg_sess(sid='s1', user=None, room=None):
     class CapWS:
         def __init__(self):
             self.sent = []
+            self.closed = False
 
         async def send(self, x):
             import json
             self.sent.append(json.loads(x) if isinstance(x, str) else x)
+
+        async def close(self):          # 批30④：adkick 踢人需关连接
+            self.closed = True
     s = S()
     s.ws = CapWS()
     s.sid = sid
@@ -3111,6 +3115,106 @@ def test_pause_counts_as_present_batch30():
     print("pause counts as present batch30 OK")
 
 
+def test_admin_core_batch30():
+    """批30④：管理员白名单——非 admin 发管理消息一律拒；admin 放行；
+    welcome/auth 带 admin 标记；踢人断连；禁言拒聊到期自动失效"""
+    import asyncio
+    import time as _t
+    # 白名单判定 + welcome/auth 标记
+    adm = _cfg_sess(sid='adm1', user='yuan')
+    oth = _cfg_sess(sid='oth1', user='bob')
+    anon = _cfg_sess(sid='ano1', user=None)
+    assert serve.is_admin(adm) is True
+    assert serve.is_admin(oth) is False
+    assert serve.is_admin(anon) is False, '匿名永非管理员'
+    assert serve.welcome_payload(adm).get('admin') is True
+    assert serve.welcome_payload(oth).get('admin') is False
+    assert serve.auth_payload('yuan').get('admin') is True
+    assert serve.auth_payload('bob').get('admin') is False
+    # 非 admin：五个 ad* 消息全拒（零副作用）
+    old_mutes = dict(serve.mutes)
+    serve.mutes.clear()
+    old_all = set(serve.all_sessions)
+    serve.all_sessions.clear()
+    try:
+        for mm in ({'t': 'adkick', 'name': 'yuan'}, {'t': 'admute', 'name': 'bob', 'mins': 5},
+                   {'t': 'adnotice', 'text': 'hi'}, {'t': 'adreport'},
+                   {'t': 'adgrant', 'name': 'bob', 'amt': 100}):
+            asyncio.run(serve.handle_msg(oth, mm))
+        assert not serve.mutes, '非 admin 不得写禁言表'
+        assert not any(x.get('t') == 'adminres' for x in oth.ws.sent)
+        # admin 踢人：目标收 kicked 回执且连接关闭；不在线报错
+        vic = _cfg_sess(sid='vic1', user='victim')
+        serve.all_sessions.add(vic)
+        asyncio.run(serve.handle_msg(adm, {'t': 'adkick', 'name': 'victim'}))
+        assert any(x.get('t') == 'kicked' for x in vic.ws.sent), vic.ws.sent
+        assert vic.ws.closed is True, '踢出必须关闭目标连接'
+        assert any(x.get('t') == 'adminres' and x.get('ok') for x in adm.ws.sent)
+        adm.ws.sent.clear()
+        asyncio.run(serve.handle_msg(adm, {'t': 'adkick', 'name': 'ghost999'}))
+        assert any(x.get('t') == 'adminres' and not x.get('ok') for x in adm.ws.sent)
+        # 禁言：到期前拒 gchatin，到期后放行（限速槽先于内容校验，禁言提示需复位 chat_at）
+        asyncio.run(serve.handle_msg(adm, {'t': 'admute', 'name': 'victim', 'mins': 5}))
+        assert serve.mutes.get('victim', 0) > _t.time()
+        vic.chat_at = 0
+        asyncio.run(serve.handle_msg(vic, {'t': 'gchatin', 'text': '我说话'}))
+        r = vic.ws.sent[-1]
+        assert r.get('t') == 'error' and '禁言' in r.get('err', ''), r
+        serve.mutes['victim'] = _t.time() - 1     # 到期
+        vic.chat_at = 0
+        asyncio.run(serve.handle_msg(vic, {'t': 'gchatin', 'text': '我说话'}))
+        assert not any(x.get('t') == 'error' and '禁言' in x.get('err', '') for x in vic.ws.sent[-1:])
+    finally:
+        serve.mutes.clear(); serve.mutes.update(old_mutes)
+        serve.all_sessions.clear(); serve.all_sessions.update(old_all)
+    print('admin core batch30 OK')
+
+
+def test_admin_notice_grant_report_batch30():
+    """批30④：公告进公屏历史并全体广播；发奖入账+范围钳制+在线提醒；
+    报告字段齐全（在线/今日/累计/近7日/活跃榜）"""
+    import asyncio
+    d, old_store = _gacha_setup()      # 临时账号库（alice），teardown 还原
+    old_log = list(serve.gchat_log)
+    old_all = set(serve.all_sessions)
+    serve.gchat_log.clear()
+    serve.all_sessions.clear()
+    try:
+        adm = _cfg_sess(sid='adm2', user='yuan')
+        alice = _cfg_sess(sid='ali1', user='alice')
+        serve.all_sessions.add(alice)
+        # 公告：进历史 + 全体广播（发送者显示 📢 公告）
+        asyncio.run(serve.handle_msg(adm, {'t': 'adnotice', 'text': '今晚维护'}))
+        assert serve.gchat_log and serve.gchat_log[-1] == {'name': '📢 公告', 'text': '今晚维护'}
+        assert any(x.get('t') == 'gchat' and x['m']['name'] == '📢 公告' for x in alice.ws.sent)
+        # 发奖：alice +500 且在线收到 toast 提醒
+        asyncio.run(serve.handle_msg(adm, {'t': 'adgrant', 'name': 'alice', 'amt': 500}))
+        assert serve.store.stardust('alice') == 500, serve.store.stardust('alice')
+        assert any(x.get('t') == 'toast' for x in alice.ws.sent), '在线受奖者应收到提醒'
+        r = adm.ws.sent[-1]
+        assert r.get('t') == 'adminres' and r.get('ok'), r
+        # 超额拒 + 不存在用户拒
+        adm.ws.sent.clear()
+        asyncio.run(serve.handle_msg(adm, {'t': 'adgrant', 'name': 'alice', 'amt': 100001}))
+        assert any(x.get('t') == 'adminres' and not x.get('ok') for x in adm.ws.sent)
+        assert serve.store.stardust('alice') == 500, '超额拒绝零副作用'
+        asyncio.run(serve.handle_msg(adm, {'t': 'adgrant', 'name': 'nobody_x', 'amt': 10}))
+        assert any(x.get('t') == 'adminres' and not x.get('ok') for x in adm.ws.sent)
+        # 报告：字段齐全
+        adm.ws.sent.clear()
+        asyncio.run(serve.handle_msg(adm, {'t': 'adreport'}))
+        rep = [x for x in adm.ws.sent if x.get('t') == 'adreportres']
+        assert rep, adm.ws.sent
+        txt = '\n'.join(rep[0].get('lines') or [])
+        for kw in ('在线', '今日', '累计', '近7日', '活跃'):
+            assert kw in txt, (kw, txt)
+    finally:
+        serve.gchat_log.clear(); serve.gchat_log.extend(old_log)
+        serve.all_sessions.clear(); serve.all_sessions.update(old_all)
+        _gacha_teardown(d, old_store)
+    print('admin notice grant report batch30 OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3213,6 +3317,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_newbie_room_cfg_batch30,
             test_online_count_batch30,
             test_gchat_batch30,
-            test_pause_afk_batch30, test_pause_counts_as_present_batch30]:
+            test_pause_afk_batch30, test_pause_counts_as_present_batch30,
+            test_admin_core_batch30, test_admin_notice_grant_report_batch30]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

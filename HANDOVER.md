@@ -150,22 +150,31 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `chat` | `text` | **批5 新增**：房间聊天（≤80 字，空白不发，1s 限速超限静默丢弃）；观战者也可发，走快照 `ev` 通道 |
 | `gchatin` | `text` | **批30③ 新增**：公屏发言（≤80 字截断、空白拒、每连接 1s 限速复用 `chat_throttle`——**限速槽先于内容校验消耗**，与房内 chat 同口径）；登录/匿名都可发，无需在房 |
 | `pause` | （无） | **批30③b 新增**：对局暂停 toggle（挂机）——置/清 `off_at`+`pause`，复用挂起保护（原地冻结、不被咬/不顶头，批14/21/22 语义），`dir`/`atk`/`ult` 拒收；session 保持连接故 `step_wrapper` 不按 `RESUME_MS` 回收（挂机≠断线；挂机中断线由 `leave_room` 重置宽限照旧 10s）；挂机者算在场真人（他人断线原蛇挂起不移出）；回执 `pauseres` |
+| `adkick` | `name` | **批30④ 新增**：踢人——仅 `ADMIN_USERS` 白名单（`ADMIN_USERS={'yuan'}`，登录名判定，匿名恒否）；命中该用户名全部在线会话：逐个发 `kicked` 后关连接（handler finally 正常清理）；回执 `adminres`；非管理员**静默拒**（只记 `usage.note('adm_denied')`，不回执不报错不泄露权限存在性） |
+| `admute` | `name, mins` | **批30④ 新增**：禁言——写内存 `mutes[name]=到期时间戳`，`mins` 缺省 10、钳 1~1440 分钟；到期由 `is_muted()` 自动失效清条目；**仅登录账号可禁**（按用户名，匿名无账号不可禁）；禁言中 `gchatin` 与房内 `chat` 一律拒（回 `error`「你已被禁言」）；回执 `adminres` |
+| `adnotice` | `text` | **批30④ 新增**：全局公告——≤200 字截断、空白拒；以显示名「📢 公告」进 `gchat_log` 并 `broadcast_gchat` 全体（复用公屏通道，历史/回显同普通消息）；回执 `adminres` |
+| `adgrant` | `name, amt` | **批30④ 新增**：给指定用户发星尘——`amt` 钳 1~100000、目标必须存在于 `store.users`，`store.add_stardust()` 入账并 save；在线受奖者收 `toast` 提醒；回执 `adminres`（含新余额） |
+| `adreport` | — | **批30④ 新增**：游玩汇总报告——`admin_report()` 现算（`usage.data` 不落盘）：实时在线/房间数 + 今日/累计（连接/玩局时长/进房/登录/注册/胜场）+ 近7日逐日 + 活跃榜 Top10（按玩局时长）；回执 `adreportres` |
 | `respawn` | — | 死亡后重生。**批22 H4**：仅复活房（`room.respawn=true`）且死亡满 `RESPAWN_MS=3s` 才生效，否则服务端拒绝；客户端非复活房死亡直接转观战 |
 
 ### 5.2 服务端 → 客户端
 
 | `t` | 关键字段 | 说明 |
 |---|---|---|
-| `welcome` | `rooms[], online, gchat` | 连接建立，带完整房间列表；**批30②** `online`=当前在线人数（去重口径，见下 `online` 行）；**批30③** `gchat`=公屏最近 50 条历史 |
+| `welcome` | `rooms[], online, gchat, admin` | 连接建立，带完整房间列表；**批30②** `online`=当前在线人数（去重口径，见下 `online` 行）；**批30③** `gchat`=公屏最近 50 条历史；**批30④** `admin`=是否管理员白名单（亮「🛡 管理」Tab） |
 | `rooms` | `list[]` | 房间列表（加入/离开/创建时主动广播） |
 | `online` | `n` | **批30② 新增**：当前在线人数推送。口径=登录按用户名去重（同账号多标签=1）、匿名按会话计（`online_count()`）；广播时机=会话建立/断开 + 身份变化四消息（register/login/authtoken/logout）；首页 `.roomHead` `#onlineBox` 渲染「🌐 当前在线 N 人」。**纯增量不 bump PROTO_VER**（老客户端忽略未知字段/消息即兼容；bump 会强制 reload 且触发批29④ 每账号 14,400 回馈） |
 | `gchat` | `m{name, text}` | **批30③ 新增**：公屏新消息，广播到全体连接（含未进房/观战）；历史仅 welcome 下发（`gchat_log=deque(maxlen=50)` 内存环形、不落盘、重启清空）；显示名=登录名 / 「路人+会话尾号」截 12 字 |
 | `pauseres` | `on` | **批30③b 新增**：暂停回执。`on=true` 已挂机（蛇冻结中）/`false` 已恢复；客户端据此切换 `#pauseMask` 胶囊与双暂停键文案（HUD `#btnPauseGame` + dpad 中心键）；重连 `resume` 会连带解除挂机态 |
+| `adminres` | `act, ok, msg` | **批30④ 新增**：管理操作回执；客户端管理面板 `#admOut` 渲染「✅/❌ + msg」（面板未开时 toast） |
+| `adreportres` | `lines[]` | **批30④ 新增**：游玩报告文本行，`#admOut` 以 `white-space:pre-wrap` 渲染（纯文本非 HTML，防注入） |
+| `kicked` | `msg` | **批30④ 新增**：被踢通知（随后服务端关连接）；客户端 toast 提示 |
+| `toast` | `msg` | **批30④ 新增**：通用浮层提示（现用于发奖在线提醒「管理员发放 N ✨星尘」） |
 | `created` | `room, name, tok` | 创建成功。**批23 P6**：`tok` = 一次性 owner 凭据（`secrets.token_hex(16)`），仅创建者回执携带，客户端存 `localStorage['snake-owner-toks']`（rid→tok 跨刷新），后续 `roomcfg`/`persist` 附 `otok` 恢复修改权；`info()`/room_list 不下发 |
 | `room-ok` | `room, spectate, user, id, ver, gift?` | 进房成功，`id` 即 `myId`；**批5**：命中断线恢复时带 `resumed:true`（原 id/身体/分数保留，不重新出生）；**批26⑤**：`ver`=协议版本（`serve.PROTO_VER`，入局/resume/观战三路必带），客户端内置常量不等即 `location.reload()`（关闭「跨部署存活的旧标签页拿旧 JS 续玩」窗口；`ver` 缺省=服务端更旧时不重载，防死循环）。**改协议必须同步 bump 双端常量**（serve.py `PROTO_VER` 与 index.html `PROTO_VER`，忘 bump 的后果=退化为无保护现状而非坏行为）；**批29④**：join/resume 两路附 `gift`=待领更新回馈金额（0=已领/未登录；`_update_gift_pending()`，单调比较 `claimed < PROTO_VER`），客户端据此弹 `#giftPop`；观战（watch）路不带 |
 | `left` | `room` | 离开房间回执 |
 | `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
-| `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
+| `auth` | `ok, user, token, stats, admin, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态；**批30④** `admin`=白名单标记（登录后即时亮/收管理 Tab，退出/过期清零） |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
 | `gachares` | `items, balance, dust, gained` | **批25 T3 新增**：抽卡结果；`items[]` 按抽取顺序 `{skin, star, up, dup, refund, cap?}`（3★/4★/5★ 星级、up=本次 5★ 是否 UP、dup=重复已拥有、refund=重复返还星尘；**批27**：赢 50/50 的 5★ 额外带 `cap:true`=捕获明光——客户端对单项播「缩回→双星变形 glitch→二次飞行」演出，非 5★/保底/歪均不带此键）；`balance`=抽后纯总账、`dust`=抽后当场星尘（回包时点，refund 已入账）、`gained`=本次总返还 |
 | `gachainfo` | `balance, dust, skins, p5, p4, lose` | **批25 T3 新增**：抽卡状态；`balance`=纯总账、`dust`=当前房当场星尘（不在局内=0）、`skins`=已拥有皮肤 id 列表、`p5/p4`=保底计数（距上次 5★/4★ 的抽数）、`lose`=50/50 是否已歪（下个 5★ 必 UP）；未登录回零值 |
@@ -259,6 +268,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **房间聊天（批5，B3）**：`chat` 消息（≤80 字、空白不发、每连接 1s 限速超限静默丢弃）→ 快照 `ev` 通道广播 `{t:'chat',name,text}`；观战者可发（发件人=房内玩家名，否则账户名/'观众'）。客户端按 `/` 或点击输入框进入聊天（输入框早退方向键），左下角消息流 7s 淡出、上限 30 条、textContent 防注入，断线清空。
 - **公屏聊天与聊天面板（批30③）**：服务端 `gchatin` → `gchat_log`（`deque(maxlen=50)` 内存不落盘）→ `broadcast_gchat` 全体会话，`welcome_payload()` 带历史（组包已从 handler 拆出）。客户端 `#chatPanel` 双 Tab（💬公屏 / 🏠本房），入口三处：首页房间行「💬 公屏」（恒公屏）、顶栏「💬 聊天」（局内默认本房，**手机可点**，批30 拍板「都做+按钮适配手机」）、键盘 `/`（局内本房/局外公屏）；本房 Tab 局外自动回退公屏；Enter 发送、Esc 关闭。本房消息仍走批5 `ev` 通道（左下角 7s 淡出流不变），面板持久列各 100 条、textContent 防注入；旧 `chatIn` 输入框与 `.chatLog.up` 已移除；断线/换世界清本房列表，公屏历史跨世界保留。
 - **对局暂停=挂机（批30③b）**：HUD「⏸ 暂停」`#btnPauseGame` + dpad 中心「暂停」键（对局中=挂机，主页 demo 暂停行为不变）→ `pause` toggle → 服务端原地冻结 + 复用挂起保护（不被咬/不顶头）+ `dir`/`atk`/`ult` 拒收 + session 在不按 `RESUME_MS` 回收；挂机者算在场真人（他人断线原蛇挂起不移出），重连 `resume` 一并解除挂机态。提示胶囊 `#pauseMask`「已挂机 · 点按恢复」为居中小胶囊（非全屏遮挡——**暂停中聊天/HUD 照常可用**），断线/回主页撤提示；协议纯增量不 bump PROTO_VER。门禁：`test_pause_afk_batch30` + `test_pause_counts_as_present_batch30` + `e2e/pause.spec.js`×2。
+- **管理员账户（批30④）**：身份=用户名白名单 `ADMIN_USERS={'yuan'}`（登录名判定，匿名恒否；加人改 serve.py 常量）。五权限消息 `adkick/admute/adnotice/adgrant/adreport`（表见 §5.1），非 admin **静默拒**+`usage.note('adm_denied')`，服务端每分支二次校验。踢人=发 `kicked` 后关该用户全部在线会话连接；禁言=内存 `mutes[name]` 到期自动失效（缺省 10 分钟、钳 1~1440，仅登录账号），`gchatin`/房内 `chat` 同拒；公告复用 gchat 通道（显示名「📢 公告」，历史可见）；发奖 `store.add_stardust` 钳 1~100000 且用户须存在，在线受奖者收 `toast`；报告 `admin_report()` 从 `usage.data` 现算文本行（实时/今日/累计/近7日/活跃 Top10）。客户端：`welcome`/`auth` 携带 `admin` 亮聊天面板「🛡 管理」Tab（`#admPane`：目标用户名+踢出/禁言10分/发奖数额/公告框/报告按钮 + `#admOut` 结果区），登出/过期即时收权，非白名单 `hidden` 仅易用性（权限判定恒在服务端）。协议纯增量不 bump PROTO_VER。门禁：`test_admin_core_batch30` + `test_admin_notice_grant_report_batch30` + `e2e/admin.spec.js`×2（公告回显/发奖踢人/非管理员无入口）。
 - **房间口令（批6，C3）**：建房可设口令 `pass`（6-20 位字母+数字混合、`WEAK_PASSES` 黑名单前后端同步校验），非法 `error` 拒绝创建；口令房 `join`/`watch` 必须带对口令（先校验再动状态，避免把自己踢出原房）。`info` 带 `hasPass`（口令本身不下发）。客户端：建房面板「口令」输入框（可选）、进房 `prompt` 要一次口令后内存记忆（页面生命周期免重输，含断线自动重连）、创建者免重输、口令错误清记忆并 toast 提示。
 - **空房保留/保存（批6，新#11）**：自定义房间创建后 **24h 内不回收**（`ROOM_KEEP_SECS=86400`，之后仍按"没人+没观战+创建者不在线"才删）；创建者可在房间卡片点「⭐ 保存」→ `persist` 消息 → `persist=True` 写盘 `data/persist_rooms.json`，**常驻不回收 + 重启后重建**（`load_persist_rooms()` 于 `main()` 启动时调用）。`info` 带 `persist`，meta 显示「🔒口令」「⭐常驻」。
 - **丝滑移动插值（批7，新#3）**：逻辑仍按格走（服务端不动）；客户端渲染在 `prev→next` 格间按 tick 进度**线性插值**——实体位移时记 `moveAt/moveDt`（按观测间隔自适应，夹 60–400ms），`syncBody` 按 `phase=(now-moveAt)/moveDt` 在两格间取插值目标再走脊柱平滑；头部大跳变（>6 格，传送门/跨图出生）不插值直接贴新位置。演示蛇同理按 `(now-lastTick)/180` 插值。

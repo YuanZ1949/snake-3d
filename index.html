@@ -566,6 +566,15 @@
   .cpLog { flex: 1; overflow-y: auto; font-size: 12px; line-height: 1.45; color: #e8ebff; display: flex; flex-direction: column; gap: 3px; }
   .cpLog .cm { word-break: break-all; }
   .cpIn { font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.22); background: rgba(0,0,0,.4); color: #e8ebff; outline: none; }
+  .cpLog.hidden, .cpIn.hidden { display: none; }
+  /* ---- 管理面板（批30④：白名单管理员专用 Tab） ---- */
+  #cpTabA.hidden, .admPane.hidden { display: none; }
+  .admPane { flex: 1; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; font-size: 12px; color: #e8ebff; }
+  .admRow { display: flex; gap: 5px; align-items: center; }
+  .admRow .cpIn { flex: 1; min-width: 0; }
+  .admBtn { font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,170,90,.14); color: #ffd9a8; cursor: pointer; white-space: nowrap; }
+  .admBtn.danger { background: rgba(255,110,110,.16); color: #ffb3b3; border-color: rgba(255,120,120,.4); }
+  .admOut { flex: 1; overflow-y: auto; white-space: pre-wrap; word-break: break-all; font-size: 11px; line-height: 1.5; color: #cdd3f5; background: rgba(0,0,0,.3); border-radius: 6px; padding: 5px 7px; min-height: 40px; }
   .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(24,20,34,.96); color: #ffb3b3; border: 1px solid rgba(255,120,120,.45); padding: 8px 18px; border-radius: 10px; font-size: 13px; z-index: 999; max-width: 80%; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
   .toast.hidden { display: none; }
 
@@ -626,9 +635,29 @@
       <div class="cpHead">
         <button class="cpTab on" id="cpTabG" aria-label="公屏聊天">💬 公屏</button>
         <button class="cpTab" id="cpTabR" aria-label="房间聊天">🏠 本房</button>
+        <button class="cpTab hidden" id="cpTabA" aria-label="管理员面板">🛡 管理</button>
         <button class="cpTab cpX" id="cpClose" aria-label="关闭聊天">✕</button>
       </div>
       <div class="cpLog" id="cpLog" aria-live="polite"></div>
+      <div class="admPane hidden" id="admPane" aria-label="管理员操作">
+        <div class="admRow">
+          <input class="cpIn" id="admName" maxlength="20" placeholder="目标用户名" aria-label="目标用户名">
+          <button class="admBtn danger" id="admKick">🦶 踢出</button>
+          <button class="admBtn" id="admMute">🔇 禁言10分</button>
+        </div>
+        <div class="admRow">
+          <input class="cpIn" id="admAmt" type="number" min="1" max="100000" value="100" aria-label="奖励星尘数额">
+          <button class="admBtn" id="admGrant">✨ 发奖</button>
+        </div>
+        <div class="admRow">
+          <input class="cpIn" id="admNotice" maxlength="200" placeholder="全局公告…" aria-label="全局公告">
+          <button class="admBtn" id="admSend">📢 发布</button>
+        </div>
+        <div class="admRow">
+          <button class="admBtn" id="admReport">📊 游玩报告</button>
+        </div>
+        <div class="admOut" id="admOut">操作结果/报告将显示在这里</div>
+      </div>
       <input class="cpIn" id="cpIn" maxlength="80" placeholder="说点什么…（Enter 发送，Esc 关闭）" aria-label="聊天输入">
     </div>
     <canvas id="miniMap" class="miniMap hidden" width="150" height="150" aria-label="小地图"></canvas>
@@ -2655,6 +2684,20 @@
         if (m.rooms) renderRooms(m.rooms);
         if (m.online != null) setOnline(m.online);
         if (m.gchat) { gMsgs = m.gchat.slice(); if (chatOpen && chatTab === 'g') chatRender(); }   // 批30③ 公屏历史
+        if (m.admin !== undefined) setAdminUI(m.admin);   // 批30④ 管理标记
+        return;
+      case 'kicked':
+        showToast(m.msg || '你已被管理员移出');            // 批30④：随后服务端断连
+        return;
+      case 'adminres':
+        if (chatOpen && chatTab === 'a') admOut((m.ok ? '✅ ' : '❌ ') + (m.msg || ''));
+        else showToast(m.msg || (m.ok ? '完成' : '失败'));
+        return;
+      case 'adreportres':
+        if (chatOpen && chatTab === 'a') admOut((m.lines || []).join('\n'));
+        return;
+      case 'toast':                                        // 批30④：发奖在线提醒等
+        if (m.msg) showToast(m.msg);
         return;
       case 'gchat':
         pushG(m.m || {});                          // 批30③ 公屏新消息（全体广播）
@@ -2727,6 +2770,7 @@
           loggedUser = m.user;
           if (m.token) authToken = m.token;
           myStats = m.stats || null;
+          setAdminUI(!!m.admin);                            // 批30④：登录后按服务端标记亮管理 Tab
           localStorage.setItem(USER_KEY, loggedUser);
           localStorage.setItem(TOKEN_KEY, authToken);
           if (!playerName) {
@@ -2740,12 +2784,13 @@
         } else if (authReq === 'authtoken') {
           // 本地保存的登录态已失效：清掉并解锁输入框，避免被只读输入框卡死
           loggedUser = ''; authToken = ''; myStats = null;
+          setAdminUI(false);                               // 批30④：登出态收起管理 Tab
           localStorage.removeItem(USER_KEY);
           localStorage.removeItem(TOKEN_KEY);
           updateAcctUI();
           acctTip('登录已过期，请重新登录', 'err');
         } else if (authReq === 'logout') {
-          // 退出已在本地处理完毕，忽略服务端回执
+          setAdminUI(false);                               // 批30④：退出即收权
         } else {
           acctTip(m.err || '操作失败', 'err');
         }
@@ -3762,7 +3807,7 @@
   $('btnCfgCancel').onclick = hideCreatePanel;
 
   // ================= 聊天面板（批30③：公屏 + 本房双 Tab，首页/对局通用） =================
-  let gMsgs = [], rMsgs = [], chatTab = 'g', chatOpen = false;
+  let gMsgs = [], rMsgs = [], chatTab = 'g', chatOpen = false, isAdmin = false;
   function chatRender() {
     const arr = chatTab === 'g' ? gMsgs : rMsgs;
     const box = $('cpLog');
@@ -3775,15 +3820,26 @@
     }
     box.scrollTop = box.scrollHeight;
   }
+  function setAdminUI(on) {                  // 批30④：白名单管理员亮「🛡 管理」Tab
+    isAdmin = !!on;
+    $('cpTabA').classList.toggle('hidden', !isAdmin);
+    if (!isAdmin && chatTab === 'a') openChatPanel('g');
+  }
   function openChatPanel(tab) {
     if (tab === 'r' && !(joined || spectating)) tab = 'g';   // 本房 Tab 仅局内有效
+    if (tab === 'a' && !isAdmin) tab = 'g';                  // 管理 Tab 仅白名单
     chatTab = tab;
     chatOpen = true;
     $('chatPanel').classList.remove('hidden');
     $('cpTabG').classList.toggle('on', chatTab === 'g');
     $('cpTabR').classList.toggle('on', chatTab === 'r');
+    $('cpTabA').classList.toggle('on', chatTab === 'a');
+    $('admPane').classList.toggle('hidden', chatTab !== 'a');   // 管理视图替换消息流
+    $('cpLog').classList.toggle('hidden', chatTab === 'a');
+    $('cpIn').classList.toggle('hidden', chatTab === 'a');
     chatRender();
-    $('cpIn').focus();
+    if (chatTab === 'a') $('admName').focus();
+    else $('cpIn').focus();
   }
   function closeChatPanel() {
     chatOpen = false;
@@ -3796,7 +3852,28 @@
   $('btnChat').onclick = () => openChatPanel(joined || spectating ? 'r' : 'g');  // 顶栏入口（手机可点）
   $('cpTabG').onclick = () => openChatPanel('g');
   $('cpTabR').onclick = () => openChatPanel('r');
+  $('cpTabA').onclick = () => openChatPanel('a');
   $('cpClose').onclick = closeChatPanel;
+  // ---- 批30④：管理员操作（服务端二次校验白名单，前端隐藏仅为易用性） ----
+  function admOut(t) { $('admOut').textContent = String(t || ''); }
+  $('admKick').onclick = () => {
+    const n = ($('admName').value || '').trim();
+    if (n) send({ t: 'adkick', name: n });
+  };
+  $('admMute').onclick = () => {
+    const n = ($('admName').value || '').trim();
+    if (n) send({ t: 'admute', name: n, mins: 10 });
+  };
+  $('admGrant').onclick = () => {
+    const n = ($('admName').value || '').trim();
+    const a = parseInt($('admAmt').value, 10);
+    if (n && a > 0) send({ t: 'adgrant', name: n, amt: a });
+  };
+  $('admSend').onclick = () => {
+    const t = ($('admNotice').value || '').trim();
+    if (t) { send({ t: 'adnotice', text: t }); $('admNotice').value = ''; }
+  };
+  $('admReport').onclick = () => send({ t: 'adreport' });
   $('cpIn').addEventListener('keydown', e => {
     e.stopPropagation();                     // 输入时不触发全局游戏按键
     if (e.key === 'Enter') {
