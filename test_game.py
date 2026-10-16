@@ -2891,6 +2891,29 @@ def test_update_gift_claim_once():
     print('update gift claim OK')
 
 
+def test_star_tuning_batch29():
+    """批29⑤：星星调参——刷新 0.015 / 寿命 12000ms / 充能 +25 / 吃星尘 +15；
+    果子收益保持 +10 不动（用户明确「果子数量不增加 增加星星数量」）"""
+    assert serve.BONUS_SPAWN_P == 0.015, serve.BONUS_SPAWN_P   # 星星刷新概率（原 0.004）
+    assert serve.BONUS_LIFE == 12000, serve.BONUS_LIFE          # 星星在场寿命（原 8000）
+    assert serve.ULT_STAR == 25, serve.ULT_STAR                 # 吃星充能（原 15）
+    now = serve.now_ms()
+    # 吃星星当场星尘 +15（蛇头正对 bonus，远格补粒钉死防随机双吃）
+    r = fresh(10)
+    p = mk(r, 1, "A", [(2, 5), (1, 5), (0, 5)], (1, 0))
+    r.foods = [{"id": 1, "x": 0, "y": 9, "score": 10, "color": "#fff"}]
+    r.bonus = {"id": 9, "x": 3, "y": 5, "score": 50, "born": now}
+    r.step(0.05, now)
+    assert p.get("dust", 0) == 15, p.get("dust")
+    # 吃果子仍是 +10（不动）
+    r2 = fresh(10)
+    q = mk(r2, 1, "B", [(2, 5), (1, 5), (0, 5)], (1, 0))
+    r2.foods = [{"id": 2, "x": 3, "y": 5, "score": 10, "color": "#fff"}]
+    r2.step(0.05, now)
+    assert q.get("dust", 0) == 10, q.get("dust")
+    print('star tuning batch29 OK')
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -2988,6 +3011,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_room_info_humans_vs_bots,
             test_win_pending_timeout_forces_new_round,
             test_late_join_starts_round_when_all_ready,
-            test_update_gift_claim_once]:
+            test_update_gift_claim_once,
+            test_star_tuning_batch29]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

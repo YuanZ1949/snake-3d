@@ -1641,7 +1641,7 @@
   });
 
   function maybeBonus(now) {
-    if (bonus && now - bonus.born > 8000) {
+    if (bonus && now - bonus.born > 12000) {
       const w = cellW(bonus.x, bonus.y);
       burst(w.x, .6, w.z, 0xffd166, 10);
       clearMesh(bonusMesh); bonusMesh = null;
@@ -2854,7 +2854,7 @@
         if (ev.id === myId) {
           if (p) floater(p.x, 1.3, p.z, '+' + ev.score);
           sStar();
-          myDust += 10; updateDustChip();   // 批25 T5：星星同样当场星尘+10
+          myDust += 15; updateDustChip();   // 批29⑤：星星当场星尘+15（原10；果子仍+10）
         }
         break;
       }
@@ -3153,7 +3153,7 @@
     }
     if (bonusMesh && bonus) {
       const w = cellW(bonus.x, bonus.y);
-      const blink = (now - bonus.born) / 8000 > .7 ? (Math.floor(now / 180) % 2 ? .3 : 1) : 1;
+      const blink = (now - bonus.born) / 12000 > .7 ? (Math.floor(now / 180) % 2 ? .3 : 1) : 1;
       bonusMesh.position.set(w.x, .75 + Math.sin(now / 220) * .12, w.z);
       bonusMesh.rotation.z = Math.sin(now / 300) * .25;
       bonusMesh.rotation.y = now / 500;
@@ -3223,7 +3223,7 @@
     if (fe.textContent !== em) fe.textContent = em;
     placeEdge(fe, nf ? nf.x : null, nf ? nf.y : null, null);
     const blink = bonus
-      ? (performance.now() - bonus.born) / 8000 > .7 && Math.floor(performance.now() / 180) % 2
+      ? (performance.now() - bonus.born) / 12000 > .7 && Math.floor(performance.now() / 180) % 2
       : undefined;
     placeEdge($('bonusEdge'), bonus ? bonus.x : null, bonus ? bonus.y : null, {blink});
   }

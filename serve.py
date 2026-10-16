@@ -19,7 +19,8 @@ FRUITS = [(10, 0xff5f5f), (15, 0xe74c3c), (20, 0xff6b81), (15, 0xa78bfa), (15, 0
 CYCLE = 0.05            # 主循环 50ms
 PROJ_SPEED = 22.0       # 弹药格/秒
 ATK_COOL = 800          # 攻击冷却 ms
-BONUS_LIFE = 8000
+BONUS_LIFE = 12000       # 批29⑤：星星在场寿命 ms（原 8000，配合刷新调高延长观赏窗口）
+BONUS_SPAWN_P = 0.015    # 批29⑤：每 tick 刷新星星概率（原 0.004，用户「继续调高星星的数量」）
 WIN_SCORE = 200
 SPAWN_INV = 2500        # 重生无敌保护 ms
 ITEM_LIFE = 12000       # 道具在地图上的存活时间
@@ -51,7 +52,7 @@ BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
 ITEM_TYPES = ('shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect')
 ULT_MAX = 100          # 大招蓄力上限（攒满才可释放）
 ULT_FRUIT = 10         # 吃水果充能
-ULT_STAR = 15          # 吃星星充能
+ULT_STAR = 25          # 批29⑤：吃星星充能（原 15）
 ULT_KILL = 30          # 咬蛇淘汰充能
 ULT_COOL = 3000        # 大招释放冷却 ms
 COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击重置
@@ -1543,7 +1544,7 @@ class Room:
                 ate = True
                 gained = self.score_gain(p, self.bonus['score'], now)
                 p['ult'] = min(ULT_MAX, p.get('ult', 0) + ULT_STAR)
-                p['dust'] = p.get('dust', 0) + 10        # 批25：星星同样当场星尘+10
+                p['dust'] = p.get('dust', 0) + 15        # 批29⑤：星星当场星尘+15（原10；果子仍+10不动）
                 self.ev('star', id=p['id'], x=hx, y=hy, score=gained)
                 self.bonus = None
             for it in self.items:
@@ -1666,7 +1667,7 @@ class Room:
         if self.bonus and now - self.bonus['born'] > self.bonus_life():
             self.ev('expire', id=self.bonus.get('id'), x=self.bonus['x'], y=self.bonus['y'])
             self.bonus = None
-        if not self.bonus and not self.win_pending and random.random() < 0.004:
+        if not self.bonus and not self.win_pending and random.random() < BONUS_SPAWN_P:
             free = self.free_list()
             if free:
                 x, y = random.choice(free)
