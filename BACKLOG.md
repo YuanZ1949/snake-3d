@@ -3,6 +3,19 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批27（2026-10-16 · 祈愿动画全套分镜改造）
+
+来源：用户粘贴分镜稿（四阶段：逐颗流星颜色判定/差异化揭示 1.75-2.5s/5★爆点运镜/捕获明光回溯/陈列金光 New 标）→ brainstorming(bounded) 三问拍板：全套分镜改造（推荐）；十连逐颗揭示（原神式，点击=快进）；做轻量 WebAudio 合成音效（零素材）。流程：vertical-slice（服务端 cap → gachares 协议 → 客户端四阶段+音效 → 测试/探针/文档）。
+
+| 层 | 内容 | 证据 |
+| --- | --- | --- |
+| 服务端 | `gacha_roll` 增 `cap=(star==5 and up and not in_lose)`（赢50/50的5★）；`handle_gacha` 条件透传 `items[].cap:true` | TDD `test_gacha_cap_flag` 先红后绿；单测 141 ALL PASSED |
+| 客户端 | 四阶段分镜：meteor 逐颗流星（各自颜色/stagger/4★5★ 推近/cap 项缩回→双星变形 glitch→二次飞行）→ flash（5★ Boom+光束+punch）→ reveal 逐颗（剪影 hold 1750/2100/2500ms→flip）→ done（5★ 金光脉冲+New 标）；sfxNoise/whoosh/boom/ping/glitch/chord 受 muted 约束 | 静态 js=677/677 ids=102 |
+| 探针 | `e2e/wish.spec.js` 3 项：全套分镜到 done（capture=1/3流星/New×2/Dup×1/关闭）；两段点击协议；reduced-motion 直达 done | Playwright 8/8（含既有 smoke 5 项）；local_ci ALL GREEN |
+| 文档 | HANDOVER §5.2 gachares 行 `cap?` 字段；spec §5.2 批27 回写块 | 本 commit |
+
+不做（记录在案）：未拥有 5★ 角色语音（spec §9）、音频素材文件、spec §9 其余不做项、游戏相机与玩法数值、既有游戏音效区重构。部署与 push：交付后单独询问。
+
 ## 批26（2026-10-16 · 收尾维护批（6 项拍板））
 
 来源：批25 报告「剩余风险与建议」6 项 → 用户逐项拍板：① occupied() 果占用集缓存=「顺手加缓存」；② index.html 尾部垃圾行=「下批顺手删（推荐）」；③ 断服丢当场星尘=「加 SIGTERM 优雅结算」；④ HANDOVER gachainfo 补行=「下批顺手补（推荐）」；⑤ stale-tab 协议=「B 版本握手 reload（推荐）」；⑥ spawn 24-256ms=「先实测线上分布」；开工时机=「现在开工（推荐）」。流程：backlog-sprint（候选池 6/6 全清，部署统一收口于 wrap-up）。

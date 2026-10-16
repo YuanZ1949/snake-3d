@@ -162,7 +162,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `error` | `err` | **批6 新增**：服务端拒绝（口令错误/非法口令/非创建者保存等）；客户端浮层提示，入局中被拒则退回主页 |
 | `auth` | `ok, user, token, stats, err` | 认证结果（`auth_payload`）；`authtoken` 失效时客户端自动清理本地态 |
 | `leaderboard` | `list[]` | `[{name,best,wins,kills,games}]` |
-| `gachares` | `items, balance, dust, gained` | **批25 T3 新增**：抽卡结果；`items[]` 按抽取顺序 `{skin, star, up, dup, refund}`（3★/4★/5★ 星级、up=本次 5★ 是否 UP、dup=重复已拥有、refund=重复返还星尘）；`balance`=抽后纯总账、`dust`=抽后当场星尘（回包时点，refund 已入账）、`gained`=本次总返还 |
+| `gachares` | `items, balance, dust, gained` | **批25 T3 新增**：抽卡结果；`items[]` 按抽取顺序 `{skin, star, up, dup, refund, cap?}`（3★/4★/5★ 星级、up=本次 5★ 是否 UP、dup=重复已拥有、refund=重复返还星尘；**批27**：赢 50/50 的 5★ 额外带 `cap:true`=捕获明光——客户端对单项播「缩回→双星变形 glitch→二次飞行」演出，非 5★/保底/歪均不带此键）；`balance`=抽后纯总账、`dust`=抽后当场星尘（回包时点，refund 已入账）、`gained`=本次总返还 |
 | `gachainfo` | `balance, dust, skins, p5, p4, lose` | **批25 T3 新增**：抽卡状态；`balance`=纯总账、`dust`=当前房当场星尘（不在局内=0）、`skins`=已拥有皮肤 id 列表、`p5/p4`=保底计数（距上次 5★/4★ 的抽数）、`lose`=50/50 是否已歪（下个 5★ 必 UP）；未登录回零值 |
 | `snap` | 见下 | **50ms 一次快照（批11 起为增量协议）** |
 

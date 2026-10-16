@@ -211,9 +211,11 @@
   .wishSkn canvas { width: 72px; height: 40px; border-radius: 6px; }
   .wishSkn .nm { font-size: 12px; color: #e7eaf8; }
   .wishSkn .st { font-size: 10px; color: #ffd166; letter-spacing: 1px; }
-  /* 批25 T6：抽卡动画（流星 → 爆闪 → reveal） */
+  /* ===== 批25 T6：抽卡动画骨架 ===== */
   #wishAnim { background: rgba(6,8,18,.97); cursor: pointer; overflow: hidden; }
-  .wishSky { position: absolute; inset: -30%; transform: rotate(-25deg); pointer-events: none; }
+  .wishSky { position: absolute; inset: -30%; transform: rotate(-25deg) scale(1); pointer-events: none; transition: transform .6s cubic-bezier(.3,.8,.4,1); }
+  .wishSky.cue4 { transform: rotate(-25deg) scale(1.12); }
+  .wishSky.cue5 { transform: rotate(-25deg) scale(1.28); }
   .meteor {
     position: absolute; top: -6%; width: 230px; height: 4px; border-radius: 4px;
     background: linear-gradient(90deg, transparent, var(--wishCol, #ffd43b));
@@ -227,6 +229,8 @@
     width: 13px; height: 13px; border-radius: 50%; background: #fff;
     box-shadow: 0 0 16px 5px var(--wishCol, #ffd43b);
   }
+  .meteor[data-star="5"] { background: linear-gradient(90deg, transparent, #ff9f43, #ffd43b, #b8e986, #4da3ff); filter: drop-shadow(0 0 12px #ffd43b); }
+  .meteor.capGo { animation: meteorFall .6s cubic-bezier(.2,.75,.3,1) both; }
   @keyframes meteorFall {
     0% { left: 105%; opacity: 0; }
     8% { opacity: 1; }
@@ -238,10 +242,50 @@
   }
   .wishFlash.on { animation: flashPop .35s ease-out forwards; }
   @keyframes flashPop { 0% { opacity: 0; transform: scale(.5); } 35% { opacity: 1; } 100% { opacity: 0; transform: scale(1.5); } }
+
+  /* ===== 批27：逐颗揭示舞台（剪影 hold → 消散 flip） ===== */
+  .wishStage { display: none; position: relative; z-index: 2; align-items: center; justify-content: center; }
+  #wishAnim[data-phase="flash"] .wishStage, #wishAnim[data-phase="reveal"] .wishStage { display: flex; }
+  #wishAnim[data-phase="done"] .wishResult { display: flex; }
+  .wishHero { position: relative; width: 220px; border-radius: 12px; overflow: hidden; border: 2px solid rgba(255,255,255,.25); box-shadow: 0 14px 44px rgba(0,0,0,.6); }
+  .wishHero canvas { display: block; width: 100%; height: auto; }
+  .wishHero[data-star="4"] { border-color: #b197fc; box-shadow: 0 0 26px rgba(177,151,252,.55); }
+  .wishHero[data-star="5"] { border-color: #ffd43b; box-shadow: 0 0 40px rgba(255,212,59,.7); }
+  .wishHero.sil canvas { filter: brightness(.12) saturate(.15); }
+  .wishHero.flip { animation: cardFlip .45s ease both; }
+  .wishBeams { display: none; position: absolute; left: 50%; top: 50%; width: 640px; height: 640px; transform: translate(-50%,-50%); pointer-events: none;
+    background: repeating-conic-gradient(rgba(255,212,59,.42) 0deg 5deg, transparent 5deg 16deg); border-radius: 50%;
+    -webkit-mask: radial-gradient(circle, transparent 16%, #000 30%, transparent 68%); mask: radial-gradient(circle, transparent 16%, #000 30%, transparent 68%); }
+  .wishBeams.on { display: block; animation: beamSpin 3.2s linear infinite, beamPop .55s ease-out; }
+  @keyframes beamSpin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+  @keyframes beamPop { 0% { opacity: 0; scale: .5; } 60% { opacity: 1; } 100% { opacity: .85; scale: 1; } }
+  #wishAnim.punch .wishStage { animation: stagePunch .5s cubic-bezier(.2,.9,.3,1.35); }
+  @keyframes stagePunch { 0% { transform: scale(.62); } 55% { transform: scale(1.08); } 100% { transform: scale(1); } }
+
+  /* ===== 批27：捕获明光（缩回 → 双星变形+glitch → 二次飞行） ===== */
+  .wishCap { position: absolute; left: -20%; top: 62%; z-index: 3; width: 0; height: 0; opacity: 0; pointer-events: none; }
+  #wishCap.on { animation: capRetract .55s ease-in both, capShape .5s .58s ease-out, capRefly .6s 1.06s ease-in both; }
+  @keyframes capRetract { 0% { left: -20%; opacity: 0; } 15% { opacity: 1; } 100% { left: 112%; top: 12%; opacity: 1; } }
+  @keyframes capShape {
+    0% { left: 112%; top: 12%; opacity: 0; }
+    30% { left: 50%; top: 40%; opacity: 1; }
+    100% { left: 50%; top: 40%; opacity: 1; }
+  }
+  @keyframes capRefly { 0% { left: 50%; top: 40%; opacity: 1; } 85% { opacity: 1; } 100% { left: -22%; top: 92%; opacity: 0; } }
+  .wishCap::before, .wishCap::after {
+    content: '✦'; position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; line-height: 44px; text-align: center;
+    font-size: 34px; color: #ffd43b; text-shadow: 0 0 18px #ffd43b, 0 0 44px rgba(255,180,40,.7);
+  }
+  .wishCap::after { left: 2px; top: -6px; font-size: 26px; color: #fff6d5; }
+  #wishCap.on::before { animation: capTwirl .8s linear infinite; }
+  @keyframes capTwirl { to { transform: rotate(360deg); } }
+  #wishAnim.glitch .wishStage, #wishAnim.glitch .wishSky { animation: glitchShake .16s steps(2) 3; }
+  #wishAnim.glitch .wishCap::before { filter: hue-rotate(120deg) contrast(2.4); }
+  @keyframes glitchShake { 0% { translate: 0 0; } 25% { translate: -6px 3px; } 50% { translate: 5px -4px; } 75% { translate: -3px 2px; } 100% { translate: 0 0; } }
+
   .wishResult {
     display: none; position: relative; z-index: 2; flex-direction: column; align-items: center; gap: 16px; max-height: 92vh;
   }
-  #wishAnim[data-phase="reveal"] .wishResult, #wishAnim[data-phase="done"] .wishResult { display: flex; }
   .wishGrid { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: center; max-width: 88vw; }
   .wishCard {
     position: relative; width: 128px; border-radius: 10px; overflow: hidden;
@@ -251,19 +295,25 @@
   }
   .wishCard canvas { display: block; width: 100%; height: auto; }
   .wishCard[data-star="4"] { border-color: #b197fc; box-shadow: 0 0 18px rgba(177,151,252,.5); }
-  .wishCard[data-star="5"] { border-color: #ffd43b; box-shadow: 0 0 24px rgba(255,212,59,.6); }
+  .wishCard[data-star="5"] { border-color: #ffd43b; box-shadow: 0 0 24px rgba(255,212,59,.6); animation: cardFlip .45s ease both, goldPulse 1.7s ease-in-out .55s infinite; }
+  @keyframes goldPulse { 0%,100% { box-shadow: 0 0 22px rgba(255,212,59,.5); } 50% { box-shadow: 0 0 44px rgba(255,212,59,.95); } }
   #wishGrid.single .wishCard { width: 196px; }
   @keyframes cardFlip { from { transform: perspective(760px) rotateY(85deg); opacity: 0; } to { transform: perspective(760px) rotateY(0); opacity: 1; } }
   .wishDup {
     position: absolute; right: 6px; bottom: 30px; padding: 1px 8px; border-radius: 999px;
     background: rgba(10,10,20,.85); border: 1px solid #ffd43b; color: #ffe9a8; font-size: 12px;
   }
+  .wishNew {
+    position: absolute; left: 6px; top: 6px; padding: 1px 8px; border-radius: 999px;
+    background: linear-gradient(90deg, rgba(255,212,59,.95), rgba(255,150,40,.95)); color: #231a05; font-size: 12px; font-weight: 700;
+  }
   .wishThumbs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   .wishThumbs canvas { width: 44px; height: 66px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
   .wishSkipHint { font-size: 12px; color: #9aa3c7; letter-spacing: 2px; }
-  #wishAnim.skipped .meteor, #wishAnim.skipped .wishFlash { display: none; }   /* 跳过：流星/爆闪立即撤 */
+  #wishAnim.skipped .meteor, #wishAnim.skipped .wishFlash, #wishAnim.skipped .wishStage, #wishAnim.skipped .wishCap { display: none; }   /* 跳过：演出立即撤 */
   @media (prefers-reduced-motion: reduce) {
-    .meteor, .wishFlash, .wishCard { animation-duration: .01s !important; animation-delay: 0s !important; }
+    .meteor, .wishFlash, .wishCard, .wishHero, .wishBeams, .wishCap, .wishSky { animation-duration: .01s !important; animation-delay: 0s !important; }
+    .wishBeams.on { display: none; }
   }
   button.primary {
     margin-top: 8px;
@@ -725,18 +775,19 @@
       <button class="chip" id="btnWishClose">关闭</button>
     </div>
 
-    <!-- 批25 T6：抽卡动画（流星 → 爆闪 → reveal）；phase: hidden|meteor|flash|reveal|done -->
+    <!-- 批27：祈愿四阶段分镜（流星逐颗判定 → 爆闪 → 逐颗揭示 → 陈列）；phase: hidden|meteor|flash|reveal|done -->
     <div class="overlay hidden" id="wishAnim" data-phase="hidden">
-      <div class="wishSky">
-        <div class="meteor"></div>
-        <div class="meteor m2"></div>
-        <div class="meteor m3"></div>
-      </div>
+      <div class="wishSky" id="wishSky"></div>
+      <div class="wishCap" id="wishCap" aria-hidden="true"></div>
       <div class="wishFlash" id="wishFlash"></div>
+      <div class="wishStage" id="wishStage">
+        <div class="wishBeams" id="wishBeams"></div>
+        <div class="wishHero" id="wishHero"></div>
+      </div>
       <div class="wishResult">
         <div class="wishGrid" id="wishGrid"></div>
         <div class="wishThumbs" id="wishThumbs"></div>
-        <div class="wishSkipHint">点击跳过 · 结果页点击关闭</div>
+        <div class="wishSkipHint">点击跳过演出 · 结果页点击关闭</div>
       </div>
     </div>
 
@@ -3700,10 +3751,41 @@
     $('tabSkins').setAttribute('aria-pressed', t === 'skins');
     if (t === 'skins') renderWishSkins();
   }
-  // ===== 批25 T6：抽卡流星动画（meteor → flash → reveal → done） =====
-  const WISH_COL = {3: '#4da3ff', 4: '#b06dff', 5: '#ffd43b'};   // 流星颜色随最高档变
+  // ===== 批27：祈愿四阶段分镜（meteor 逐颗判定 → flash 爆点 → reveal 逐颗揭示 → done 陈列） =====
+  const WISH_COL = {3: '#4da3ff', 4: '#b06dff', 5: '#ffd43b'};   // 流星颜色随稀有度
+  const WISH_HOLD = {3: 1750, 4: 2100, 5: 2500};                 // 剪影停留（分镜稿 1.75/2.1/2.5s）
+  const WISH_MET_STEP = 160;                                      // 逐颗流星间隔
   let wishTimers = [];
+  let wishMeteors = [];
+  function wishT(fn, ms) { const id = setTimeout(fn, ms); wishTimers.push(id); return id; }
   function clearWishTimers() { wishTimers.forEach(clearTimeout); wishTimers = []; }
+  function clearWishMeteors() {
+    wishMeteors.forEach(el => el.remove()); wishMeteors = [];
+    const sky = $('wishSky'); if (sky) sky.className = 'wishSky';
+  }
+  // ===== 批27：祈愿合成音效（WebAudio 零素材；beep/sfxNoise 均受 muted 约束） =====
+  function sfxNoise(dur, vol, f0, f1, type) {       // 噪声扫频（流星划过/轰鸣/glitch）
+    if (muted) return;
+    const a = ac(); if (!a) return;
+    const n = Math.max(1, Math.floor(a.sampleRate * dur));
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource(); src.buffer = buf;
+    const f = a.createBiquadFilter(); f.type = type || 'bandpass';
+    f.frequency.setValueAtTime(f0, a.currentTime);
+    f.frequency.exponentialRampToValueAtTime(Math.max(40, f1), a.currentTime + dur);
+    const g = a.createGain();
+    g.gain.setValueAtTime(vol, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, a.currentTime + dur);
+    src.connect(f); f.connect(g); g.connect(a.destination);
+    src.start();
+  }
+  const sfxWhoosh = star => { sfxNoise(.5, star >= 5 ? .2 : .12, 2600, 280); if (star >= 4) beep(660, .25, 'sine', .06, 320); };
+  const sfxBoom = () => { beep(70, .7, 'sine', .28, -28); sfxNoise(.55, .26, 1000, 70, 'lowpass'); };
+  const sfxPing = star => beep(star >= 5 ? 1320 : 880, .14, 'triangle', .15);
+  const sfxGlitch = () => { for (let i = 0; i < 5; i++) setTimeout(() => beep(1100 + i * 310, .03, 'square', .1), i * 42); sfxNoise(.4, .16, 3200, 500, 'highpass'); };
+  const sfxChord = () => { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, .32, 'triangle', .1), i * 90)); };
   function makeCardArt(s) {          // 立绘卡 canvas 256×384：star 渐变底 + 蛇剪影 + 星徽 + 名字条
     const c = document.createElement('canvas'); c.width = 256; c.height = 384;
     const g = c.getContext('2d');
@@ -3723,15 +3805,26 @@
     g.fillText(s.name, 128, 366);
     return c;
   }
+  function spawnMeteor(star, delayMs) {         // 批27：动态单颗流星（各自颜色/stagger）
+    const el = document.createElement('div');
+    el.className = 'meteor'; el.dataset.star = star;
+    el.style.setProperty('--wishCol', WISH_COL[star] || WISH_COL[3]);
+    el.style.top = (4 + Math.random() * 52) + '%';
+    el.style.animationDelay = (delayMs / 1000) + 's';
+    $('wishSky').appendChild(el); wishMeteors.push(el);
+    return el;
+  }
   function playWish(m) {
     const items = Array.isArray(m.items) ? m.items : [];
     if (!items.length) return;
-    clearWishTimers();
+    clearWishTimers(); clearWishMeteors();
     const layer = $('wishAnim');
     const maxStar = Math.max.apply(null, items.map(i => i.star));
     layer.style.setProperty('--wishCol', WISH_COL[maxStar] || WISH_COL[3]);
     // 压轴：低星在前（保持原序），最高星全部排末尾
     const ordered = items.filter(i => i.star < maxStar).concat(items.filter(i => i.star === maxStar));
+    const capIdx = ordered.findIndex(i => i.cap);       // 批27：捕获明光位置（赢50/50的5★）
+    // 结果陈列网格（done 阶段显示）+ New 标（首次获得）
     const grid = $('wishGrid'), thumbs = $('wishThumbs');
     grid.innerHTML = ''; thumbs.innerHTML = '';
     grid.classList.toggle('single', ordered.length === 1);
@@ -3744,6 +3837,9 @@
       if (it.dup && it.refund) {                                      // 重复返还提示 +N
         const b = document.createElement('span'); b.className = 'wishDup';
         b.textContent = '+' + it.refund; card.appendChild(b);
+      } else if (!it.dup) {
+        const b = document.createElement('span'); b.className = 'wishNew';   // 批27：New 标
+        b.textContent = 'New'; card.appendChild(b);
       }
       grid.appendChild(card);
       if (ordered.length > 1) {                                       // 十连底部一排缩略图
@@ -3752,27 +3848,69 @@
         thumbs.appendChild(t);
       }
     });
-    layer.classList.remove('skipped', 'hidden');
+    $('wishHero').className = 'wishHero'; $('wishBeams').classList.remove('on');
+    layer.classList.remove('skipped', 'hidden', 'glitch', 'punch');
+    layer.dataset.capture = capIdx >= 0 ? '1' : '';                   // 探针观测点：本批含捕获明光
     layer.dataset.phase = 'meteor';
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { wishSkip(layer); return; }
-    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'flash'; $('wishFlash').classList.add('on'); }, 900));
-    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'reveal'; }, 1250));
-    wishTimers.push(setTimeout(() => { layer.dataset.phase = 'done'; },
-      1250 + (ordered.length > 1 ? (ordered.length - 1) * 120 + 550 : 550)));
+    // ===== 阶段一：逐颗流星（各自颜色；4★/5★ 推近天幕；5★ 彩虹尾；cap 回溯+二次飞行） =====
+    let metDur = 900 + (ordered.length - 1) * WISH_MET_STEP;
+    ordered.forEach((it, i) => {
+      const delay = i * WISH_MET_STEP;
+      const el = spawnMeteor(it.star, delay);
+      wishT(() => sfxWhoosh(it.star), delay);
+      if (it.star >= 4) {                                             // 颜色判定：推近运镜
+        wishT(() => $('wishSky').classList.add(it.star === 5 ? 'cue5' : 'cue4'), delay);
+        wishT(() => $('wishSky').classList.remove('cue4', 'cue5'), delay + 880);
+      }
+      if (i === capIdx) {   // 批27：捕获明光——中道缩回 → 双星变形+glitch → 二次飞行落地
+        metDur += 1900;
+        wishT(() => { el.style.visibility = 'hidden'; sfxGlitch(); layer.classList.add('glitch'); }, delay + 470);
+        wishT(() => $('wishCap').classList.add('on'), delay + 490);
+        wishT(() => { $('wishCap').classList.remove('on'); spawnMeteor(it.star, 0).classList.add('capGo'); }, delay + 2170);
+        wishT(() => layer.classList.remove('glitch'), delay + 2300);
+      }
+    });
+    // ===== 阶段二：落地爆闪（5★ Boom+放射光束+punch 推近） =====
+    wishT(() => {
+      layer.dataset.phase = 'flash'; $('wishFlash').classList.add('on');
+      if (maxStar >= 5) { sfxBoom(); layer.classList.add('punch'); } else sfxNoise(.3, .1, 1800, 380);
+    }, metDur);
+    wishT(() => { $('wishFlash').classList.remove('on'); layer.classList.remove('punch'); }, metDur + 520);
+    // ===== 阶段三：逐颗揭示（剪影 hold → flip 消散） =====
+    wishT(() => revealNext(layer, ordered, 0), metDur + 400);
   }
-  function wishSkip(layer) {          // 点击跳过：直接 reveal 终态并解锁输入
+  function revealNext(layer, ordered, i) {
+    if (layer.classList.contains('skipped')) return;                  // 快进后递归终止
+    if (i >= ordered.length) {                                        // ===== 阶段四：done 陈列 =====
+      layer.dataset.phase = 'done'; $('wishBeams').classList.remove('on'); sfxChord(); return;
+    }
+    const it = ordered[i], s = SKINS[it.skin] || SKINS[0];
+    const hero = $('wishHero');
+    hero.className = 'wishHero sil'; hero.dataset.star = it.star;
+    hero.innerHTML = ''; hero.appendChild(makeCardArt(s));
+    if (it.star >= 5) { $('wishBeams').classList.add('on'); wishT(() => $('wishBeams').classList.remove('on'), 900); }
+    wishT(() => { hero.classList.remove('sil'); hero.classList.add('flip'); sfxPing(it.star); }, WISH_HOLD[it.star]);
+    wishT(() => revealNext(layer, ordered, i + 1), WISH_HOLD[it.star] + 480);
+  }
+  function wishSkip(layer) {          // 演出中点击跳过：直接陈列终态并解锁输入（协议：演出中点=快进）
     layer = layer || $('wishAnim');
-    clearWishTimers();
+    clearWishTimers(); clearWishMeteors();
     layer.classList.add('skipped');
+    layer.classList.remove('glitch', 'punch');
+    $('wishBeams').classList.remove('on'); $('wishCap').classList.remove('on');
+    $('wishHero').className = 'wishHero';
     Array.from($('wishGrid').children).forEach(c => { c.style.animation = 'none'; });
     layer.dataset.phase = 'done';
   }
   function wishAnimClose() {
-    clearWishTimers();
+    clearWishTimers(); clearWishMeteors();
     const layer = $('wishAnim');
-    layer.classList.add('hidden'); layer.dataset.phase = 'hidden';
-    layer.classList.remove('skipped');
+    layer.classList.add('hidden'); layer.dataset.phase = 'hidden'; layer.dataset.capture = '';
+    layer.classList.remove('skipped', 'glitch', 'punch');
     $('wishFlash').classList.remove('on');
+    $('wishBeams').classList.remove('on'); $('wishCap').classList.remove('on');
+    $('wishHero').className = 'wishHero';
     $('wishGrid').innerHTML = ''; $('wishThumbs').innerHTML = '';
   }
   function wishAnimBusy() {          // 动画期间锁键盘输入（done 后解锁）

@@ -78,6 +78,7 @@ user 字典新增:
 > ① items 每项增加 `up` 字段（`{skin, star, up, dup, refund}`）——十连展示需要标 UP；回包与 gachainfo 均增加 `dust` 字段（当场星尘）；`gained` = 本次返还合计（Σrefund，已入账口径）。
 > ② `balance` 语义改定为**纯总账**（`store.stardust`，不含当场星尘），当场星尘由独立 `dust` 字段承载——原「局内 balance 含当场星尘」废弃，客户端余额展示按 `balance`（可花）与 `dust`（局内临时，settle 并账）分离。
 > ③ gacha 加固（oracle 审查 BLOCKER 修订）：`n` 白名单只收 1/10（防负数变加币）；入局玩家 `p.user` 与登录账号不一致回 error；检查→扣减→save 全程无 await（同账号双开会话无法在关键区穿插）。大厅（无房）允许抽卡，`dust=0`。
+> **批27 回写（捕获明光 cap + 全套分镜改造）**：`gacha_roll` return 增加 `cap = (star==5 and up and not in_lose)`（赢 50/50 的 5★），`handle_gacha` 条件透传为 `items[].cap:true`（无 cap 不带键，既有桩形状兼容）；客户端动画改四阶段分镜——meteor 逐颗流星（各自颜色/stagger 160ms/4★5★ 推近天幕/cap 项「缩回→双星变形 glitch→二次飞行」）→ flash（5★ Boom+放射光束+punch 推近）→ reveal 逐颗（剪影 hold 1750/2100/2500ms → flip 消散，5★ beams）→ done（陈列：5★ 金光脉冲+`New` 标）；WebAudio 合成音效（sfxNoise 扫频+whoosh/boom/ping/glitch/chord，全部受 `muted` 约束、零素材文件、不碰既有游戏音效区）；两段点击协议（演出中点=快进到陈列、陈列上点=关闭）、ESC、reduced-motion 直达 done、输入锁全部保留；探针 `e2e/wish.spec.js` 3 项（相位推进+capture 标记+New/Dup 计数、两段点击、reduced-motion）。
 
 ### 5.3 逻辑单元（可测函数）
 - `def gacha_roll(rng, p5, p4, lose5050, pity5, pity4) -> (star, skin_id, new_state...)`：纯函数，rng 可注入（测试打桩），返回结果与新保底状态。UP 判定与皮肤选取（同星随机，UP 只在 5星参与）在此函数内。

@@ -724,6 +724,49 @@ def test_gacha_ten_pull_pity_carry():
     print("gacha ten pull carry OK")
 
 
+def test_gacha_cap_flag():
+    """批27 分镜：捕获明光标识 cap——赢 50/50 的 5★ 才带；大保底/歪/低星不带"""
+    import asyncio
+    # 纯函数：保底驱动 5★ + 掷骰赢 → cap=True（捕获明光）
+    capwin = serve.gacha_roll(_FakeRng([0.3]), False, 89, 0)
+    assert capwin["star"] == 5 and capwin["up"] is True and capwin.get("cap") is True, capwin
+    # 大保底（上发歪过，非掷骰路径）→ 非捕获
+    gtd = serve.gacha_roll(_FakeRng([]), True, 89, 0)
+    assert gtd["up"] is True and not gtd.get("cap"), gtd
+    # 掷骰歪了 → 非捕获
+    loss = serve.gacha_roll(_FakeRng([0.6]), False, 89, 0)
+    assert loss["up"] is False and not loss.get("cap"), loss
+    # 4★ 不带
+    four = serve.gacha_roll(_FakeRng([0.5]), False, 0, 9)
+    assert four["star"] == 4 and not four.get("cap"), four
+    # 集成：gachares item 仅捕获 roll 带 cap 键；无 cap 字段的 roll（既有打桩形状）不带键
+    d, old = _gacha_setup()
+    old_roll, old_pick = serve.gacha_roll, serve.pool_pick
+
+    def fake_cap(rng, lose5050, pity5, pity4):
+        return {"star": 5, "up": True, "pity5": 0, "pity4": 0,
+                "lose5050": False, "cap": True}
+    try:
+        serve.store.add_stardust("alice", 320)
+        serve.pool_pick = lambda rng, star, up: 15
+        serve.gacha_roll = fake_cap
+        s = _cfg_sess(sid="g6", user="alice")
+        s.ip = "3.3.3.8"
+        asyncio.run(serve.handle_msg(s, {"t": "gacha", "n": 1}))
+        last = s.ws.sent[-1]
+        assert last.get("t") == "gachares" and last["items"][0].get("cap") is True, last
+        _stub_roll(5, True)                          # 既有桩形状：无 cap 字段（内部已赋值）
+        s2 = _cfg_sess(sid="g7", user="alice")
+        s2.ip = "3.3.3.9"
+        asyncio.run(serve.handle_msg(s2, {"t": "gacha", "n": 1}))
+        last2 = s2.ws.sent[-1]
+        assert last2.get("t") == "gachares" and "cap" not in last2["items"][0], last2
+    finally:
+        serve.gacha_roll, serve.pool_pick = old_roll, old_pick
+        _gacha_teardown(d, old)
+    print("gacha cap flag OK")
+
+
 def test_pool_pick_uniform():
     seen3, seen4 = set(), set()
     for i in range(6):
@@ -2805,7 +2848,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_gacha_identity_mismatch_rejected,
             test_gacha_in_lobby_works_with_zero_dust,
             test_gacha_insufficient_balance_no_side_effect,
-            test_gacha_deduct_and_result, test_gacha_ten_pull,
+            test_gacha_deduct_and_result, test_gacha_ten_pull, test_gacha_cap_flag,
             test_settle_dust_idempotent, test_stardust_grant_on_win_and_tie,
             test_skin_normalize_and_auth, test_join_skin_fallback_no_reject,
            test_room_custom_config, test_speed_change_instant,

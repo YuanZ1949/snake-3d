@@ -284,8 +284,10 @@ GACHA_PITY4 = 9       # 10 抽必出 4★
 def gacha_roll(rng, lose5050, pity5, pity4):
     """单抽纯函数。判定顺序写死：硬保底5★ > 基础5★ > 4★保底 > 基础4★ > 3★。
     计数转移：出5★→双清零；出4★→pity4=0 且 pity5+=1；3★→双双+1。
-    50/50：出5★时若 lose5050=True → 必 UP 并复位；否则掷骰，歪则置 lose5050=True。"""
+    50/50：出5★时若 lose5050=True → 必 UP 并复位；否则掷骰，歪则置 lose5050=True。
+    批27：cap=捕获明光——仅「非保底路径掷骰赢」为 True（保底 UP 不算捕获）。"""
     pity5, pity4 = int(pity5), int(pity4)
+    in_lose = bool(lose5050)
     if pity5 >= GACHA_PITY5:
         star = 5
     else:
@@ -312,7 +314,8 @@ def gacha_roll(rng, lose5050, pity5, pity4):
     else:
         pity4, pity5 = pity4 + 1, pity5 + 1
         up = False
-    return {'star': star, 'up': up, 'pity5': pity5, 'pity4': pity4, 'lose5050': bool(lose5050)}
+    return {'star': star, 'up': up, 'pity5': pity5, 'pity4': pity4,
+            'lose5050': bool(lose5050), 'cap': bool(star == 5 and up and not in_lose)}
 
 
 def pool_pick(rng, star, up):
@@ -2134,7 +2137,8 @@ async def handle_gacha(sess, m):
             store.add_stardust(name, refund)
             gained += refund
         items.append({'skin': skin, 'star': r5['star'], 'up': r5['up'],
-                      'dup': dup, 'refund': refund})
+                      'dup': dup, 'refund': refund,
+                      **({'cap': True} if r5.get('cap') else {})})
     store.save()
     await send(sess, {'t': 'gachares', 'items': items,
                       'balance': store.stardust(name),
