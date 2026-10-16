@@ -519,6 +519,7 @@
   #ultBtn.ready { color: #ffd166; border-color: rgba(255,209,102,.75); animation: ultPulse 1s infinite; }
   @keyframes ultPulse { 50% { box-shadow: 0 0 16px rgba(255,209,102,.9); } }
   .eff .track { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
+  .eff .lb { font-size: 11px; letter-spacing: 1px; }   /* 批29⑥：中文效果名（emoji 与进度条之间） */
   .eff .bar { height: 100%; background: currentColor; width: 100%; }
   .chip.combo { color: #ffd166; border-color: rgba(255,209,102,.55); animation: comboPulse .7s ease-in-out infinite; }
   .chip.combo.hot { color: #ff8a5c; border-color: rgba(255,138,92,.65); }
@@ -2565,9 +2566,10 @@
       const eff = myEnt.eff || {};
       for (const k of ['shield', 'speed', 'ghost', 'magnet', 'double', 'rage', 'deflect']) {
         const left = eff[k] | 0;
-        if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, left: left, total: 6000});
+        // 批29⑥：chip 带中文名（用户「给道具效果加上中文」）
+        if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, label: ITEMS[k].label, left: left, total: 6000});
       }
-      if ((myEnt.inv | 0) > 0) parts.push({cls: 'inv', emoji: '🛡', left: myEnt.inv, total: 2500});
+      if ((myEnt.inv | 0) > 0) parts.push({cls: 'inv', emoji: '🛡', label: '无敌', left: myEnt.inv, total: 2500});
     }
     const sig = parts.map(p => p.cls).join(',');
     if (sig !== effHudSig) {
@@ -2578,12 +2580,15 @@
         d.className = 'eff ' + p.cls;
         const t = document.createElement('span');
         t.textContent = p.emoji;
+        const nm = document.createElement('span');
+        nm.className = 'lb';
+        nm.textContent = p.label;   // 批29⑥：中文效果名
         const tr = document.createElement('span');
         tr.className = 'track';
         const b = document.createElement('span');
         b.className = 'bar';
         tr.appendChild(b);
-        d.append(t, tr);
+        d.append(t, nm, tr);
         box.appendChild(d);
       }
     }
