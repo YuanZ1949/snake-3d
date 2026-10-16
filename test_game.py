@@ -2418,6 +2418,28 @@ def test_roomcfg_extended_fields_unified():
     del serve.rooms['rc']
 
 
+def test_roomcfg_deferred_fields_reported():
+    """批28 B：cfgapplied 回执带 deferred=[下局生效字段]——客户端据此提示
+    「地形/尺寸改动将在下一局生效」；纯即时字段改回执 deferred 为空表"""
+    import asyncio
+    s = _cfg_sess(sid='s1')
+    r = _cfg_room(s)
+    s.room = r
+    # 混合改动：theme/size=下局生效，bots=即时
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'theme': 'day', 'size': 40, 'bots': 2}))
+    cap = [x for x in s.ws.sent if x.get('t') == 'cfgapplied'][-1]
+    assert cap['changed'] is True
+    assert sorted(cap['deferred']) == ['size', 'theme']
+    # 纯即时字段：deferred 空表
+    s.ws.sent.clear()
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc', 'bots': 3}))
+    cap2 = [x for x in s.ws.sent if x.get('t') == 'cfgapplied'][-1]
+    assert cap2['changed'] is True
+    assert cap2['deferred'] == []
+    del serve.rooms['rc']
+
+
 def test_respawn_msg_gated_by_room_mode_and_delay():
     """批22 H4：手动复活仅限复活房且须过 RESPAWN_MS——死斗/积分房裸发复活必须被拒
     （漏洞已本地复现：respawn=False 房死亡后裸发 {t:'respawn'} 立即复活）"""
@@ -2917,6 +2939,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_roomcfg_bots_live_add_remove,
             test_roomcfg_limit_fallback_mirror,
             test_roomcfg_extended_fields_unified,
+            test_roomcfg_deferred_fields_reported,
             test_respawn_msg_gated_by_room_mode_and_delay,
             test_create_rate_limited_and_room_cap,
             test_register_rate_limited,

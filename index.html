@@ -2467,7 +2467,12 @@
         return;
       case 'cfgapplied':
         // 批18 E：房间参数编辑回执（变更已随 broadcast_rooms 刷新）
-        showToast(m.changed ? '房间设置已更新' : '设置无变化');
+        // 批28 B：deferred = 本次「下局生效」的地形/尺寸字段 → 明确提示，避免误以为没生效
+        if (m.changed && m.deferred && m.deferred.length) {
+          showToast('房间设置已更新 · 地形/尺寸改动将在下一局生效');
+        } else {
+          showToast(m.changed ? '房间设置已更新' : '设置无变化');
+        }
         return;
       case 'delok':
         // 批24 O2：删除成功回执（列表已随 broadcast_rooms 刷新）
@@ -3277,8 +3282,11 @@
     }
     const active = roomList.filter(r => r.players > 0);
     const shown = active.slice();
-    const sel = roomList.find(r => r.id === curRoom);
-    if (sel && sel.players <= 0) shown.push(sel);
+    // 批28-A：自己创建过的空房（owner 凭据持久 / 本会话记录）始终显示，
+    // 避免开了单人练习或建了新房把 curRoom 顶走后，等朋友的空联机房从列表消失（误以为被覆盖）
+    for (const r of roomList) {
+      if (r.players <= 0 && (r.id === curRoom || isMine(r.id))) shown.push(r);
+    }
     shown.sort((a, b) => (b.players - a.players) || String(a.id).localeCompare(String(b.id)));
 
     const box = $('roomList');

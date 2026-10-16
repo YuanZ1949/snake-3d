@@ -2342,6 +2342,7 @@ async def handle_msg(sess, m):
                 await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
                 return
         changed = False
+        deferred = []      # 批28 B：本次改动中「下局生效」的字段（客户端据此提示）
         wm = m.get('winMode')
         if wm in ('last', 'score') and wm != room.win_mode:
             room.win_mode = wm
@@ -2382,6 +2383,7 @@ async def handle_msg(sess, m):
             if nv != room.theme_fixed:
                 room.theme_fixed = nv
                 changed = True
+                deferred.append('theme')
         if 'rock' in m:
             rk = m.get('rock')
             if rk in (None, ''):
@@ -2393,6 +2395,7 @@ async def handle_msg(sess, m):
             if nv != room.rock_mult:
                 room.rock_mult = nv
                 changed = True
+                deferred.append('rock')
         if 'portal' in m:
             pv = m.get('portal')
             if pv in (None, ''):
@@ -2404,6 +2407,7 @@ async def handle_msg(sess, m):
             if nv != room.portal_on:
                 room.portal_on = nv
                 changed = True
+                deferred.append('portal')
         if 'size' in m:
             try:
                 nsz = int(m.get('size'))
@@ -2417,6 +2421,7 @@ async def handle_msg(sess, m):
             elif room.pending_size != nsz:
                 room.pending_size = nsz        # 下局 new_round 统一重建坐标系
                 changed = True
+                deferred.append('size')
         # 口令（批23 N2，上方先验已过）：clearPass 显式清除；给了新值才改；留空不动
         if m.get('clearPass') is True:
             if room.passw is not None:
@@ -2437,7 +2442,8 @@ async def handle_msg(sess, m):
                 changed = True
         if changed:
             await broadcast_rooms()
-        await send(sess, {'t': 'cfgapplied', 'room': rid, 'changed': changed})
+        await send(sess, {'t': 'cfgapplied', 'room': rid, 'changed': changed,
+                          'deferred': deferred})
         return
 
     # -------- 房间进出 --------
