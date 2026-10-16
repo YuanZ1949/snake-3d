@@ -3,6 +3,23 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批26（2026-10-16 · 收尾维护批（6 项拍板））
+
+来源：批25 报告「剩余风险与建议」6 项 → 用户逐项拍板：① occupied() 果占用集缓存=「顺手加缓存」；② index.html 尾部垃圾行=「下批顺手删（推荐）」；③ 断服丢当场星尘=「加 SIGTERM 优雅结算」；④ HANDOVER gachainfo 补行=「下批顺手补（推荐）」；⑤ stale-tab 协议=「B 版本握手 reload（推荐）」；⑥ spawn 24-256ms=「先实测线上分布」；开工时机=「现在开工（推荐）」。流程：backlog-sprint（候选池 6/6 全清，部署统一收口于 wrap-up）。
+
+| # | 项 | commit | 状态与证据 |
+| --- | --- | --- | --- |
+| ⑥ | spawn 耗时测量：薄 wrapper 计时 + `[spawn]` journal 行 + `last_spawn_ms`（不动算法） | `07e2955` | ✅ 生产 journal 已见 `[spawn]` 行（14–21ms @32x32 实测） |
+| ⑤ | 协议版本握手：room-ok 三路带 `ver=PROTO_VER`(26)，客户端不等即 reload 关闭 stale-tab 窗口；HANDOVER 写明改协议须同步 bump | `8b015cc` | ✅ 生产双端 `PROTO_VER = 26` grep=1/1 |
+| ③ | SIGTERM 优雅结算：`shutdown_settle()` 遍历并账落盘 + `install_shutdown_handlers()`（Linux add_signal_handler / Windows signal.signal 降级） | `1632eab` | ✅ 生产 restart 实证 journal `[shutdown] settle ok: 0 players dust granted to store`，无 traceback，systemd Deactivated successfully |
+| ① | occupied() 果占用集缓存（`(id,len)` key + 变更路径全集摸底：零原地改） | `d5ec38e` | ✅ 微基准 1.74→0.79µs/call（-55%）；`test_occupied_foods_cache` 三段断言 |
+| ② | 删 index.html 尾部垃圾 2 行（`y>` + 重复 `</html>`，批23 `d9f075d` 引入） | `8aec385` | ✅ diff 恰 2 deletions，tail=`</html>` |
+| ④ | HANDOVER `gachainfo` 补「换号身份不一致同样回零值占位」行 | `b191c9f` | ✅ diff 1/1，语义核对 serve.py `gacha_state` 一致 |
+
+门禁终值：单测 **140**、static js=658/658 ids=97、`local_ci.ps1` **ALL GREEN**（每次 commit 前各跑一次，wrap-up 终跑亦 ALL GREEN）。
+部署：漂移零（生产=0e7c39e 运行时 blob aa5eedc5/7c8a830b）→ 备份 `predeploy-20261016-113444.tar.gz` → 投放 + restart×2（第二次为 ③ 实证）→ active、200、生产 sha256 == `b191c9f` blob（serve.py `aa83e215…` / index.html `f7a35604…`）、journal error=0、生产隔离单测 ALL PASSED。
+push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干净。
+
 ## 批25（2026-10-15 · 抽卡（祈愿）系统）
 
 来源：用户「加个抽卡功能吧，类似原神那种祈愿，吃果子获得抽卡货币，抽卡来解锁皮肤」（m0413）→ 范围与数值经 brainstorming 逐项确认（m0419 拍板：「任何要决定的你自己按照推荐来」，推荐值全部通过）→ spec 获批（`1724228`）→ oracle 审计划（2 BLOCKER + 9 MAJOR 全修入计划，`d9178eb`）→ 原生执行（`executing-plans`），批末 oracle 终审。
@@ -82,3 +99,5 @@
 - 2026-10-15：**P4 ✅（卡顿动态自适应画质）**——批23 收官项。机制：`frame()` 每帧 `qualSample(now, now-prevFrame)` 喂 **EMA**（.88/.12），`ema>24ms` 连续 30 样本（≈0.5s，<45fps）降一档、`ema<17.5ms` 连续 180 样本（≈3s）升一档、档位变更后 2.5s 冷却（回差防抖）；首帧/切回标签 >1000ms 大间隔不计入。三档 `QUAL_TIERS`：0 满档 {ratio1.5, 阴影开, 小地图每帧} → 1 中档 {1.0, 开, 每2帧} → 2 低档 {.75, **关阴影**（traverse 置 material.needsUpdate 重编译）, 每4帧}；pixelRatio 落地统一走 `resize()`（改读档位），小地图在 `frame` 末按 `miniTick%miniEvery` 降频。挂 `window.__qual={quality,qualSample,setTier,applyQuality}` 调试钩子（`quality.freeze` 隔离真实帧，探针专用）。**TDD 先红**（`window.__qual 缺失 → RED exit 1`）**后绿**：`test-results/p4_quality.js`（备份 `Temp\opencode\p4_quality.js`）——真实帧 ema 在喂 → 冻结注入 33ms×40 两轮 tier 0→1→2 且 `applied` shadows=false/miniEvery=4/canvas 432→324 → 注入 8ms 升回 0 且阴影恢复 → errors=[]，**PROBE GREEN**。门禁：静态 `js=577/577` 全过、单测 106、`pwsh scripts\local_ci.ps1` **ALL GREEN**（8 E2E + 单测 + Playwright 5）。踩坑：**local_ci 的 `npx playwright test` 会清空 `test-results/`**（P4 探针首跑后被抹，靠会话内内容重建）——探针务必备份到 `Temp\opencode\`。**批23 收官**：池 8/8 全清（N1/N2/P5/P2/P3/P6/P7/P4）；批末收尾已执行——漂移检查通过（`3dac1b4` serve.py 与生产 sha 一致 `5272bb48…`）→ 备份回滚点 `predeploy-20261015-153153` → `git -c core.autocrlf=false archive` 投放 → 重启 active/200/journal 零 error、生产 serve.py sha=`469583de…` 与 `39bc6be` blob 一致 → 生产 venv 单测 106 PASS（`/tmp/b23test` 隔离跑防污染 data）→ P4 探针经 ssh 隧道对生产 GREEN → 双远端推送至 `b7fe788`（origin/server 同址裸仓库）→ HANDOVER 生产版本行已回写。
 - 2026-10-15：**批25 抽卡（祈愿）系统 ✅（A+1–6，7 执行中）**：用户 m0413「类似原神祈愿、吃果得货币解锁皮肤」→ brainstorming 拍板（m0419：果 +10 星尘、场上 3–8 果、160/抽、1600/十连、返还 10/50/200、1.6%/90 硬保底/5050、卡池 5–15）→ spec `1724228` → oracle 审计划（2 BLOCKER + 9 MAJOR 全修 `d9178eb`）→ 原生执行 Task 0–6：A 多果 `f0a6503`（**唯一协议 break：snap food→foods**）/ Store `c99d6e4` / 纯函数 `e3d721b`（11 单测）/ 消息鉴权 `df660ac`（11 单测，n 白名单/身份一致/关键区无 await/大厅可抽）/ SKINS 16 款 `d80640e` / 祈愿界面 `a01beaa`（p25_ui GREEN，入口 T5 Ruling=startScreen 账号行）/ 流星动画 `b322fca`（p25_anim GREEN，T6 Ruling=非 done 锁键盘+点击两段协议）；门禁 134 单测 / js=656+ids=97 / local_ci ALL GREEN；spec §5.2/§5.3 偏离与 HANDOVER 协议表已回写（本段同 commit）
 - 2026-10-16：**批25 收尾（oracle 终审 → REVISE → 必改全修 → 重部署）**：终审 1 MAJOR（`handle_gacha` 白名单 `n not in (1,10)` 放行 float/bool——`True==1`、`1.0 in (1,10)` 相等性穿透，扣款后 `range(float)` TypeError 被顶层吞=扣款无回包，违反计划「非 int 零副作用回 error」）+ 4 MINOR + 4 NIT；修复（`6727be0`）= `type(n) is not int` 白名单（测试扩 1.0/10.0/True/None 带余额断言，TDD RED 先复现 TypeError）+ 身份一致扩 `gachainfo`（不一致回零值占位）/`skin`（不一致回 error，匿名换免费皮肤不受影响，既有 skin 测试补 `p.user` 入局不变量）+ 祈愿未登录 toast「请回主页登录」+ `room-ok` 后重发 `gachainfo`（resume 重同步 dust HUD）+ 计划/spec `gained`=本次返还合计 + 测试注释 21→5 改 3★；不动：NIT-8 `occupied()` 每调用建 set（开销亚毫秒级/tick 预算内）、INFO-9 文件尾 `y>` 垃圾行（50af4f0 前既存）、INFO-10 断服丢当场星尘（spec §5.1 允许的临时态）；门禁 137 单测/静态 js=657/local_ci ALL GREEN ×2；重部署零漂移（生产 sha=ad13d62→6727be0 blob）、active/200/journal 0、生产隔离单测 ALL PASSED、只读探针 OK
+
+- 2026-10-16：**批26 收尾维护批（6 项拍板）→ 候选池 6/6 全清 + wrap-up 部署完成**：批25 报告 6 项建议用户逐项拍板（①顺手加缓存/②下批顺手删/③加 SIGTERM 优雅结算/④下批顺手补/⑤B 版本握手 reload/⑥先实测线上分布，开工时机=现在开工）→ backlog-sprint 排序 ⑥→⑤→③→①→②→④（解锁链：⑥取证解锁未来优化、⑤先于③避免新代码进 stale-tab 窗口），部署统一收口 wrap-up。交付：⑥  7e2955 spawn 薄 wrapper 计时 + [spawn] journal 行 + last_spawn_ms；⑤ 8b015cc PROTO_VER=26 三路 room-ok 握手 + 客户端不等即 reload + HANDOVER bump 规则；③ 1632eab shutdown_settle 并账落盘 + install_shutdown_handlers（Linux add_signal_handler/Windows signal.signal 降级）+ spec §5.1 回写（TDD：RED AttributeError→GREEN，密码=6 位数字 135790 卡过 2 次失败预算第 3 次换路成功）；① d5ec38e occupied() 果占用集 (id,len) key 缓存（变更路径全集摸底零原地改；微基准 1.74→0.79µs/call -55%；坑：fresh() 清空 foods 须自播果、注册缩进 11 空格、commit 尾字节 GBK 坏须 -F 文件 amend）；② 8aec385 删尾 2 行（y>+重复 </html>，批23 引入）；④ 191c9f HANDOVER gachainfo 补换号零值占位行。门禁终值：单测 140 / static js=658 ids=97 / local_ci ALL GREEN（wrap-up 终跑）。部署：漂移零→备份 predeploy-20261016-113444→投放+restart×2→active/200/生产 sha=aa83e215+f7a35604==191c9f blob/journal error=0/生产隔离单测 ALL PASSED；⑥ 核验 journal [spawn] 行（14–21ms@32x32）、③ 实证 [shutdown] settle ok: 0 players（首 restart 收 SIGTERM 者为新代码进程才打印）。push  e7c39e..b191c9f 三者一致，工作区干净。
