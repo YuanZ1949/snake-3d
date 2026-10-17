@@ -3251,7 +3251,7 @@ def test_admin_notice_grant_report_batch30():
 
 
 def test_height_gen_invariants():
-    r = fresh(24)                       # 默认主题
+    r = fresh(24, theme_fixed='default')   # 主题随局随机（lava/space water=0 无草）→ 固定 default
     mk(r, 1, "A", [(12, 12), (11, 12)], (1, 0))   # 造旧蛇头做 ±4 避让验证
     r.build_terrain()
     vals = set(r.hmap.values())
@@ -3450,6 +3450,24 @@ def test_bullet_hit_range():
     assert r.projectiles and all(pr['h']==1 for pr in r.projectiles)
 
 
+def test_snapshot_height():
+    now = serve.now_ms()
+    r = fresh(16); r.hmap = {(3,3): 2}; r._reach = None
+    full = r.snapshot(now, full=True)
+    assert full['hmap'] == [[3, 3, 2]]
+    r.projectiles = [{'owner': 1, 'x': 1.0, 'y': 1.0, 'dx': 1, 'dy': 0, 'spd': 1.0, 'h': 2}]
+    r.snapshot(now)                       # 建立增量基线
+    r.hmap[(4, 4)] = 1                    # 地形变了
+    s = r.snapshot(now)
+    assert [4, 4, 1] in s['hmap'] and [3, 3, 2] in s['hmap']
+    s2 = r.snapshot(now)                  # 未变 → 不带
+    assert 'hmap' not in s2
+    assert s['proj'][0]['h'] == 2         # 弹道高度字段随每帧 proj 下发
+    src = open('serve.py', encoding='utf-8').read()
+    html = open('index.html', encoding='utf-8').read()
+    assert 'PROTO_VER = 28' in src and 'const PROTO_VER = 28' in html
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3557,6 +3575,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_login_gift_batch31,
             test_height_gen_invariants, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
-            test_crush, test_bullet_terrain, test_bullet_hit_range]:
+            test_crush, test_bullet_terrain, test_bullet_hit_range,
+            test_snapshot_height]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

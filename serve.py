@@ -45,7 +45,7 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 27          # 批29④：协议版本——room-ok 必带；改协议必须同步 bump 双端
+PROTO_VER = 28          # 批32：hmap/proj.h 增量下发；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
 ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
@@ -752,15 +752,22 @@ class Room:
             return True
 
         def walk_blob(cx, cy, n, h):
-            """随机游走放 n 格 h；从种子起，成功即继续，塞不进就算了"""
-            put, x, y = 0, cx, cy
-            for _ in range(n * 6):
-                if put >= n:
+            """随机游走放 n 格 h；种子格被占则换种子重试（最多 20 次），防偶发全失败"""
+            put = 0
+            for _try in range(20):
+                x, y = cx, cy
+                got = 0
+                for _ in range(n * 6):
+                    if got >= n:
+                        break
+                    if take(x, y, h):
+                        got += 1
+                    x += random.choice((-1, 0, 1))
+                    y += random.choice((-1, 0, 1))
+                put += got
+                if got:
                     break
-                if take(x, y, h):
-                    put += 1
-                x += random.choice((-1, 0, 1))
-                y += random.choice((-1, 0, 1))
+                cx, cy = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
             return put
 
         # 1) 山包：种子 h=2，70% 全环 h=1 阶梯 / 30% 缺一侧成立地峭壁
@@ -1929,7 +1936,7 @@ class Room:
                 self.projectiles.remove(pr)
 
     # -------- 快照 / 广播 --------
-    DELTA_FIELDS = ('foods', 'bonus', 'rocks', 'walls', 'portals', 'items')  # 仅变化才下发（C1）
+    DELTA_FIELDS = ('foods', 'bonus', 'rocks', 'walls', 'portals', 'items', 'hmap')  # 仅变化才下发（C1）
 
     @staticmethod
     def _sig(v):
@@ -1956,7 +1963,8 @@ class Room:
             't': 'snap', 'room': self.id, 'theme': self.theme,
             'players': plist,
             'proj': [{'x': round(pr['x'], 2), 'y': round(pr['y'], 2),
-                      'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0)}
+                      'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0),
+                      'h': pr.get('h', 0)}
                      for pr in self.projectiles],
             'round': self.round_no, 'cols': self.cols, 'rows': self.rows,
             'winMode': self.win_mode, 'limit': self.limit, 'respawn': self.respawn,
@@ -1974,6 +1982,7 @@ class Room:
             out['walls'] = [list(r) for r in self.walls]
             out['portals'] = [list(r) for r in self.portals]
             out['items'] = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
+            out['hmap'] = [[x, y, hh] for (x, y), hh in self.hmap.items()]   # 批32：稀疏三元组
             out['full'] = 1
         else:
             # 增量帧：静态字段与上次下发签名对比，变了才带；客户端缺失即沿用旧值（C1）
@@ -1982,6 +1991,8 @@ class Room:
             for k in self.DELTA_FIELDS:
                 if k == 'items':
                     v = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
+                elif k == 'hmap':
+                    v = [[x, y, hh] for (x, y), hh in self.hmap.items()]   # 元组键 JSON 化不了
                 elif k in ('rocks', 'walls', 'portals'):
                     v = [list(r) for r in getattr(self, k)]
                 else:
