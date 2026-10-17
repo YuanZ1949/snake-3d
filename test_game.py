@@ -3468,6 +3468,26 @@ def test_snapshot_height():
     assert 'PROTO_VER = 28' in src and 'const PROTO_VER = 28' in html
 
 
+def test_reactions_table_complete_batch33():
+    pairs = {
+        ('pyro', 'hydro'): 'vaporize', ('hydro', 'pyro'): 'vaporize',
+        ('pyro', 'cryo'): 'melt', ('cryo', 'pyro'): 'melt',
+        ('pyro', 'electro'): 'overload', ('electro', 'pyro'): 'overload',
+        ('hydro', 'cryo'): 'frozen', ('cryo', 'hydro'): 'frozen',
+        ('hydro', 'electro'): 'electro', ('electro', 'hydro'): 'electro',
+        ('cryo', 'electro'): 'superconduct', ('electro', 'cryo'): 'superconduct',
+    }
+    assert len(serve.ELEMS) == 4 and set(serve.ELEMS) == {'pyro', 'hydro', 'cryo', 'electro'}
+    for (a, b), kind in pairs.items():
+        assert serve.reaction_of(a, b) == kind, ((a, b), kind)
+
+
+def test_reaction_same_or_none_elem_batch33():
+    assert serve.reaction_of('pyro', 'pyro') is None
+    assert serve.reaction_of('pyro', None) is None
+    assert serve.reaction_of(None, 'hydro') is None
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3576,6 +3596,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_height_gen_invariants, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
-            test_snapshot_height]:
+            test_snapshot_height,
+            test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

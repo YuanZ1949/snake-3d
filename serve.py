@@ -58,6 +58,29 @@ ULT_KILL = 30          # 咬蛇淘汰充能
 ULT_COOL = 3000        # 大招释放冷却 ms
 COMBO_MS = 3000           # 连击窗口：两次吃果间隔超此值则连击重置
 COMBO_TIERS = ((15, 2.5), (10, 2.0), (5, 1.5))   # 连击档位：≥15→x2.5, ≥10→x2, ≥5→x1.5
+# ---- 批33 原神元素反应 ----
+ELEMS = ('pyro', 'hydro', 'cryo', 'electro')  # 四元素 id（火/水/冰/雷）
+AURA_MS = 8000        # 元素附着（aura）持续 ms
+EB_CD = 2000          # 元素弹（eb）独立冷却 ms
+EB_SPD = 1.2          # 元素弹速度（格/循环）
+ULT_REACT = 15        # 触发一次反应给攻击方的大招充能
+FROZEN_MS = 1600       # 冻结效果持续 ms（不移动，可被咬，不累计僵持）
+SLOW_MS = 3000        # 超导减速（slow）持续 ms，tick ×1.5
+REACTIONS = {         # 键 = tuple(sorted(元素对))；同元素/含 None 不查表
+    ('cryo', 'hydro'): 'frozen',        # 水×冰 → 冻结
+    ('hydro', 'pyro'): 'vaporize',      # 火×水 → 蒸发（+1 截）
+    ('cryo', 'pyro'): 'melt',           # 火×冰 → 融化（+1 截）
+    ('electro', 'pyro'): 'overload',    # 火×雷 → 超载（半径1 各截1）
+    ('electro', 'hydro'): 'electro',    # 水×雷 → 感电（victim+最近邻各截1）
+    ('cryo', 'electro'): 'superconduct'  # 冰×雷 → 超导（半径2 slow）
+}
+
+
+def reaction_of(elem, target_elem):
+    """两元素命中查表：返回反应名；同元素或任一为空返回 None。"""
+    if not elem or not target_elem or elem == target_elem:
+        return None
+    return REACTIONS.get(tuple(sorted((elem, target_elem))))
 BOTS_MAX = 7              # 单房间 AI 蛇数量上限
 DIRS4 = ((1, 0), (0, 1), (-1, 0), (0, -1))       # AI 决策候选方向（不回头）
 PASS_MIN = 6               # 房间口令最短位数（C3）
