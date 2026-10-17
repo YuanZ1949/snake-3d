@@ -3859,6 +3859,100 @@ def test_eb_cross_layer_batch33():
     print("eb cross layer batch33 OK")
 
 
+# ---- 批33：frozen / slow eff 接线 ----
+def test_frozen_no_move_and_resume_batch33():
+    """frozen：due 排除原地不动，FROZEN_MS 到期恢复移动"""
+    r = fresh(16)
+    r.eterrain = {}
+    now = serve.now_ms()
+    p = mk(r, 1, 'A', [(5, 5), (5, 6)], (1, 0))
+    p['eff']['frozen'] = now + serve.FROZEN_MS
+    cells0 = list(p['cells'])
+    for _ in range(4):
+        now += 150
+        r.step(0.05, now)
+    assert [tuple(c) for c in p['cells']] == cells0, "冻结期间应原地不动"
+    # 到期 → 恢复移动
+    p['eff']['frozen'] = now + 50
+    r.step(0.05, now + 200)
+    assert tuple(p['cells'][0]) != cells0[0], "解冻后应恢复移动"
+    print("frozen no move resume batch33 OK")
+
+
+def test_frozen_head_static_obstacle_batch33():
+    """决策16：冻结头=静止障碍——活蛇对头 force_right 避让，冻结蛇不转向不死不计 hstreak"""
+    r = fresh(16)
+    r.eterrain = {}
+    now = serve.now_ms()
+    f = mk(r, 2, 'F', [(5, 5), (5, 6)], (0, 1))
+    f['eff']['frozen'] = now + serve.FROZEN_MS * 2
+    a = mk(r, 1, 'A', [(3, 5), (3, 6)], (1, 0))
+    a['last_move'] = f['last_move'] = 0
+    # a 走到 (4,5)：下一 tent 与 F 头对头 → a 右转避让
+    r.step(0.05, now)
+    r.step(0.05, now + 150)
+    assert tuple(a['dir']) == (0, 1), f"活蛇应对冻结头右转避让 {a['dir']}"
+    assert a['alive'] and f['alive'], "双方都不该死"
+    assert tuple(f['dir']) == (0, 1), "冻结蛇不该被转向"
+    assert f['cells'] == [(5, 5), (5, 6)], "冻结蛇应原地"
+    assert not f.get('hstreak'), "冻结蛇不累计 hstreak（决策16）"
+    print("frozen head obstacle batch33 OK")
+
+
+def test_frozen_input_gate_batch33():
+    """决策17：frozen 期间 dir/atk/ult/eb 拒收"""
+    import asyncio
+    r = fresh(12)
+    r.eterrain = {}
+    sess = _cfg_sess(sid='f1', user=None, room=r)
+    p = mk(r, 1, 'Me', [(4, 4), (4, 5)], (1, 0))
+    p['session'] = sess
+    sess.pid = 1
+    p['eff']['frozen'] = serve.now_ms() + serve.FROZEN_MS
+    p['ult'] = serve.ULT_MAX
+    asyncio.run(serve.handle_msg(sess, {'t': 'dir', 'x': 0, 'y': 1}))
+    assert not p['queue'], "冻结中不该入队"
+    asyncio.run(serve.handle_msg(sess, {'t': 'atk'}))
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'hydro'}))
+    assert not r.projectiles, "冻结中不该开火"
+    asyncio.run(serve.handle_msg(sess, {'t': 'ult'}))
+    assert p['ult'] == serve.ULT_MAX, "冻结中不该放大招"
+    # 解冻后恢复
+    p['eff']['frozen'] = serve.now_ms() - 1
+    asyncio.run(serve.handle_msg(sess, {'t': 'dir', 'x': 0, 'y': 1}))
+    assert p['queue'], "解冻后应恢复入队"
+    print("frozen input gate batch33 OK")
+
+
+def test_frozen_biteable_batch33():
+    """frozen 可被咬（不套 _protected）：截断照常生效"""
+    r = fresh(16)
+    r.eterrain = {}
+    now = serve.now_ms()
+    f = mk(r, 2, 'F', [(8, 5), (8, 6), (8, 7), (8, 8)], (0, 1))
+    f['eff']['frozen'] = now + serve.FROZEN_MS
+    f['inv'] = 0
+    a = mk(r, 1, 'A', [(7, 6), (6, 6)], (1, 0))
+    r.step(0.05, now)
+    assert len(f['cells']) < 4 and f['alive'], f"冻结蛇应被截断但不致死 {f['cells']}"
+    print("frozen biteable batch33 OK")
+
+
+def test_slow_tick_multiplier_batch33():
+    """slow：tick_of speed 结算后再 ×1.5；到期复原"""
+    r = fresh(16)
+    now = serve.now_ms()
+    p = mk(r, 1, 'A', [(5, 5)], (1, 0))
+    p['tick'] = 100
+    assert r.tick_of(p, now) == 100
+    p['eff']['slow'] = now + serve.SLOW_MS
+    assert r.tick_of(p, now) == 150, "slow 应 ×1.5"
+    p['eff']['speed'] = now + serve.SLOW_MS
+    assert r.tick_of(p, now) == int(60 * 1.5), "speed 后再乘（可叠加）"
+    assert r.tick_of(p, now + serve.SLOW_MS) == 100, "到期复原"
+    print("slow tick multiplier batch33 OK")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3975,6 +4069,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_bite_reaction_all_six_batch33, test_reaction_dual_consume_and_infect_batch33,
             test_react_charge_and_dead_degrade_batch33, test_crush_result_unchanged_batch33,
            test_eb_attach_and_cd_batch33, test_eb_hit_attach_refresh_batch33,
-           test_eb_no_rock_and_gates_batch33, test_eb_cross_layer_batch33]:
+           test_eb_no_rock_and_gates_batch33, test_eb_cross_layer_batch33,
+           test_frozen_no_move_and_resume_batch33, test_frozen_head_static_obstacle_batch33,
+           test_frozen_input_gate_batch33, test_frozen_biteable_batch33,
+           test_slow_tick_multiplier_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

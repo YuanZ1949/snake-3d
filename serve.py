@@ -1356,6 +1356,9 @@ class Room:
         # 批32：头在水洼（-1）减速 30%（speed 后再乘，可叠加）
         if p['cells'] and self.hmap.get(p['cells'][0], 0) == -1:
             t = int(t * 1.3)
+        # 批33：超导 slow——speed 结算后再乘 1.5（可叠加）
+        if self.effect_active(p, 'slow', now):
+            t = int(t * 1.5)
         return t
 
     # -------- 回合控制 --------
@@ -1611,6 +1614,8 @@ class Room:
         self.win_at = None              # 无结算在途 → 清残留锚点（防跨结算误计时）
         due = [p for p in self.players.values()
                if p['alive'] and not p.get('off_at')
+               # 批33：frozen 原地冻结（due 排除 = 不移动/不顶头/不计 hstreak，仍可被咬）
+               and not self.effect_active(p, 'frozen', now)
                and now - p['last_move'] >= self.tick_of(p, now)]
         if not due:
             return
@@ -1733,9 +1738,12 @@ class Room:
                             low['by'] = hi['id']
                         break
                     self.force_right(a)
-                    # 批14③：q 可能已因别处僵持被右转，避免双重右转
-                    if not is_head_on(q):
-                        self.force_right(q)
+                    # 批33：冻结头=静止障碍（决策16）——frozen 无法转向，活蛇单方避让；
+                    # 不进 clash_pairs → 冻结蛇不累计 hstreak 不会被破僵局误杀
+                    if not self.effect_active(q, 'frozen', now):
+                        # 批14③：q 可能已因别处僵持被右转，避免双重右转
+                        if not is_head_on(q):
+                            self.force_right(q)
                     head_on.add(id(a))
                     head_on.add(id(q))
                     self.ev('clash', ids=[a['id'], q['id']])
@@ -3182,7 +3190,8 @@ async def handle_msg(sess, m):
         room.ready.add(sess.pid)
         room.maybe_start_round()
     elif t == 'dir':
-        if not p['alive'] or room.win_pending or p.get('pause'):
+        if not p['alive'] or room.win_pending or p.get('pause') \
+                or room.effect_active(p, 'frozen', now):   # 批33 决策17：冻结拒收转向
             return
         x, y = int(m.get('x', 0)), int(m.get('y', 0))
         if x not in (-1, 0, 1) or y not in (-1, 0, 1) or (x == 0 and y == 0):
@@ -3190,7 +3199,8 @@ async def handle_msg(sess, m):
         if len(p['queue']) < 4:
             p['queue'].append((x, y))
     elif t == 'atk':
-        if not p['alive'] or room.win_pending or p.get('pause'):
+        if not p['alive'] or room.win_pending or room.effect_active(p, 'frozen', now) \
+                or p.get('pause'):   # 批33 决策17：冻结拒收开火
             return
         if now - p['last_atk'] < room.atk_cd(p, now) or not p['cells']:
             return
@@ -3220,7 +3230,8 @@ async def handle_msg(sess, m):
                                  'elem': el})
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1], elem=el)
     elif t == 'ult':
-        if not p.get('pause'):   # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）
+        # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）；批33 决策17：冻结同拒
+        if not p.get('pause') and not room.effect_active(p, 'frozen', now):
             room.try_ult(p, now)
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
