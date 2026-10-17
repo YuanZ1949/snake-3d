@@ -3355,6 +3355,101 @@ def test_ghost_cross_height():
     assert p['alive'] and p['cells'][0] == (6,5)
 
 
+def _shot(h, x, y=5):
+    return {'owner': 1, 'x': x, 'y': y, 'dx': 1, 'dy': 0, 'spd': 1.0, 'h': h}
+
+
+def test_crush():
+    # A 高碾压：头格h2 → 身节h1：对方整条死(crush)，kill 结算归我
+    r = fresh(16); r.hmap = {(5,5):2, (6,5):1}; r._reach = None
+    p1 = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p2 = mk(r,2,"B",[(7,5),(6,5),(6,6)],(0,1))
+    p1['inv']=p2['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert not p2['alive'] and p2['cause']=='crush' and p2['by']==1
+    assert p1['alive'] and p1.get('grow') == 2 and len(p1['cells']) == 3   # cut=3，本 tick 移动消耗 1
+    assert p1['score'] == serve.BITE_SCORE_PER_CELL * 3 + serve.WIN_SCORE   # 死斗仅剩我 → check_win 加 WIN_SCORE
+    assert any(e['t']=='die' and e['cause']=='crush' for e in r.events)
+    # B 同高：正常咬击截断（不判死、分数照旧）
+    r = fresh(16); r.hmap = {(5,5):1, (6,5):1}; r._reach = None
+    p1 = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p2 = mk(r,2,"B",[(7,5),(6,5),(6,6)],(0,1))
+    p1['inv']=p2['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert p2['alive'] and len(p2['cells']) == serve.MIN_LEN
+    assert p1['score'] == serve.BITE_SCORE_PER_CELL
+    # C 低咬高反噬：头格h0 → 身节h1：我死(crush)，对方无恙
+    r = fresh(16); r.hmap = {(5,5):0, (6,5):1}; r._reach = None
+    p1 = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p2 = mk(r,2,"B",[(7,5),(6,5),(6,6)],(0,1))
+    p1['inv']=p2['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert not p1['alive'] and p1['cause']=='crush' and p1['by']==2
+    assert p2['alive'] and len(p2['cells']) == 3
+    # D head-on 异高：对头同格，高者(头格h2)活并前进，低者(头格h1)死(crush)
+    r = fresh(16); r.hmap = {(5,5):2, (6,5):1, (7,5):1}; r._reach = None
+    p1 = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p2 = mk(r,2,"B",[(7,5),(8,5)],(-1,0))
+    p1['inv']=p2['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert p1['alive'] and p1['cells'][0] == (6,5)
+    assert not p2['alive'] and p2['cause']=='crush' and p2['by']==1
+    # E head-on 同高：不即时死（现有右转），双方存活
+    r = fresh(16); r.hmap = {(5,5):1, (7,5):1}; r._reach = None
+    p1 = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p2 = mk(r,2,"B",[(7,5),(8,5)],(-1,0))
+    p1['inv']=p2['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert p1['alive'] and p2['alive']
+    # F 自撞照旧死(self)
+    r = fresh(16); r._reach = None
+    p = mk(r,1,"A",[(5,5),(5,6),(6,6),(6,5),(5,4)],(0,-1)); p['inv']=0
+    r.step(0.05, serve.now_ms())
+    assert not p['alive'] and p['cause']=='self'
+
+
+def test_bullet_terrain():
+    now = serve.now_ms()
+    step = serve.PROJ_SPEED * 1.0 * 0.05
+    r = fresh(16); r.hmap = {(6,5): 1}; r._reach = None
+    r.projectiles = [_shot(0, 6.0 - step + 0.1)]
+    r.events.clear(); r._step_projectiles(0.05, now)
+    assert r.projectiles == [] and any(e['t']=='phit' for e in r.events)   # h0遇1碎
+    r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): 2}
+    r._step_projectiles(0.05, now); assert r.projectiles == []             # 遇2碎
+    r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): -1}
+    r._step_projectiles(0.05, now); assert r.projectiles                   # 过水洼
+    r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): 9}
+    r._step_projectiles(0.05, now); assert r.projectiles                   # 深渊飞越
+    r.projectiles = [_shot(1, 6.0 - step + 0.1)]; r.hmap = {(6,5): 1}
+    r._step_projectiles(0.05, now); assert r.projectiles                   # 弹h1 过 1
+    r.projectiles = [_shot(1, 6.0 - step + 0.1)]; r.hmap = {(6,5): 2}
+    r._step_projectiles(0.05, now); assert r.projectiles == []             # 弹h1 遇 2 碎
+
+
+def test_bullet_hit_range():
+    now = serve.now_ms()
+    step = serve.PROJ_SPEED * 1.0 * 0.05
+    # 弹h2 掠过平地节(差2)：不掉血、弹继续
+    r = fresh(16); r.hmap = {}; r._reach = None
+    p2 = mk(r,2,"B",[(6,5),(7,5)],(1,0)); p2['inv']=0
+    r.projectiles = [_shot(2, 6.0 - step + 0.1)]
+    r._step_projectiles(0.05, now)
+    assert len(p2['cells']) == 2 and r.projectiles
+    # 弹h2 命中 h1 节(差1)：截断
+    r = fresh(16); r.hmap = {(6,5): 1}; r._reach = None
+    p2 = mk(r,2,"B",[(6,5),(7,5),(7,6)],(1,0)); p2['inv']=0
+    r.projectiles = [_shot(2, 6.0 - step + 0.1)]
+    r._step_projectiles(0.05, now)
+    assert len(p2['cells']) == max(serve.MIN_LEN, 3 - serve.BULLET_CUT) and not r.projectiles
+    # 弹h2 命中同层 h2 节：命中
+    r = fresh(16); r.hmap = {(6,5): 2}; r._reach = None
+    p2 = mk(r,2,"B",[(6,5),(7,5),(7,6)],(1,0)); p2['inv']=0
+    r.projectiles = [_shot(2, 6.0 - step + 0.1)]
+    r._step_projectiles(0.05, now)
+    assert not r.projectiles
+    # 发弹记 h：try_ult 全部弹带发射者头格高
+    r = fresh(16); r.hmap = {(5,5):1}; r._reach = None
+    p = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p['inv']=0; p['ult']=100
+    r.try_ult(p, serve.now_ms())
+    assert r.projectiles and all(pr['h']==1 for pr in r.projectiles)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3461,6 +3556,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
             test_height_gen_invariants, test_height_cfg_roundtrip,
-            test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height]:
+            test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
+            test_crush, test_bullet_terrain, test_bullet_hit_range]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

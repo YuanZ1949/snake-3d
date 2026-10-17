@@ -1511,6 +1511,17 @@ class Room:
             for b in due[i + 1:]:
                 ta, tb = tent[id(a)], tent[id(b)]
                 if ta == tb or (ta == b['cells'][0] and tb == a['cells'][0]):
+                    # 批32：head-on 高度裁决（stance=撞击前头格高）——异高低者死(crush)，
+                    # 双方不右转、不进 head_on/僵持流程；同高原样右转/僵持（spec §12②）
+                    ha = self.hmap.get(a['cells'][0], 0)
+                    hb = self.hmap.get(b['cells'][0], 0)
+                    if ha != hb:
+                        low, hi = (a, b) if ha < hb else (b, a)
+                        if id(low) not in dead:
+                            dead.add(id(low))
+                            low['cause'] = 'crush'
+                            low['by'] = hi['id']
+                        continue
                     if not is_head_on(a):
                         self.force_right(a)
                     if not is_head_on(b):
@@ -1545,6 +1556,16 @@ class Room:
                 if q is a or not q['alive'] or not q['cells'] or q.get('off_at'):
                     continue
                 if tent[id(a)] == q['cells'][0]:
+                    # 批32：异高对头 → 低者死(crush)，高者照常移动（不右转）
+                    ha = self.hmap.get(a['cells'][0], 0)
+                    hq = self.hmap.get(q['cells'][0], 0)
+                    if ha != hq:
+                        low, hi = (a, q) if ha < hq else (q, a)
+                        if id(low) not in dead:
+                            dead.add(id(low))
+                            low['cause'] = 'crush'
+                            low['by'] = hi['id']
+                        break
                     self.force_right(a)
                     # 批14③：q 可能已因别处僵持被右转，避免双重右转
                     if not is_head_on(q):
@@ -1611,6 +1632,34 @@ class Room:
             q = self.players.get(vid)
             ep = self.players.get(eid)
             if not q or not ep or not q['alive'] or not ep['alive']:
+                continue
+            # 批32：高度调和（stance=撞击前双方头格高，spec §12②）——
+            # 高>节h 碾压整条死；同高 现有截断咬击；低<节h 攻击者反噬死
+            eh = self.hmap.get(ep['cells'][0], 0)
+            vh = self.hmap.get(q['cells'][idx], 0)
+            if eh > vh:
+                cut = len(q['cells'])
+                q['alive'] = False
+                q['cause'] = 'crush'
+                q['by'] = eid
+                q['died_at'] = now
+                ep['grow'] = ep.get('grow', 0) + cut
+                ep['ult'] = min(ULT_MAX, ep.get('ult', 0) + ULT_KILL)
+                gained = self.score_gain(ep, BITE_SCORE_PER_CELL * cut, now)
+                if ep.get('user'):
+                    store.inc(ep['user'], 'kills')
+                if q.get('user'):
+                    store.inc(q['user'], 'deaths')
+                self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
+                self.ev('die', id=vid, cause='crush', by=eid)
+                settle_dust(q)
+                continue
+            if eh < vh:
+                # 反噬：攻击者死（PVP 接触不套 _protected；victim 跳过移动已在聚合循环处理）
+                if id(ep) not in dead:
+                    dead.add(id(ep))
+                    ep['cause'] = 'crush'
+                    ep['by'] = vid
                 continue
             if len(q['cells']) <= MIN_LEN:
                 # 咬蛇淘汰：已是最低长度的蛇再被咬 → 整条淘汰，残躯归攻击者
@@ -1739,10 +1788,11 @@ class Room:
         p['ult'] = 0
         hx, hy = p['cells'][0]
         k = 0.7071
+        ph = self.hmap.get((hx, hy), 0)     # 批32：弹架发射者头格高
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
             f = k if dx and dy else 1.0
             self.projectiles.append({'owner': p['id'], 'x': hx, 'y': hy,
-                                     'dx': dx * f, 'dy': dy * f, 'spd': 1.5})
+                                     'dx': dx * f, 'dy': dy * f, 'spd': 1.5, 'h': ph})
         self.ev('ult', id=p['id'], x=hx, y=hy)
         return True
 
@@ -1845,13 +1895,21 @@ class Room:
                 self.ev('rock', x=gx, y=gy, by=pr['owner'], score=5)
                 self.projectiles.remove(pr)
                 continue
+            # 批32：高度地形挡弹——弹高 < 地形 h（深渊 9 飞越）→ 碎裂
+            hh = self.hmap.get((gx, gy), 0)
+            if hh != 9 and hh > pr.get('h', 0):
+                self.ev('phit', x=gx, y=gy, h=hh, by=pr['owner'])
+                self.projectiles.remove(pr)
+                continue
             # 命中其它蛇身体 → 小幅截短（不致死，最低 MIN_LEN 格；无敌/护盾免疫）
+            # 批32：跨层不命中（|节h-弹h|>1 视作不在同一高度层）
             if 0 <= gx < self.cols and 0 <= gy < self.rows:
                 victim = None
                 for q in self.players.values():
                     if q['id'] == pr['owner'] or not q['alive'] or not q['cells']:
                         continue
-                    if (gx, gy) in q['cells'] and not self._protected(q, now):
+                    if (gx, gy) in q['cells'] and not self._protected(q, now) \
+                            and abs(self.hmap.get((gx, gy), 0) - pr.get('h', 0)) <= 1:
                         victim = q
                         break
                 if victim is not None:
@@ -2941,7 +2999,8 @@ async def handle_msg(sess, m):
         hx, hy = p['cells'][0]
         room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
                                  'dx': p['dir'][0], 'dy': p['dir'][1],
-                                 'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0})
+                                 'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0,
+                                 'h': room.hmap.get((hx, hy), 0)})   # 批32：弹高=发射者头格高
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
     elif t == 'ult':
         if not p.get('pause'):   # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）
