@@ -18,7 +18,7 @@
 - 房间旋钮消息字段 `height` / `water` / `bld`（float 0..4 夹取；0=关；缺省/None=跟随主题）；info() 回传 eff + `heightCustom/waterCustom/bldCustom`。
 - 新 reason 值：`cliff`（撞崖）、`crush`（被碾压/反噬）；新 ev：`phit`（子弹撞地形碎裂）。
 - 测试约定：`fresh(size, **kw)` / `mk(r, id, name, cells, dir)` 玩家助手（test_game.py 顶部）；每个新测试函数**必须加进文件底部 `]:` 前的注册列表**；跑法 `.venv\Scripts\python.exe test_game.py`（全量）；单测 TDD 迭代用 `python -c "import test_game as t; t.test_x()"`（import 即执行全量列表，先保证基线绿）。
-- e2e：本地服 `$env:PORT='8123'; Start-Process .venv\Scripts\python.exe serve.py ...`，`$env:BASE='http://127.0.0.1:8123'; npx playwright test <regex>`；登录用 admin.spec 的 `ensureLogin`（已含 giftPop 关闭逻辑）。
+- e2e：本地服 `$env:PORT='8123'; Start-Process .venv\Scripts\python.exe serve.py ...`，`$env:BASE='http://127.0.0.1:8123'; npx playwright test <regex>`；登录用 admin.spec 的 `ensureLogin`（已含 giftPop 关闭逻辑）——height32 使用前须在 `e2e/admin.spec.js` 尾部补 `module.exports = { ensureLogin }`，调用写 `ensureLogin(page, 'yuan', '123456')`；e2e 文件一律放 `e2e/` 目录（playwright.config testDir='./e2e'）。
 - 门禁必须 `pwsh scripts/local_ci.ps1`（不能 powershell，GBK 报 ParserError）。
 - BACKLOG.md/HANDOVER.md 新增行剥尾部 `\r`（混合行尾陷阱）；commit 前 `git diff --check` 必须 0。
 - 客户端本地演示/离线场景不生成高度（hmap 缺省=全 0 平地，自然兼容）；不改 opencode 配置。
@@ -38,7 +38,7 @@
 ### Task 1: 服务端 hmap 生成与房间配置
 
 **Files:**
-- Modify: `serve.py`（THEME_CFG ~158-166；Room.__init__ ~500-530；eff_rock/eff_portal 637-646 后；build_terrain 672-700；persist_rooms_dump 1868-1878；load_persist_rooms 1906-1921；live create ~2373；roomcfg 'rock' 块 2449-2460 后）
+- Modify: `serve.py`（THEME_CFG ~158-166；Room.__init__ ~500-530；eff_rock/eff_portal 637-646 后；build_terrain 672-700；persist_rooms_dump 1868-1878；load_persist_rooms def ~1892（`rock = d.get('rock')` ~1910 附近仿）；live create 消息解析 ~2325-2332（rock 解析）+ `Room(...)` 构造 ~2373；roomcfg 'rock' 块 2449-2460 后）
 - Test: `test_game.py`（新函数 + 底部注册列表）
 
 **Interfaces:**
@@ -52,20 +52,24 @@
 ```python
 def test_height_gen_invariants():
     r = fresh(24)                       # 默认主题
+    p0 = mk(r, 1, "A", [(12, 12), (11, 12)], (1, 0))   # 造旧蛇头做 ±4 避让验证
     r.build_terrain()
     vals = set(r.hmap.values())
-    assert vals and vals <= {-2, -1, 1, 2, 3, 9}, vals      # 值域；0 不存
+    assert vals                                                # 默认主题必出地形
+    assert vals <= {-2, -1, 1, 2, 3, 9}, vals                  # 值域；0 不存
     assert 0 not in vals
+    assert -2 in vals                                          # 草丛必有生成来源（spec §7.3 第4类）
     assert len(r.hmap) <= int(0.35 * 24 * 24), len(r.hmap)   # ≤35% 预算
     assert not (set(r.rocks) & set(r.hmap))                  # 不与岩石重叠
     assert not (set(r.walls) & set(r.hmap))                  # 不压墙块
     assert not (set(r.portals) & set(r.hmap))                # 不压传送门
+    assert all(abs(x - 12) + abs(y - 12) >= 4 for (x, y) in r.hmap)   # 不压旧蛇头 ±4
     rl = fresh(24, theme_fixed='lava')
     rl.build_terrain()
-    assert -1 not in rl.hmap.values()                        # 熔岩无水洼
+    assert -1 not in rl.hmap.values() and -2 not in rl.hmap.values()  # 熔岩无水洼无草
     r0 = fresh(16, height_mult=0.0, water_amt=0.0, bld_amt=0.0)
     r0.build_terrain()
-    assert r0.hmap == {}                                     # 三旋钮全 0 = 纯平地
+    assert r0.hmap == {}                                     # 三旋钮全 0（预算=0 早退）= 纯平地
 ```
 
 `test_height_cfg_roundtrip`（旋钮夹取/回填/roomcfg 消息级）：
@@ -78,17 +82,26 @@ def test_height_cfg_roundtrip():
     assert inf['water'] == 2.0 and inf['bldCustom'] is None
     r.build_terrain()
     assert any(v == -1 for v in r.hmap.values())             # water=2.0 必出水洼
-    # 消息级：仿 test_roomcfg_extended_fields_unified 的调用方式发
-    # {'t':'roomcfg','height':0,'water':1.5,'bld':0}，断言 room 属性落地
-    # 且 deferred 列表含三个字段名（实现时按该既有测试的 fake-sess 方式照抄）。
+    # 消息级（仿 test_roomcfg_extended_fields_unified 的 _cfg_sess/_cfg_room 方式）：
+    import asyncio
+    s = _cfg_sess(sid='s1'); r2 = _cfg_room(s); s.room = r2
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'height': 0, 'water': 1.5, 'bld': 0}))
+    assert r2.height_mult == 0.0 and r2.water_amt == 1.5 and r2.bld_amt == 0.0
+    cap = [x for x in s.ws.sent if x.get('t') == 'cfgapplied'][-1]
+    assert cap['changed'] is True
+    assert sorted(cap['deferred']) == ['bld', 'height', 'water']   # 三字段同 rock：下局生效
+    info2 = r2.info()
+    assert info2['heightCustom'] == 0.0 and info2['waterCustom'] == 1.5 and info2['bldCustom'] == 0.0
+    del serve.rooms['rc']
 ```
 
 - [ ] **Step 2: 跑测试确认红** — `python -c "import test_game as t; t.test_height_gen_invariants()"` → FAIL（height_mult 未定义/`fresh` 不接受未知 kw）。两函数都要红。
 - [ ] **Step 3: 实现**
   1. `THEME_CFG` 五主题各加 `'hill'/'water'/'bld'` 键，取值按 spec §7.1（default .9/.6/.5；lava 1.4/0/.3；ice .5/.9/.4；space 1.1/0/.9；day .8/.7/.6）。
-  2. `Room.__init__` 增参 `height_mult=None, water_amt=None, bld_amt=None`，存 `self.height_mult/water_amt/bld_amt`，并 `self.hmap = {}`。
+  2. `Room.__init__` 增参 `height_mult=None, water_amt=None, bld_amt=None`，存 `self.height_mult/water_amt/bld_amt`，并 `self.hmap = {}`——**必须放在 `self._pick_theme()`（serve.py:579）与 `self.build_terrain()`（580）之前**（与 `self.rocks = []`（561）同区），否则构造即 AttributeError。
   3. eff 三助手镜像 `eff_rock`（None→主题值；写在 eff_portal 后）。
-  4. `gen_heights()` 定义在 `build_terrain` 后，并在 build_terrain 墙块循环末尾（line ~700 后）调用。算法按 spec §7.3：预算 `int(0.35*area)` 共享；顺序山包→水洼→建筑；避开 `portals`、`walls`、`_heads()`±4、已放格。山：种子 `int(area/40*hill)` 个，h=2，70% 全环 h=1、30% 缺一侧成 0→2 立地峭壁；水：`int(area/60*water)` 团，随机游走 3~8 格全 h=-1；建筑：`int(area/80*bld)` 栋，footprint 1×2/2×2/1×3/2×3 均匀高度——h1(40%)/h2(35%，其中 60% 外接一格 h1 入口坡)/h3(25%)。全程 `hmap` 只写非 0。
+  4. `gen_heights()` 定义在 `build_terrain` 后，并在 build_terrain 墙块循环末尾（line ~700 后）调用。算法按 spec §7.3：预算 `int(0.35*area)` 共享；顺序山包→水洼→建筑→草丛；避开 `portals`、`walls`、`_heads()`±4、已放格。山：种子 `int(area/40*hill)` 个，h=2，70% 全环 h=1、30% 缺一侧成 0→2 立地峭壁；水：`int(area/60*water)` 团，随机游走 3~8 格全 h=-1；建筑：`int(area/80*bld)` 栋，footprint 1×2/2×2/1×3/2×3 均匀高度——h1(40%)/h2(35%，其中 60% 外接一格 h1 入口坡)/h3(25%)；草：`int(area/70*water)` 团（随 water 旋钮），随机游走 2~5 格全 h=-2（water=0/熔岩天然无草）。全程 `hmap` 只写非 0，预算耗尽即停。
   5. 配置通路：`persist_rooms_dump` 加 `'height': r.height_mult, 'water': r.water_amt, 'bld': r.bld_amt`；load 循环仿 `rock` 解析（float 夹 0..4 或 None）传 Room；live create（~2373）同；roomcfg 在 'rock' 块后镜像三块（字段名 height/water/bld → 属性 height_mult/water_amt/bld_amt，`deferred.append` 同名）；`info()` 加 6 键（eff + Custom）。
 - [ ] **Step 4: 跑测试确认绿** — 两函数 PASS；全量 `.venv\Scripts\python.exe test_game.py` → `ALL GAME UNIT TESTS PASSED`。
 - [ ] **Step 5: Commit** — `git add serve.py test_game.py && git commit -m "feat(批32): 服务端 heightmap 生成与房间三旋钮(hill/water/bld)"`
@@ -134,9 +147,9 @@ def test_cliff_move():
     assert p['alive'] and p['cells'][0] != (6,5)
     # ghost：0→9 穿越不死
     assert _cliff_case({(6,5):9}, (5,5), [(4,5)], (1,0), eff={'ghost': serve.now_ms()+9999})[1]['alive']
-    # AI 前瞻：cur_h=0 时 2 视为墙；cur_h=1 可进
+    # AI 前瞻：cur_h=0 时 2 视为墙（首格 (6,5) 即峭壁 → 计数 0）；cur_h=1 可沿路 9 格
     r = fresh(16); r.hmap = {(6,5):2}; r._reach = None
-    assert r._open_ahead(5, 5, (1,0), cur_h=0) == 1
+    assert r._open_ahead(5, 5, (1,0), cur_h=0) == 0
     assert r._open_ahead(5, 5, (1,0), cur_h=1) >= 2
 ```
 
@@ -187,6 +200,7 @@ def test_ghost_cross_height():
   5. `_spawn_player_impl`：主路径候选（`occupied` 检查处）与兜底①候选加 `or any(self.hmap.get(c, 0) != 0 for c in cells)` 跳过；兜底②不改。
   6. `step()` section4：`blockset` 行后算 `cur_h = self.hmap.get(p['cells'][0], 0)`（循环内）与 `cliff = (not ghost) and (self.hmap.get(tent[id(p)], 0) - cur_h >= 2)`；判定行改 `if not (wall or rock or cliff or own): continue`；死因行改 `p['cause'] = 'wall' if wall else ('rock' if rock else ('cliff' if cliff else 'self'))`。ghost 分支天然豁免（cliff 定义含 not ghost）。
   7. `tick_of`：速度分支重构为先算 `t = max(60, int(base*0.6)) if speed else base`，再 `if p['cells'] and self.hmap.get(p['cells'][0], 0) == -1: t = int(t * 1.3)`，返回 t。
+  8. **不改** `cur_h=None` 的既有调用点（有意保持纯几何）：portal 出口朝向（serve.py:1376）、`_deflect_dir`（1604）、spawn 开阔度（898/923/937）——shield 折返可能折向峭壁格，shield 期内只会反复折返不死，不引入回归。
 - [ ] **Step 4: 跑测试确认绿** — 四函数 PASS + 全量绿（尤其 reach/spawn 存量用例）。
 - [ ] **Step 5: Commit** — `git commit -m "feat(批32): 高度通行规则(cliff/水减速/出生h0/AI前瞻)"`（同 Task 1 文件集）
 
@@ -213,7 +227,7 @@ def test_crush():
     r.step(0.05, serve.now_ms())
     assert not p2['alive'] and p2['cause']=='crush' and p2['by']==1
     assert p1['alive'] and p1.get('grow') == 2 and len(p1['cells']) == 3   # cut=3，本 tick 移动消耗 1
-    assert p1['score'] == serve.BITE_SCORE_PER_CELL * 3
+    assert p1['score'] == serve.BITE_SCORE_PER_CELL * 3 + serve.WIN_SCORE   # 死斗仅剩我 → check_win 加 WIN_SCORE
     assert any(e['t']=='die' and e['cause']=='crush' for e in r.events)
     # B 同高：正常咬击截断（不判死、分数照旧）
     r = fresh(16); r.hmap = {(5,5):1, (6,5):1}; r._reach = None
@@ -300,7 +314,7 @@ def test_bullet_hit_range():
     assert not r.projectiles
 ```
 
-发弹记 h 的断言并入 `test_bullet_hit_range` 尾部（或独立小断）：`atk` 与 `try_ult` 后 `room.projectiles[-1]['h'] == 头格 h`（用 `r.try_ult(p, now)` 直接调：`p['ult']=100`，`r.hmap={(hx,hy):1}` → `r.projectiles[0]['h']==1`）。
+发弹记 h 的断言写死在 `test_bullet_hit_range` 尾部：`p = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p['ult']=100; p['inv']=0; r.hmap={(5,5):1}; r.try_ult(p, serve.now_ms()); assert r.projectiles and all(pr['h']==1 for pr in r.projectiles)`。
 
 - [ ] **Step 2: 跑测试确认红** — 三函数 FAIL（无 crush/phit/h 字段）。
 - [ ] **Step 3: 实现**
@@ -359,19 +373,19 @@ def test_snapshot_height():
 
 **Files:**
 - Modify: `index.html`（建房面板 `cRock` 后 ~827；`createRoom` ~3857；编辑回填 ~3907；保存 ~3934；渲染区 rocks 同构处 1031/1749/2647-2672；`syncWalls` 旁）
-- Test: `tests/height32.spec.js`（新建）；`tests/admin.spec.js`（扩展一例）
+- Test: `e2e/height32.spec.js`（新建；**Playwright testDir 是 `./e2e` 不是 tests/**）；`e2e/admin.spec.js`（尾部补 `module.exports = { ensureLogin }` 导出 + 扩展一例）
 
 **Interfaces:**
 - Consumes: Task 4 协议。
-- Produces: 全局 `hmapD = new Map()`（键 `pkey(x,y)`='x,y'，值 h）；`syncHeight(list)`；`heightMeshes[]/heightPool[]`；`H_UNIT = 0.35`、`visH(h)`；探针 `window.__mapDbgSet(triples)`、`window.__heightDbg()`（返回 `{meshes, headY, blocked}`——本任务先实现 meshes，headY/blocked 在 Task 6 补全）；三个 select `cHeight/cWater/cBld`。
+- Produces: 全局 `hmapD = new Map()`（键 `pkey(x,y)`='x,y'，值 h）；`syncHeight(list)`；`heightMeshes[]`（**只存每个 triple 的主 Object3D；h=9 的 Edges 描边挂为 child 不计入计数**）；池化 `heightPool[]` + `take/release` 助手（命名与 rocks 池化同构，2647-2672）；`H_UNIT = 0.35`、`visH(h)`；探针 `window.__mapDbgSet(triples)`、`window.__heightDbg()`（返回 `{meshes, headY, blocked}`——本任务先实现 meshes，headY/blocked 在 Task 6 补全）；三个 select `cHeight/cWater/cBld`。
 
-- [ ] **Step 1: 写失败 e2e** — `tests/height32.spec.js`：
+- [ ] **Step 1: 写失败 e2e** — `e2e/height32.spec.js`（登录助手：先给 `e2e/admin.spec.js` 尾部补 `module.exports = { ensureLogin }`；调用带凭据 `ensureLogin(page, 'yuan', '123456')`）：
 
 ```js
 const { test, expect } = require('@playwright/test');
-const { ensureLogin } = require('./admin.spec');   // 照 admin.spec 现有导出方式；若未导出则内联同构函数
+const { ensureLogin } = require('./admin.spec');
 test('hmap 注入 → 高度地形 mesh 生成', async ({ page }) => {
-  await ensureLogin(page);
+  await ensureLogin(page, 'yuan', '123456');
   await page.click('#btnSolo');                     // 进单人房（服务端建房）
   await page.waitForSelector('#hud', { state: 'visible' });
   await page.evaluate(() => window.__mapDbgSet([[5,5,2],[5,6,-1],[5,7,-1],[5,8,9],[5,9,1],[5,10,3]]));
@@ -381,7 +395,7 @@ test('hmap 注入 → 高度地形 mesh 生成', async ({ page }) => {
 });
 ```
 
-编辑面例（admin.spec 扩展或并入 height32）：打开编辑面板设 `cHeight=0.5/cWater=1/cBld=1` → 保存 → 重开面板 → 三值回填正确。
+编辑面例（并入 height32.spec.js，回填数据即来自服务端 info()，与 spec §9.2-3 的 info 回填断言等价）：打开编辑面板设 `cHeight=0.5/cWater=1/cBld=1` → 保存 → 重开面板 → 三值回填正确。
 
 - [ ] **Step 2: 跑 e2e 确认红** — `__mapDbgSet` undefined → 报错。
 - [ ] **Step 3: 实现**
@@ -390,7 +404,7 @@ test('hmap 注入 → 高度地形 mesh 生成', async ({ page }) => {
   3. JS 常量 `H_UNIT = 0.35`、`visH = h => h >= 0 ? h * H_UNIT : (h === -1 ? -0.12 : 0)`；全局 `let hmapD = new Map(); let heightMeshes = []; const heightPool = [];`。
   4. `syncHeight(list)`：签名 `list.map(t => t.join(',')).join('|')` 对比缓存 `hKey` 才重建；重建=更新 hmapD + 池化同步（照 2647-2672 的 rocks 池化：多余 visible=false、复用、新 take）。mesh 形态（共享/简单几何，全部 `material.depthWrite = false`）：h>0 柱 `BoxGeometry(0.98, 1, 0.98)` 缩放 y=h*H_UNIT、position.y=h*H_UNIT/2，岩色顶亮；h=9 黑柱下挖（position.y=-0.6，深色）+ 顶缘 `EdgesGeometry` 描边；h=-1 半透明蓝面 `PlaneGeometry` y=-0.05 呼吸（opacity=.35+.1*sin(t/900)）；h=-2 贴地染色面 y=0.005。楼（1..3）比山更规整亮色（可用同柱体、色相区分）。渲染循环里对水/草面做呼吸更新。
   5. 快照接入：`if (s.hmap !== undefined) syncHeight(s.hmap);`（挨着 walls/portals 行）；reset 区（~1749 `rocks = []` 旁）清 `hmapD/heightMeshes/hKey`。
-  6. 探针：`window.__mapDbgSet = t => syncHeight(t.map(c => [c[0], c[1], c[2]]))`；`window.__heightDbg = () => ({ meshes: heightMeshes.length, headY: null, blocked: null })`。
+  6. 探针：`window.__mapDbgSet = t => syncHeight(t)`（参数已是三元组列表，无需再 map）；`window.__heightDbg = () => ({ meshes: heightMeshes.length, headY: null, blocked: null })`。
 - [ ] **Step 4: 跑 e2e 确认绿** — `npx playwright test height32`（含编辑面例）通过；门禁静态 ids 检查不报 dup（新 id 唯一）。
 - [ ] **Step 5: Commit** — `git commit -m "feat(批32): 客户端高度地形渲染/编辑面三旋钮/探针"`
 
@@ -398,35 +412,35 @@ test('hmap 注入 → 高度地形 mesh 生成', async ({ page }) => {
 
 **Files:**
 - Modify: `index.html`（`syncBody` 3261-3305 及其两处调用 3323/3376；`predStatics` 2412-2419；`advanceStep` blocked 2436-2439；`syncProjectiles` 2682-；ev switch `case 'rock'` 3142 旁；cause 文案 ~3180；渲染主循环）
-- Test: `tests/height32.spec.js`（扩展）
+- Test: `e2e/height32.spec.js`（扩展）
 
 **Interfaces:**
 - Consumes: `hmapD/visH/H_UNIT/__heightDbg`（Task 5）。
 - Produces: 蛇逐节高度 lerp + 头俯仰；预测挡崖；弹体高度；伏击草整蛇淡出；水花；`case 'phit'` 爆裂；cause 文案 `cliff/crush`。
 
-- [ ] **Step 1: 写失败 e2e**（height32.js 追加两例）
+- [ ] **Step 1: 写失败 e2e**（height32.spec.js 追加两例；`ensureLogin(page, 'yuan', '123456')`）
 
 ```js
 test('蛇节按 hmap 抬升 + 预测挡崖', async ({ page }) => {
-  await ensureLogin(page); await page.click('#btnSolo');
+  await ensureLogin(page, 'yuan', '123456'); await page.click('#btnSolo');
   await page.waitForSelector('#hud', { state: 'visible' });
   const base = await page.evaluate(() => window.__heightDbg());
-  await page.evaluate(() => window.__mapSelfCliffSet(2));   // 头格 h=2（探针内部取 myEnt.cells[0]）
+  await page.evaluate(() => window.__mapSelfCliffSet(2));   // 注入：头格 h=2、头前一格 h=4（上行2 → 挡崖；h=4 为探针专用值，不属 gen 值域）
   await page.waitForTimeout(400);
   const d = await page.evaluate(() => window.__heightDbg());
-  expect(d.headY).toBeGreaterThan(base.headY + 0.5);        // 抬升 ≥1 级
-  expect(d.blocked).toBe(true);                             // 头前一格注入 3（上行2）→ 预测挡崖
+  expect(d.headY).toBeGreaterThan(base.headY + 0.5);        // 头格 h=2 → visH=0.7，抬升 ≥0.5
+  expect(d.blocked).toBe(true);                             // 预测步被挡 → 不前进
 });
 ```
 
-（`__mapSelfCliffSet(h)` = Task 6 新探针：取 `myEnt.cells[0]` 与其 dir，注入头格 h 与头前格 h+2。`__heightDbg` 扩展 `headY = myEnt.spine[0]?.y`、`blocked = advanceStep({cells: myEnt.cells, dir: myEnt.dir}, myEnt.dir, predStatics(), foods, null).cells[0] 与 myEnt.cells[0] 不同`——新局无道具效果，eff 传 null 即可。）
+（`__mapSelfCliffSet(h)` = Task 6 新探针：取 `myEnt.cells[0]` 与其 dir，注入头格 `h`、头前一格 `h+2`（统一用「头格 2 / 前格 4」这组值：既满足上行 ≥2，头格 visH=0.7 又满足 headY 断言）。`__heightDbg` 扩展 `headY = myEnt.spine[0]?.y`、`blocked = advanceStep({cells: myEnt.cells, dir: myEnt.dir}, myEnt.dir, predStatics(), foods, null).hovered === true`——advanceStep 被挡时返回 hovered:true（index.html:2436-2443），这才是被挡语义；新局无道具效果，eff 传 null 即可。）
 
 - [ ] **Step 2: 跑 e2e 确认红** — headY 不变（null/未抬升）。
 - [ ] **Step 3: 实现**
   1. `syncBody`：目标 y 计算——插值分支 `_vb.set(f.x + (c.x-f.x)*ph - COLS/2+.5, SEG_H/2+.02 + (visH(hmapD.get(pkey(f.x,f.y))||0) + (visH(hmapD.get(pkey(c.x,c.y))||0) - visH(hmapD.get(pkey(f.x,f.y))||0))*ph), f.y + (c.y-f.y)*ph - ROWS/2+.5)`；静止分支 `cw` 后 `_vb.y += visH(hmapD.get(pkey(c.x,c.y))||0)`。头俯仰：`head.rotation.x` lerp 向 `clamp((h1-h0)*0.6, -0.5, 0.5)`（h0/h1=头/颈 visH）。
-  2. `predStatics()` 加 `hmap: hmapD`；`advanceStep` 的 `blocked` 表达式并入 `(!ghost && (hT = statics.hmap.get(nx+','+ny)) !== undefined && hT - (statics.hmap.get(pkey(head.x,head.y)) || 0) >= 2)`（`pkey` 需在此作用域可用——2410 已定义；9 因 9-0≥2 恒真自动挡）。与既有 rock/wall 同走 shield/deflect 门控，不另开分支。
+  2. `predStatics()` 加 `hmap: hmapD`；`advanceStep` 的 `blocked` 表达式并入 `(!ghost && hT !== undefined && hT - (statics.hmap.get(pkey(head.x, head.y)) || 0) >= 2)`，其中 `const hT = statics.hmap.get(nx + ',' + ny);` 须先声明再进 `&&` 链（不可在链内隐式赋值——非严格模式下会漏建全局）。`pkey` 需在此作用域可用——2410 已定义；9 因 9-0≥2 恒真自动挡。与既有 rock/wall 同走 shield/deflect 门控，不另开分支。
   3. `syncProjectiles`：mesh y = `SEG_H/2+.02 + visH(p.h||0)`（每帧按列表序对应 projMeshes）。
-  4. 伏击草：`syncBody` 调用处传 `opts.own`（3323 ents 循环：`own = (e.id === myEnt?.id)`；3376 处 own=true）；syncBody 内算 `inGrass = !own && cells.some(c => (hmapD.get(pkey(c.x,c.y))||0) === -2)`，`bodyMat.transparent = true`，`bodyMat.opacity` 每帧向 `(inGrass ? .35 : 1)` lerp（`opts.dt` 参与）。head/tongue/skull 同随（`head.material` 组整体随 bodyMat 或单独同步 opacity——取实现便手者，保证整条视觉一致）。
+  4. 伏击草：`syncBody` 调用处传 `opts.own`（3323 ents 循环：`own = (e.id === myEnt?.id)`；3376 处 own=true）与 `opts.dt`（渲染循环的帧 dt——syncBody 本身没有 dt 形参，需在两处调用点传入）；syncBody 内算 `inGrass = !own && cells.some(c => (hmapD.get(pkey(c.x,c.y))||0) === -2)`，`bodyMat.transparent = true`，`bodyMat.opacity` 每帧向 `(inGrass ? .35 : 1)` lerp（用 opts.dt）。head/tongue/skull 同随（`head.material` 组整体随 bodyMat 或单独同步 opacity——取实现便手者，保证整条视觉一致）。
   5. 水花：own 头格 `h === -1` → 每 600ms 在 `spine[0]` 处 `burst` 蓝白小粒子（现有 burst 助手）。
   6. ev switch：`case 'phit':` 镜像 `case 'rock'` 的爆裂写法，位置 `cellW(e.x, e.y)`、色随 `e.h`（金/岩灰）。cause 文案 map 加 `cliff: '摔下悬崖了', crush: '被碾压了'`。
 - [ ] **Step 4: 跑 e2e + 全量** — `npx playwright test`（32+3+1 例全绿）。
@@ -439,5 +453,6 @@ test('蛇节按 hmap 抬升 + 预测挡崖', async ({ page }) => {
 - 验证: `pwsh scripts/local_ci.ps1`
 
 - [ ] **Step 1: 文档回写**：HANDOVER 新增批32 段（hmap/cellh 不存在/新字段 height/water/bld/新 reason cliff/crush/新 ev phit/新探针 __mapDbgSet/__heightDbg/__mapSelfCliffSet/H_UNIT=0.35）；BACKLOG 顶部加批32 段（**新增行剥 `\r`**）。HANDOVER 测试计数表若顺手可更新为当前实际数（可选项，不强制）。
+- [ ] **Step 1.5: 手动验收冒烟（spec §9.3）** — 本地 8123 起服，浏览器逐项打勾：山/水/楼/草四类渲染、爬坡逐节起伏（上 0→1 节节抬升）、碾压击杀、高处挡弹、水面水花、伏击草对方淡出；再开一次 96×96 房做 3~5 秒体感确认 `syncHeight` 全量重建无明显卡顿（oracle 审核残留风险项）。任一不过先修再进门禁。
 - [ ] **Step 2: 全量门禁** — `pwsh scripts/local_ci.ps1` → ALL GREEN（Playwright 全量、单测全量、静态 ids/css/js 计数）。任何红先修再提交。
 - [ ] **Step 3: Commit + 收尾** — `git add -A && git commit -m "docs(批32): HANDOVER/BACKLOG 回写"`；`git diff --check` 必须 0。向用户报告契约自评，并列出 spec §12 六条修订供否决；部署（tar 回滚点 → scp index.html serve.py test_game.py → `sudo systemctl restart snake-3d`，ssh 命令必须单引号包裹防本地展开）待用户拍板。
