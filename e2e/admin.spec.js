@@ -85,3 +85,6 @@ test('管理员：发奖到账提醒 + 踢人收提示；非管理员无管理�
 
   await ctx2.close();
 });
+
+// 批32：导出登录助手供其他 spec 复用
+module.exports = { ensureLogin };

@@ -825,6 +825,33 @@
                 <option value="1.8">多</option>
               </select>
             </label>
+            <label><span>地形</span>
+              <select class="nameIn sm" id="cHeight" aria-label="地形起伏">
+                <option value="">跟随主题</option>
+                <option value="0">无</option>
+                <option value="0.5">少</option>
+                <option value="1">标准</option>
+                <option value="1.8">多</option>
+              </select>
+            </label>
+            <label><span>水域</span>
+              <select class="nameIn sm" id="cWater" aria-label="水域密度">
+                <option value="">跟随主题</option>
+                <option value="0">无</option>
+                <option value="0.5">少</option>
+                <option value="1">标准</option>
+                <option value="1.8">多</option>
+              </select>
+            </label>
+            <label><span>建筑</span>
+              <select class="nameIn sm" id="cBld" aria-label="建筑密度">
+                <option value="">跟随主题</option>
+                <option value="0">无</option>
+                <option value="0.5">少</option>
+                <option value="1">标准</option>
+                <option value="1.8">多</option>
+              </select>
+            </label>
             <label><span>传送门</span>
               <select class="nameIn sm" id="cPortal" aria-label="传送门">
                 <option value="">跟随主题</option>
@@ -1748,6 +1775,10 @@
     bonus = null;
     rocks = [];
     rockPool.forEach(m => { m.visible = false; });
+    heightMeshes.forEach(e => { e.mesh.visible = false; heightPool[e.kind].push(e.mesh); });   // 批32：高度地形归池
+    heightMeshes = [];
+    hmapD = new Map();
+    heightKey = '';
     fruitsEaten = 0;
     rockKey = bonusKey = projKey = '';
     clearAllFoods();
@@ -1793,6 +1824,8 @@
   }
   // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
   window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
+  window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
+  window.__heightDbg = () => ({meshes: heightMeshes.length, headY: null, blocked: null});   // headY/blocked 由批32 T6 补全
   // 批25 T4 探针钩子：直接发 skin 消息 / 读 SKINS 结构与拥有集（同 __foodsDbg 先例）
   window.__skinDbg = i => { send({t: 'skin', i}); };
   window.__skinsDbg = () => ({
@@ -1866,7 +1899,76 @@
     }
   }
 
-  // ---- 服务器地形：墙块 / 传送门 / 道具 ----
+  // ---- 服务器地形：高度 hmap（批32）/ 墙块 / 传送门 / 道具 ----
+  // 批32：hmap 三元组 [x,y,h]（-2草/-1水/0平不存/1丘/2峰/3楼/9深渊）；全部 depthWrite=false 保证蛇恒可见
+  const H_UNIT = 0.35;
+  const visH = h => h >= 0 ? h * H_UNIT : (h === -1 ? -0.12 : 0);
+  let hmapD = new Map(), heightMeshes = [], heightKey = '';
+  const heightPool = {};   // kind -> Mesh[]（rocks 池化同构）
+  const hKindOf = h => h === 9 ? 'ab' : h === -1 ? 'w' : h === -2 ? 'g'
+    : h >= 3 ? 'c3' : h === 2 ? 'c2' : h === 1 ? 'c1' : null;
+  const heightColGeo = new THREE.BoxGeometry(.98, 1, .98);
+  const heightPlaneGeo = new THREE.PlaneGeometry(.98, .98);
+  const heightGeo = {c1: heightColGeo, c2: heightColGeo, c3: heightColGeo, ab: heightColGeo,
+                     w: heightPlaneGeo, g: heightPlaneGeo};
+  const heightMat = {
+    c1: new THREE.MeshStandardMaterial({color: 0x5d6b45, roughness: .85, depthWrite: false}),   // 丘·草岩
+    c2: new THREE.MeshStandardMaterial({color: 0x8a94a6, roughness: .7, depthWrite: false}),    // 峰·岩灰
+    c3: new THREE.MeshStandardMaterial({color: 0xcabfae, roughness: .45, metalness: .2, depthWrite: false}),  // 楼·亮规整
+    ab: new THREE.MeshStandardMaterial({color: 0x0a0a14, roughness: 1, depthWrite: false}),     // 深渊·近黑
+    w: new THREE.MeshBasicMaterial({color: 0x3a7bd5, transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide}),
+    g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide})
+  };
+  const hEdgeMat = new THREE.LineBasicMaterial({color: 0x7fd8ff});
+
+  function takeHeightMesh(kind) {
+    const pool = heightPool[kind] || (heightPool[kind] = []);
+    let m = pool.pop();
+    if (!m) {
+      m = new THREE.Mesh(heightGeo[kind], heightMat[kind]);
+      if (kind === 'ab') {   // 深渊：黑柱 + 顶缘描边（Edges 为 child，不计入 meshes 计数）
+        const eg = new THREE.LineSegments(new THREE.EdgesGeometry(heightColGeo), hEdgeMat);
+        eg.scale.setScalar(1.001);
+        m.add(eg);
+      }
+      m.visible = false;
+      scene.add(m);
+    }
+    m.visible = true;
+    return m;
+  }
+
+  function applyHeight(m, kind, x, y, h) {
+    const w = cellW(x, y);
+    if (kind === 'ab') { m.position.set(w.x, -.6, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, 1.2, 1); }
+    else if (kind === 'w' || kind === 'g') {
+      m.position.set(w.x, kind === 'w' ? -.05 : .005, w.z);
+      m.rotation.set(-Math.PI / 2, 0, 0); m.scale.set(1, 1, 1);
+    } else { const hh = Math.max(.02, visH(h)); m.position.set(w.x, hh / 2, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, hh, 1); }
+  }
+
+  function syncHeight(list) {
+    list = list || [];
+    const sig = list.map(t => t[0] + ',' + t[1] + ',' + t[2]).join('|');
+    if (sig === heightKey) return;
+    heightKey = sig;
+    hmapD = new Map(list.map(t => [pkey(t[0], t[1]), t[2]]));
+    const wset = new Set(hmapD.keys());
+    const kept = new Map(heightMeshes.filter(e => wset.has(e.key)).map(e => [e.key, e]));
+    heightMeshes.forEach(e => { if (!kept.has(e.key)) { e.mesh.visible = false; heightPool[e.kind].push(e.mesh); } });
+    const next = [];
+    for (const t of list) {
+      const k = pkey(t[0], t[1]), h = t[2], kind = hKindOf(h);
+      if (!kind) continue;
+      let e = kept.get(k);
+      if (e && e.kind !== kind) { e.mesh.visible = false; heightPool[e.kind].push(e.mesh); e = null; }
+      if (!e) e = {key: k, kind: kind, mesh: takeHeightMesh(kind)};
+      applyHeight(e.mesh, kind, t[0], t[1], h);
+      next.push(e);
+    }
+    heightMeshes = next;
+  }
+
   let wallPool = [], wallKey = '';
   let portalMeshes = [], portalKey = '';
   const itemMeshes = new Map();
@@ -2672,6 +2774,7 @@
     }
     // 墙块 / 传送门 / 道具（缺失=未变化）
     if (s.walls !== undefined) syncWalls(s.walls);
+    if (s.hmap !== undefined) syncHeight(s.hmap);   // 批32：高度地形（PROTO 28，缺失=未变化）
     if (s.portals !== undefined) syncPortals(s.portals);
     if (s.items !== undefined) syncItems(s.items);
     // 弹药（每帧必带）
@@ -3483,6 +3586,7 @@
   function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min(.05, (now - prevFrame) / 1000);
+    heightMat.w.opacity = .35 + .1 * Math.sin(now / 900);   // 批32：水面呼吸（共享材质一次更新）
     if (!quality.freeze) qualSample(now, now - prevFrame);   // P4：帧耗时采样
     prevFrame = now;
 
@@ -3856,6 +3960,12 @@
     if (theme) msg.theme = theme;
     const rock = $('cRock').value;
     if (rock !== '') msg.rock = parseFloat(rock);
+    const ht = $('cHeight').value;                 // 批32：地形起伏
+    if (ht !== '') msg.height = parseFloat(ht);
+    const wt = $('cWater').value;                  // 批32：水域
+    if (wt !== '') msg.water = parseFloat(wt);
+    const bd = $('cBld').value;                    // 批32：建筑
+    if (bd !== '') msg.bld = parseFloat(bd);
     const portal = $('cPortal').value;
     if (portal !== '') msg.portal = portal === '1';
     const wm = $('cWin').value;
@@ -3905,6 +4015,9 @@
     $('cSize').value = String(r.pendingSize ?? r.cols);  // 排队中的下局尺寸优先回填
     $('cTheme').value = r.themeFixed ? (r.theme || '') : '';
     $('cRock').value = (r.rockCustom == null) ? '' : String(r.rockCustom);
+    $('cHeight').value = (r.heightCustom == null) ? '' : String(r.heightCustom);
+    $('cWater').value = (r.waterCustom == null) ? '' : String(r.waterCustom);
+    $('cBld').value = (r.bldCustom == null) ? '' : String(r.bldCustom);
     $('cPortal').value = (r.portalCustom == null) ? '' : (r.portalCustom ? '1' : '0');
     $('cWin').value = r.winMode === 'score' ? 'score' : '';
     $('cLimit').value = r.limit > 0 ? String(r.limit) : '';
@@ -3932,6 +4045,9 @@
                  size: parseInt($('cSize').value, 10) || 24,
                  theme: $('cTheme').value || '',
                  rock: $('cRock').value === '' ? '' : parseFloat($('cRock').value),
+                 height: $('cHeight').value === '' ? '' : parseFloat($('cHeight').value),
+                 water: $('cWater').value === '' ? '' : parseFloat($('cWater').value),
+                 bld: $('cBld').value === '' ? '' : parseFloat($('cBld').value),
                  portal: $('cPortal').value === '' ? '' : $('cPortal').value === '1',
                  winMode: $('cWin').value || 'last',
                  limit: $('cLimit').value === '' ? 0 : parseInt($('cLimit').value, 10),
