@@ -45,7 +45,7 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 28          # 批32：hmap/proj.h 增量下发；改协议必须同步 bump 双端
+PROTO_VER = 29          # 批33：aura/eterrain/eb/react 元素反应；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
 ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）

@@ -3466,7 +3466,7 @@ def test_snapshot_height():
     assert s['proj'][0]['h'] == 2         # 弹道高度字段随每帧 proj 下发
     src = open('serve.py', encoding='utf-8').read()
     html = open('index.html', encoding='utf-8').read()
-    assert 'PROTO_VER = 28' in src and 'const PROTO_VER = 28' in html
+    assert 'PROTO_VER = 29' in src and 'const PROTO_VER = 29' in html   # 批33：元素反应协议 bump
 
 
 def test_reactions_table_complete_batch33():

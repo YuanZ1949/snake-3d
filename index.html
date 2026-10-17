@@ -614,9 +614,24 @@
   .eff.rage   { color: #ff8a5c; border-color: rgba(255,106,74,.55); }
   .eff.deflect{ color: #74c0fc; border-color: rgba(116,192,252,.55); }
   .eff.inv    { color: #7ee787; border-color: rgba(126,231,135,.5); }
+  .eff.frozen { color: #9be8ff; border-color: rgba(155,232,255,.55); }
+  .eff.slow   { color: #cfe8f0; border-color: rgba(207,232,240,.5); }
   #ultBtn { cursor: pointer; }
   #ultBtn.ready { color: #ffd166; border-color: rgba(255,209,102,.75); animation: ultPulse 1s infinite; }
   @keyframes ultPulse { 50% { box-shadow: 0 0 16px rgba(255,209,102,.9); } }
+  /* 批33：元素弹按钮组 */
+  #elemBar { gap: 2px; }
+  #elemBar .ebtn {
+    padding: 2px 6px; font-size: 13px; line-height: 1.4; border-radius: 6px;
+    border: 1px solid transparent; background: transparent; color: #6a6f96;
+    cursor: pointer; transition: all .15s;
+  }
+  #elemBar .ebtn:hover { color: #cfd3f0; }
+  #elemBar .ebtn.on[data-elem="pyro"]      { color: #ff7b4d; border-color: rgba(255,123,77,.6); background: rgba(255,123,77,.12); }
+  #elemBar .ebtn.on[data-elem="hydro"]     { color: #6cb8ff; border-color: rgba(108,184,255,.6); background: rgba(108,184,255,.12); }
+  #elemBar .ebtn.on[data-elem="cryo"]      { color: #9be8ff; border-color: rgba(155,232,255,.6); background: rgba(155,232,255,.12); }
+  #elemBar .ebtn.on[data-elem="electro"]   { color: #c99bff; border-color: rgba(201,155,255,.6); background: rgba(201,155,255,.12); }
+  #elemBar .ebtn.cool { opacity: .35; cursor: default; }
   .eff .track { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
   .eff .lb { font-size: 11px; letter-spacing: 1px; }   /* 批29⑥：中文效果名（emoji 与进度条之间） */
   .eff .bar { height: 100%; background: currentColor; width: 100%; }
@@ -702,6 +717,9 @@
     <span class="chip combo hidden" id="comboChip">🔥 <b id="comboN">0</b></span>
     <span class="chip hidden" id="timeChip">⏱ <b id="timeN">0:00</b></span>
     <button class="chip hidden" id="ultBtn" title="大招：蓄力满 100 释放（键 K）">💥 <b id="ultN">0%</b></button>
+    <span class="chip hidden" id="elemBar" title="元素弹（键 1-4 切换元素，E 发射）"><!-- 批33 -->
+      <button class="ebtn on" data-elem="pyro" aria-label="火元素">🔥</button><button class="ebtn" data-elem="hydro" aria-label="水元素">💧</button><button class="ebtn" data-elem="cryo" aria-label="冰元素">❄</button><button class="ebtn" data-elem="electro" aria-label="雷元素">⚡</button>
+    </span>
     <span class="chip">最高 <b id="best">0</b></span>
     <button class="chip" id="btnSpeed" aria-label="速度">速度 <b id="speed">中</b></button>
     <button class="chip" id="btnMute" aria-label="静音">🔊</button>
@@ -850,6 +868,23 @@
                 <option value="0.5">少</option>
                 <option value="1">标准</option>
                 <option value="1.8">多</option>
+              </select>
+            </label>
+            <label><span>元素</span>
+              <select class="nameIn sm" id="cElements" aria-label="元素反应">
+                <option value="1">开</option>
+                <option value="0">关</option>
+              </select>
+            </label>
+            <label><span>元素密度</span>
+              <select class="nameIn sm" id="cElemAmt" aria-label="元素地形密度">
+                <option value="">默认</option>
+                <option value="0">无</option>
+                <option value="0.5">少</option>
+                <option value="0.6">标准</option>
+                <option value="1">多</option>
+                <option value="1.5">很多</option>
+                <option value="2">极多</option>
               </select>
             </label>
             <label><span>传送门</span>
@@ -1066,6 +1101,11 @@
   const speedText = i => SPEEDS[i].n + SPEEDS[i].ms;   // 例：中150
   let lastAtk = 0;
   const ATK_COOL = 800;
+  let curElem = 'pyro';              // 批33：当前元素（键 1-4 切换，E 发射元素弹）
+  let lastEb = 0;
+  const EB_CD = 2000;
+  const ELEM_EMOJI = {pyro: '🔥', hydro: '💧', cryo: '❄', electro: '⚡'};
+  const ELEM_COLOR = {pyro: '#ff7b4d', hydro: '#6cb8ff', cryo: '#9be8ff', electro: '#c99bff'};
   // ---- 网络 / 多人 ----
   let ws = null, wsOpen = false, myId = null, joined = false, wantPlay = false;
   const ents = new Map();          // id -> ent
@@ -1084,7 +1124,7 @@
   let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 28;   // 批32：须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
+  const PROTO_VER = 29;   // 批33：aura/eterrain/eb/react 元素反应；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
@@ -1779,6 +1819,9 @@
     heightMeshes = [];
     hmapD = new Map();
     heightKey = '';
+    elemMeshes.forEach(e => { e.mesh.visible = false; elemPool[e.elem].push(e.mesh); });   // 批33：元素地形归池
+    elemMeshes = [];
+    elemKey = '';
     fruitsEaten = 0;
     rockKey = bonusKey = projKey = '';
     clearAllFoods();
@@ -2001,6 +2044,52 @@
     heightMeshes = next;
   }
 
+  // ---- 批33：元素地形面片（PROTO 29，full/DELTA 均为 [[x,y,elem],...]) ----
+  let elemMeshes = [], elemKey = '';
+  const elemPool = {};   // elem -> Mesh[]
+  const ELEM_TERRAIN_MAT = {   // 半透明元素色面片，polygonOffset -2 胜过地板 -1（批32同款教训）
+    pyro:     new THREE.MeshBasicMaterial({color: 0xff5a3c, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
+    hydro:    new THREE.MeshBasicMaterial({color: 0x3ca0ff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
+    cryo:     new THREE.MeshBasicMaterial({color: 0x9be8ff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
+    electro:  new THREE.MeshBasicMaterial({color: 0xa86bff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2})
+  };
+  const elemPlaneGeo = new THREE.PlaneGeometry(.96, .96);
+
+  function takeElemMesh(elem) {
+    const pool = elemPool[elem] || (elemPool[elem] = []);
+    let m = pool.pop();
+    if (!m) {
+      m = new THREE.Mesh(elemPlaneGeo, ELEM_TERRAIN_MAT[elem] || ELEM_TERRAIN_MAT.pyro);
+      m.visible = false;
+      scene.add(m);
+    }
+    m.visible = true;
+    return m;
+  }
+
+  function syncElemTerrain(list) {
+    list = list || [];
+    const sig = list.map(t => t[0] + ',' + t[1] + ',' + t[2]).join('|');
+    if (sig === elemKey) return;
+    elemKey = sig;
+    const wset = new Set(list.map(t => pkey(t[0], t[1])));
+    const kept = new Map(elemMeshes.filter(e => wset.has(e.key)).map(e => [e.key, e]));
+    elemMeshes.forEach(e => { if (!kept.has(e.key)) { e.mesh.visible = false; elemPool[e.elem].push(e.mesh); } });
+    const next = [];
+    for (const t of list) {
+      const k = pkey(t[0], t[1]), el = t[2];
+      if (!ELEM_TERRAIN_MAT[el]) continue;
+      let e = kept.get(k);
+      if (e && e.elem !== el) { e.mesh.visible = false; elemPool[e.elem].push(e.mesh); e = null; }
+      if (!e) e = {key: k, elem: el, mesh: takeElemMesh(el)};
+      const w = cellW(t[0], t[1]);
+      e.mesh.position.set(w.x, .03, w.z);   // 抬到地板(+.005)之上、水(+.02)略高
+      e.mesh.rotation.set(-Math.PI / 2, 0, 0);
+      next.push(e);
+    }
+    elemMeshes = next;
+  }
+
   let wallPool = [], wallKey = '';
   let portalMeshes = [], portalKey = '';
   const itemMeshes = new Map();
@@ -2157,6 +2246,15 @@
     } else {
       ub.classList.add('hidden');
     }
+    // 批33：元素弹按钮组——进局且房间开元素时显示
+    const eb = $('elemBar');
+    if (joined && myEnt) {
+      const rl = roomList.find(r => r.id === curRoom);
+      const elemOn = !rl || rl.elements !== false;   // 无信息按开处理（服务端默认 true）
+      eb.classList.toggle('hidden', !elemOn);
+    } else {
+      eb.classList.add('hidden');
+    }
   }
 
   // ================= 网络层 =================
@@ -2227,6 +2325,13 @@
   // ================= 攻击 =================
   const projGeo = new THREE.SphereGeometry(.13, 8, 8);
   const projMat = new THREE.MeshStandardMaterial({color: 0xffe08a, emissive: 0xffb84d, emissiveIntensity: .9});
+  // 批33：元素弹材质（发光色区分元素；未命中/命中逻辑全在服务端）
+  const ELEM_PROJ_MAT = {
+    pyro:    new THREE.MeshStandardMaterial({color: 0xff7b4d, emissive: 0xff5a3c, emissiveIntensity: 1.1}),
+    hydro:   new THREE.MeshStandardMaterial({color: 0x6cb8ff, emissive: 0x3ca0ff, emissiveIntensity: 1.1}),
+    cryo:    new THREE.MeshStandardMaterial({color: 0x9be8ff, emissive: 0x8fdfff, emissiveIntensity: 1.1}),
+    electro: new THREE.MeshStandardMaterial({color: 0xc99bff, emissive: 0xa86bff, emissiveIntensity: 1.1})
+  };
   const sAtk = () => beep(1000, .08, 'square', .1, -400);
 
   function atkCoolMs() {
@@ -2249,6 +2354,26 @@
     send({t: 'ult'});
     beep(140, .25, 'sawtooth', .14, 600);
   }
+
+  // 批33：元素弹（独立 CD EB_CD；冻结中由服务端拒收，本地不拦以保持手感一致）
+  function fireEb() {
+    if (state !== 'playing' || !joined) return;
+    const now = performance.now();
+    if (now - lastEb < EB_CD) return;
+    lastEb = now;
+    send({t: 'eb', elem: curElem});
+    beep(520, .12, 'triangle', .1, 760);
+  }
+  function setElem(el) {
+    if (!ELEM_EMOJI[el]) return;
+    curElem = el;
+    document.querySelectorAll('#elemBar .ebtn').forEach(b =>
+      b.classList.toggle('on', b.dataset.elem === el));
+  }
+  document.addEventListener('click', (e) => {   // 批33：HUD 元素按钮点击
+    const b = e.target.closest && e.target.closest('#elemBar .ebtn');
+    if (b) { if (!b.classList.contains('cool')) { setElem(b.dataset.elem); fireEb(); } }
+  });
 
   // 返回主页：结束当前对局/观战、恢复演示世界（服务端 leave 会把玩家移出房间）
   function goHome() {
@@ -2529,7 +2654,11 @@
   const PRED_ENABLED = true;   // §9 退路开关：false → hook 条件恒假、全链路停用（降级回现状）
   function predInterval(tick, eff) {
     // §4.3：speed 道具不改 tick（tick_of 不含 ×0.6），须显式折算；吃果/档位改 tick 本身自然跟随
-    return (eff && eff.speed > 0) ? Math.max(60, Math.floor((tick || 150) * 0.6)) : (tick || 150);
+    // 批33：slow（感电减速）×1.5 与 speed 同样在 tick_of 生效后叠加 → 预测须镜像同序
+    let t = tick || 150;
+    if (eff && eff.speed > 0) t = Math.floor(t * 0.6);
+    if (eff && eff.slow > 0) t = Math.floor(t * 1.5);
+    return Math.max(60, t);
   }
   function mkPred(cells, dir, interval, now) {
     return {
@@ -2647,7 +2776,8 @@
     if (!PRED_ENABLED) return;
     if (pred && (!myEnt || pred.id !== myEnt.id)) pred = null;   // §6 通用重置（实体消失/换房）
     if (!pred || !pred.active || !joined || !myEnt || !myEnt.alive || myEnt.off || spectating ||
-        state !== 'playing' || winRound || !wsOpen) return;
+        state !== 'playing' || winRound || !wsOpen ||
+        (myEnt.eff && myEnt.eff.frozen > 0)) return;   // 批33：冻结中不推进预测（服务端也不移动）
     pred.interval = predInterval(myEnt.tick, myEnt.eff);   // §4.3 每帧取最新
     if (now < predNextMoveAt(pred)) return;
     predAdvance(pred, dirQ, predStatics(), predFoods(), myEnt.eff);
@@ -2689,6 +2819,7 @@
         e.tick = (typeof p.tick === 'number') ? p.tick : 150;   // 批28 C：interval 数据源（客户端原先不落位）
         e.off = !!p.off;
         e.eff = p.eff || {};
+        e.aura = p.aura || null;   // 批33：元素附着 {'e':elem,'t':剩余ms} 或 null
         paintEnt(e);   // 末尾的 applyOffTint 会按 e.off 应用挂起灰化
       } else {
         const wasAlive = e.alive;
@@ -2709,6 +2840,7 @@
         e.q = (typeof p.q === 'number') ? p.q : e.q;
         e.tick = (typeof p.tick === 'number') ? p.tick : (e.tick || 150);   // 批28 C：interval 数据源
         e.eff = p.eff || {};
+        e.aura = p.aura || null;   // 批33：元素附着
         if (!!p.off !== e.off) { e.off = !!p.off; applyOffTint(e); }
         if (e.name !== p.name) e.name = p.name || '';
         if (e.skin !== p.skin) { e.skin = p.skin; paintEnt(e); }
@@ -2812,6 +2944,7 @@
     // 墙块 / 传送门 / 道具（缺失=未变化）
     if (s.walls !== undefined) syncWalls(s.walls);
     if (s.hmap !== undefined) syncHeight(s.hmap);   // 批32：高度地形（PROTO 28，缺失=未变化）
+    if (s.eterrain !== undefined) syncElemTerrain(s.eterrain);   // 批33：元素地形（PROTO 29）
     if (s.portals !== undefined) syncPortals(s.portals);
     if (s.items !== undefined) syncItems(s.items);
     // 弹药（每帧必带）
@@ -2821,12 +2954,13 @@
 
   function syncProjectiles(list) {
     // 按数量增减重建，位置通过 updateProjectiles 每帧外推
-    const sig = list.map(p => p.dx + ',' + p.dy).join('|');
+    const sig = list.map(p => p.dx + ',' + p.dy + ',' + (p.elem || '')).join('|');   // 批33：sig 含元素（切元素要换色）
     if (sig !== projKey || projMeshes.length !== list.length) {
       projKey = sig;
       projMeshes.forEach(m => scene.remove(m));
       projMeshes = list.map(p => {
-        const m = new THREE.Mesh(projGeo, projMat);
+        const mat = p.elem && ELEM_PROJ_MAT[p.elem] ? ELEM_PROJ_MAT[p.elem] : projMat;   // 批33：元素弹染色
+        const m = new THREE.Mesh(projGeo, mat);
         m.position.set(p.x - COLS/2 + .5, SEG_H/2 + visH(p.h || 0), p.y - ROWS/2 + .5);
         m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, spd: p.spd || 1, h: p.h || 0, at: performance.now()};
         scene.add(m);
@@ -2891,6 +3025,8 @@
         if (left > 0) parts.push({cls: k, emoji: ITEMS[k].emoji, label: ITEMS[k].label, left: left, total: 6000});
       }
       if ((myEnt.inv | 0) > 0) parts.push({cls: 'inv', emoji: '🛡', label: '无敌', left: myEnt.inv, total: 2500});
+      if ((eff.frozen | 0) > 0) parts.push({cls: 'frozen', emoji: '🧊', label: '冻结', left: eff.frozen, total: 1600});   // 批33
+      if ((eff.slow | 0) > 0) parts.push({cls: 'slow', emoji: '❄', label: '感电', left: eff.slow, total: 3000});         // 批33
     }
     const sig = parts.map(p => p.cls).join(',');
     if (sig !== effHudSig) {
@@ -3272,6 +3408,18 @@
         if (ev.id !== myId) sAtk();
         break;
       }
+      case 'react': {   // 批33：元素反应浮字（服务端 apply_reaction 广播）
+        const RN = {frozen: '❄冻结', vaporize: '🔥蒸发', melt: '❄融化',
+                    overload: '💥超载', electro: '⚡感电', superconduct: '❄超导'};
+        const RC = {frozen: 0x9be8ff, vaporize: 0xff7b4d, melt: 0xffd8a8,
+                    overload: 0xff5a3c, electro: 0xa86bff, superconduct: 0xcfe8f0};
+        if (w) {
+          floater(w.x, 1.5, w.z, RN[ev.kind] || ev.kind);
+          burst(w.x, .7, w.z, RC[ev.kind] || 0xffffff, 14);
+        }
+        if (ev.victim === myId) beep(300, .18, 'square', .08, -200);
+        break;
+      }
       case 'ult': {
         if (w) {
           burst(w.x, .7, w.z, 0xffb84d, 30);
@@ -3517,6 +3665,18 @@
     } else if (ghost) {
       e.bodyMat.emissive.setHex(0x6a4ea0);
       e.bodyMat.emissiveIntensity = .3;
+    } else if (e.eff && e.eff.frozen > 0) {                 // 批33：冻结——冰蓝罩（快照下发剩余ms）
+      e.bodyMat.emissive.setHex(0x9be8ff);
+      e.bodyMat.emissiveIntensity = .55 + .25 * Math.abs(Math.sin(now / 120));
+    } else if (e.eff && e.eff.slow > 0) {                   // 批33：感电减速——青白罩
+      e.bodyMat.emissive.setHex(0xcfe8f0);
+      e.bodyMat.emissiveIntensity = .3 + .15 * Math.abs(Math.sin(now / 260));
+    } else if (e.aura && e.aura.t > 0) {                   // 批33：元素附着光晕
+      const ac = {pyro: 0xff5a3c, hydro: 0x3ca0ff, cryo: 0x8fdfff, electro: 0xa86bff}[e.aura.e];
+      if (ac != null) {
+        e.bodyMat.emissive.setHex(ac);
+        e.bodyMat.emissiveIntensity = .35 + .3 * Math.abs(Math.sin(now / 300));
+      }
     } else {
       // 批25 T4：5★ 皮肤 emissive 正弦脉动（辉夜/白金圣蛇）
       // 批31：脉动更明显（振幅/频率加大）+ 头部光环呼吸 + 星尘拖尾
@@ -3699,6 +3859,13 @@
     const cooling = now - lastAtk < atkCoolMs();
     atkBtn.classList.toggle('cool', cooling);
     atkBtn.classList.toggle('ready', !cooling && joined && state === 'playing');
+
+    // 批33：元素弹按钮 CD 置灰
+    if (joined && !$('elemBar').classList.contains('hidden')) {
+      const ebCool = now - lastEb < EB_CD;
+      document.querySelectorAll('#elemBar .ebtn').forEach(b =>
+        b.classList.toggle('cool', ebCool));
+    }
 
     // 相机：入局跟随自己；观战跟随领先者；否则跟随演示蛇
     let hw, heading;
@@ -4040,6 +4207,9 @@
     if (wt !== '') msg.water = parseFloat(wt);
     const bd = $('cBld').value;                    // 批32：建筑
     if (bd !== '') msg.bld = parseFloat(bd);
+    msg.elements = $('cElements').value !== '0';   // 批33：元素反应开关（默认开）
+    const ea = $('cElemAmt').value;                // 批33：元素地形密度
+    if (ea !== '') msg.elemAmt = parseFloat(ea);
     const portal = $('cPortal').value;
     if (portal !== '') msg.portal = portal === '1';
     const wm = $('cWin').value;
@@ -4097,6 +4267,8 @@
     $('cLimit').value = r.limit > 0 ? String(r.limit) : '';
     $('cRespawn').value = r.respawn ? '1' : '';
     $('cWallDeflect').value = r.wd ? '1' : '';
+    $('cElements').value = (r.elements === false) ? '0' : '1';   // 批33：元素开关回填
+    $('cElemAmt').value = (r.elemAmt == null) ? '' : String(r.elemAmt);   // 批33：密度回填（0.6 有 option）
     $('cBots').value = r.bots ? String(r.bots) : '';
     $('cName').value = r.name || '';
     $('cPass').value = '';
@@ -4122,6 +4294,8 @@
                  height: $('cHeight').value === '' ? '' : parseFloat($('cHeight').value),
                  water: $('cWater').value === '' ? '' : parseFloat($('cWater').value),
                  bld: $('cBld').value === '' ? '' : parseFloat($('cBld').value),
+                 elements: $('cElements').value !== '0',   // 批33：元素开关（bool）
+                 elemAmt: $('cElemAmt').value === '' ? 0.6 : parseFloat($('cElemAmt').value),   // 批33：密度
                  portal: $('cPortal').value === '' ? '' : $('cPortal').value === '1',
                  winMode: $('cWin').value || 'last',
                  limit: $('cLimit').value === '' ? 0 : parseInt($('cLimit').value, 10),
@@ -4249,6 +4423,11 @@
     if (KEYS[k]) { if (!e.repeat) setDir(...KEYS[k]); }
     else if (k === 'j') { if (!e.repeat) fire(); }
     else if (k === 'k') { if (!e.repeat) fireUlt(); }
+    else if (k === 'e') { if (!e.repeat) fireEb(); }                // 批33：E 发射元素弹
+    else if (k === '1') { if (!e.repeat) setElem('pyro'); }         // 批33：1-4 切换元素
+    else if (k === '2') { if (!e.repeat) setElem('hydro'); }
+    else if (k === '3') { if (!e.repeat) setElem('cryo'); }
+    else if (k === '4') { if (!e.repeat) setElem('electro'); }
     else if (k === '/') { e.preventDefault(); if (!e.repeat) openChatPanel(joined || spectating ? 'r' : 'g'); }
     else if (k === ' ') {
       if (joined) fire();
