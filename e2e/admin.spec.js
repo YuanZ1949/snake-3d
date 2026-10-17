@@ -2,30 +2,10 @@
 // 公告全体回显公屏；报告渲染字段；发奖在线提醒；踢人收 kicked 提示；非管理员无入口。
 // 注：e2e 环境 yuan 账号首跑注册、后续跑登录（同一密码）；服务端二次校验白名单，前端隐藏仅易用性。
 const { test, expect } = require('@playwright/test');
+const { ensureLogin } = require('./_helpers');   // 批32：助手抽出（Playwright 禁止 test 文件互 require）
 
 let _seq = 0;
 const uniq = (base) => `${base}${(++_seq).toString(36)}${Date.now().toString(36).slice(-3)}`;
-
-async function ensureLogin(page, name, pass) {
-  await page.goto('/');
-  await page.waitForFunction(() => typeof window.__gachaDbg === 'function');
-  await page.fill('#userIn', name);
-  await page.fill('#passIn', pass);
-  await page.click('#btnRegister');
-  try {
-    await expect(page.locator('#acctBadge')).toContainText(name, { timeout: 3000 });
-  } catch {
-    await page.click('#btnLogin');       // 账号已存在（跨 run 复用）→ 改登录
-    await expect(page.locator('#acctBadge')).toContainText(name, { timeout: 5000 });
-  }
-  // 批31：登录即弹更新回馈（新账号未领 → 弹窗盖住 startScreen z-index:45）→ 关掉不挡后续点击
-  const pop = page.locator('#giftPop');
-  try {
-    await pop.waitFor({ state: 'visible', timeout: 2000 });
-    await page.click('#btnGiftClose');
-    await expect(pop).toBeHidden({ timeout: 3000 });
-  } catch { /* 已领过（跨 run 复用账号）不弹，直接继续 */ }
-}
 
 test('管理员：公告全体回显、报告渲染、发奖在线提醒', async ({ page, browser }) => {
   const notice = '公告' + Date.now().toString(36);
@@ -85,6 +65,3 @@ test('管理员：发奖到账提醒 + 踢人收提示；非管理员无管理�
 
   await ctx2.close();
 });
-
-// 批32：导出登录助手供其他 spec 复用
-module.exports = { ensureLogin };

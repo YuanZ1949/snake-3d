@@ -1,7 +1,7 @@
 // 批32：高度地形（hmap）——客户端渲染 + 房间编辑面三旋钮 + 探针
 // 协议：full 帧带 "hmap": [[x,y,h],...]（PROTO 28）；探针 __mapDbgSet/__heightDbg 不走服务端。
 const { test, expect } = require('@playwright/test');
-const { ensureLogin } = require('./admin.spec');
+const { ensureLogin } = require('./_helpers');
 
 let _seq = 0;
 const uniq = (base) => `${base}${(++_seq).toString(36)}${Date.now().toString(36).slice(-3)}`;
@@ -31,4 +31,20 @@ test('创建/编辑面三旋钮 height/water/bld 保存与回填', async ({ page
   await expect(page.locator('#cHeight')).toHaveValue('0.5');
   await expect(page.locator('#cWater')).toHaveValue('1');
   await expect(page.locator('#cBld')).toHaveValue('1');
+});
+
+test('蛇节按 hmap 抬升 + 预测挡崖', async ({ page }) => {
+  await ensureLogin(page, 'yuan', '123456');
+  await page.click('#btnSolo');
+  await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
+  const base = await page.evaluate(() => window.__heightDbg());   // 平地基准（headY≈SEG_H/2）
+  // 1) 走廊抬升：头格起沿 dir 6 格全 h=2（蛇移动也保持在高台上）
+  await page.evaluate(() => window.__mapSelfCorridorSet(2));
+  await page.waitForTimeout(400);
+  const d = await page.evaluate(() => window.__heightDbg());
+  expect(d.headY).toBeGreaterThan(base.headY + 0.5);              // visH(2)=0.7 → 抬升 ≥0.5
+  // 2) 预测挡崖：头前一格注入 h=4（相对头格上行 ≥2）→ advanceStep 悬停
+  await page.evaluate(() => window.__mapSelfCliffBlock());
+  const d2 = await page.evaluate(() => window.__heightDbg());
+  expect(d2.blocked).toBe(true);
 });

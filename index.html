@@ -1825,7 +1825,33 @@
   // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
   window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
   window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
-  window.__heightDbg = () => ({meshes: heightMeshes.length, headY: null, blocked: null});   // headY/blocked 由批32 T6 补全
+  window.__heightDbg = () => {
+    let headY = null, blocked = null;
+    if (myEnt && myEnt.cells.length && myEnt.spine[0]) {
+      headY = myEnt.spine[0].y;
+      const r = advanceStep({cells: myEnt.cells, dir: myEnt.dir}, myEnt.dir, predStatics(), predFoods(), null);
+      blocked = r.hovered === true;   // advanceStep 被挡返回 hovered:true（shield/deflect 期不悬停）
+    }
+    return {meshes: heightMeshes.length, headY, blocked};
+  };
+  // 批32 探针：头格起沿 dir 6 格注入 h（走廊抬升，蛇移动也保持高台）
+  window.__mapSelfCorridorSet = h => {
+    if (!myEnt || !myEnt.cells.length) return;
+    const d = myEnt.dir, hd = myEnt.cells[0];
+    const list = [...hmapD.entries()].map(([k, v]) => { const a = k.split(','); return [+a[0], +a[1], v]; });
+    for (let i = 0; i < 6; i++) {
+      const x = hd.x + d.x * i, y = hd.y + d.y * i;
+      const e3 = list.find(t => t[0] === x && t[1] === y);
+      if (e3) e3[2] = h; else list.push([x, y, h]);
+    }
+    syncHeight(list);
+  };
+  // 批32 探针：头前一格注入 h+2（上行 ≥2 → 预测挡崖；服务端 hmap 不受影响）
+  window.__mapSelfCliffBlock = () => {
+    if (!myEnt || !myEnt.cells.length) return;
+    const hd = myEnt.cells[0], d = myEnt.dir;
+    hmapD.set(pkey(hd.x + d.x, hd.y + d.y), (hmapD.get(pkey(hd.x, hd.y)) || 0) + 2);
+  };
   // 批25 T4 探针钩子：直接发 skin 消息 / 读 SKINS 结构与拥有集（同 __foodsDbg 先例）
   window.__skinDbg = i => { send({t: 'skin', i}); };
   window.__skinsDbg = () => ({
@@ -2516,6 +2542,7 @@
       walls: new Set(wallCells.map(p => p[0] + ',' + p[1])),
       rocks: new Set(rocks.map(r => r.x + ',' + r.y)),
       portals: new Set(portalCells.map(p => p[0] + ',' + p[1])),
+      hmap: hmapD,   // 批32：高度查表（键 pkey；缺省=0 平地）
       cols: COLS, rows: ROWS,
     };
   }
@@ -2535,9 +2562,13 @@
     const ghost = !!(eff && eff.ghost > 0);
     if (ghost) { nx = (nx + statics.cols) % statics.cols; ny = (ny + statics.rows) % statics.rows; }
     const k = pkey(nx, ny);
+    // 批32：高度挡崖——目标比当前头格上行 ≥2 悬停（含深渊 9；下行自由；ghost 穿透）
+    const hCur = statics.hmap ? (statics.hmap.get(pkey(head.x, head.y)) || 0) : 0;
+    const hT = statics.hmap ? statics.hmap.get(k) : undefined;
+    const cliff = hT !== undefined && hT - hCur >= 2;
     const blocked = statics.portals.has(k) ||
       (!ghost && (nx < 0 || ny < 0 || nx >= statics.cols || ny >= statics.rows ||
-                  statics.walls.has(k) || statics.rocks.has(k)));
+                  statics.walls.has(k) || statics.rocks.has(k) || cliff));
     if (blocked && !(eff && (eff.shield > 0 || eff.deflect > 0))) {
       return {cells: state.cells, dir: d, hovered: true};
     }
@@ -2790,8 +2821,8 @@
       projMeshes.forEach(m => scene.remove(m));
       projMeshes = list.map(p => {
         const m = new THREE.Mesh(projGeo, projMat);
-        m.position.set(p.x - COLS/2 + .5, SEG_H/2, p.y - ROWS/2 + .5);
-        m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, spd: p.spd || 1, at: performance.now()};
+        m.position.set(p.x - COLS/2 + .5, SEG_H/2 + visH(p.h || 0), p.y - ROWS/2 + .5);
+        m.userData = {gx: p.x, gy: p.y, dx: p.dx, dy: p.dy, spd: p.spd || 1, h: p.h || 0, at: performance.now()};
         scene.add(m);
         return m;
       });
@@ -2803,7 +2834,7 @@
       const dist = Math.abs(p.x - u.gx) + Math.abs(p.y - u.gy);
       const turned = p.dx !== u.dx || p.dy !== u.dy;
       if (dist > 1.5 || turned) u.at = performance.now();
-      u.gx = p.x; u.gy = p.y; u.dx = p.dx; u.dy = p.dy; u.spd = p.spd || 1;
+      u.gx = p.x; u.gy = p.y; u.dx = p.dx; u.dy = p.dy; u.spd = p.spd || 1; u.h = p.h || 0;
     }
   }
 
@@ -2813,6 +2844,7 @@
       const t = Math.max(0, Math.min(.1, (now - u.at) / 1000));
       const v = 22 * (u.spd || 1);
       m.position.x = u.gx - COLS/2 + .5 + u.dx * v * t;
+      m.position.y = SEG_H/2 + visH(u.h || 0);   // 批32：弹道贴发射者头高
       m.position.z = u.gy - ROWS/2 + .5 + u.dy * v * t;
     }
   }
@@ -3249,6 +3281,11 @@
         }
         break;
       }
+      case 'phit': {
+        // 批32：子弹撞高度地形碎裂（金=高处/岩灰=低处，仅特效无得分）
+        if (w) burst(w.x, .5, w.z, (ev.h || 0) >= 2 ? 0xffd166 : 0x9aa6c8, 12);
+        break;
+      }
       case 'expire': {
         // 仅播爆裂特效；网格清理由 applyWorld 依据快照 bonus 是否为空统一处理，
         // 避免"过期+同格重刷"时把刚生成的新星星误删（奖励吃两次的 bug）
@@ -3281,6 +3318,8 @@
   const CAUSE_TEXT = {
     wall: '撞墙了',
     rock: '撞上岩石了',
+    cliff: '摔下悬崖了',   // 批32
+    crush: '被碾压了',     // 批32
     self: '咬到自己了',
     eaten: '被咬死了',
     bite: '被咬成只剩 2 格后吞掉了',
@@ -3384,10 +3423,14 @@
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i], f = from && from[i];
       if (f && (f.x !== c.x || f.y !== c.y)) {
-        _vb.set(f.x + (c.x - f.x) * ph - COLS / 2 + .5, SEG_H / 2 + .02,
+        // 批32：插值 y 随所在格 visH（爬坡/下坡节节起伏）
+        const v0 = visH(hmapD.get(pkey(f.x, f.y)) || 0);
+        const v1 = visH(hmapD.get(pkey(c.x, c.y)) || 0);
+        _vb.set(f.x + (c.x - f.x) * ph - COLS / 2 + .5, SEG_H / 2 + .02 + v0 + (v1 - v0) * ph,
                 f.y + (c.y - f.y) * ph - ROWS / 2 + .5);
       } else {
         cw(c.x, c.y, _vb);
+        _vb.y += visH(hmapD.get(pkey(c.x, c.y)) || 0);   // 批32：静止节贴合地形高
       }
       spine[i].lerp(_vb, kp);
       if (fall) spine[i].y -= i === 0 ? fall : fall * .5;
@@ -3396,6 +3439,11 @@
     head.visible = true;
     head.position.copy(spine[0]);
     head.rotation.y = yawTo(head.rotation.y, rotT[0] || 0, kr);
+    // 批32：头俯仰（头比颈高 → 抬头为正；随地形坡度 lerp）
+    const hH0 = visH(hmapD.get(pkey(cells[0].x, cells[0].y)) || 0);
+    const hH1 = cells[1] ? visH(hmapD.get(pkey(cells[1].x, cells[1].y)) || 0) : hH0;
+    const pitch = Math.max(-.5, Math.min(.5, (hH0 - hH1) * .6));
+    head.rotation.x += (pitch - head.rotation.x) * kr;
     tongue.visible = !dead && Math.floor(now / 450) % 5 === 4;
     if (gray) skull.material.color.setHSL(.35, .3 * (1 - gray), .55 - gray * .25);
     else skull.material.color.setHex(opts.headColor);
@@ -3410,6 +3458,20 @@
       bodyMesh.visible = true;
     }
     bodyMat.color.setRGB(1 - gray * .75, 1 - gray * .75, 1 - gray * .75);
+    // 批32：伏击草——对方蛇进草整条淡出（自己 own=true 全亮）；head 组材质逐实体独立，安全同步
+    const own = !!opts.own;
+    const inGrass = !own && cells.some(c => (hmapD.get(pkey(c.x, c.y)) || 0) === -2);
+    bodyMat.opacity += ((inGrass ? .35 : 1) - bodyMat.opacity) * (1 - Math.exp(-dt * 8));
+    const needTr = bodyMat.opacity < .995;
+    if (bodyMat.transparent !== needTr) { bodyMat.transparent = needTr; bodyMat.needsUpdate = true; }
+    const ringM = head.userData.ring;
+    head.traverse(o => {
+      const m = o.material;
+      if (!m) return;
+      if (o === ringM) { m.opacity = .85 * bodyMat.opacity; return; }
+      m.opacity = bodyMat.opacity;
+      if (m.transparent !== needTr) { m.transparent = needTr; m.needsUpdate = true; }
+    });
   }
 
   // 服务器实体：算旋转目标 + 名牌
@@ -3425,8 +3487,14 @@
     const ph = e.moveAt ? Math.min(1, Math.max(0, (now - e.moveAt) / (e.moveDt || 150))) : 1;
     syncBody(e.cells, e.spine, e.dir, e.rotT, e.bodyMesh, e.bodyMat, e.head, e.tongue, e.skull, {
       now, dead: !e.alive, deathAt: e.deathAt, headColor: SKINS[e.skin % SKINS.length].head,
-      from: e.lastCells, phase: ph,
+      from: e.lastCells, phase: ph, own: e.id === myId,
     }, dt);
+    // 批32：水面水花（仅自己；头格在水域 h=-1 → 每 600ms 蓝白小粒子）
+    if (e.id === myId && e.alive && (hmapD.get(pkey(e.cells[0].x, e.cells[0].y)) || 0) === -1 &&
+        (!e.splashAt || now - e.splashAt > 600)) {
+      e.splashAt = now;
+      burst(e.spine[0].x, e.spine[0].y + .1, e.spine[0].z, 0x9fd8ff, 5);
+    }
     if (e.name) {
       nameSprite(e, e.off ? e.name + ' 💤' : e.name);
       e.nameSp.position.copy(e.spine[0]);
@@ -3478,7 +3546,7 @@
     const ph = Math.min(1, Math.max(0, (now - lastTick) / 180));
     syncBody(snake, spine, dir, rotT, bodyMesh, bodyMat, head, tongueMesh, skullMesh, {
       now, dead: false, deathAt: 0, headColor: SKINS[skinIdx].head,
-      from: lastCells, phase: ph,
+      from: lastCells, phase: ph, own: true,
     }, dt);
     // 批31：演示蛇同样展示 5★ 呼吸脉动 + 头部光环（大厅预览能看出高级）
     const ds = SKINS[skinIdx];
