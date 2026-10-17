@@ -44,6 +44,7 @@ def fresh(size=10, **kw):
     r.items = []
     r.bonus = None
     r.foods = []
+    r.hmap = {}      # 批32：测试默认纯平地（用例按需注入 r.hmap=...）
     r._reach = None      # 直接改地形绕过失效点 → 手动失效（批15①）
     return r
 
@@ -3292,6 +3293,68 @@ def test_height_cfg_roundtrip():
     del serve.rooms['rc']
 
 
+def _cliff_case(hmap, head, tail, d, eff=None):
+    r = fresh(16); r.hmap = dict(hmap); r._reach = None
+    p = mk(r, 1, "A", [head] + tail, d); p['inv'] = 0
+    if eff: p['eff'] = eff
+    r.step(0.05, serve.now_ms())
+    return r, p
+
+
+def test_cliff_move():
+    # 0→2 死 cliff
+    r, p = _cliff_case({(6,5): 2}, (5,5), [(4,5)], (1,0))
+    assert not p['alive'] and p['cause'] == 'cliff'
+    assert any(e['t']=='die' and e['cause']=='cliff' for e in r.events)
+    # 0→1 活；2→0 活（下行自由）；0→9 死；0→-1 活；0→-2 活；1→3 死
+    assert _cliff_case({(6,5):1}, (5,5), [(4,5)], (1,0))[1]['alive']
+    r = fresh(16); r.hmap = {(5,5):2}; r._reach = None
+    p = mk(r,1,"A",[(5,5),(4,5)],(1,0)); p['inv']=0
+    r.step(0.05, serve.now_ms()); assert p['alive']          # 2→0
+    assert not _cliff_case({(6,5):9}, (5,5), [(4,5)], (1,0))[1]['alive']
+    assert _cliff_case({(6,5):-1}, (5,5), [(4,5)], (1,0))[1]['alive']
+    assert _cliff_case({(6,5):-2}, (5,5), [(4,5)], (1,0))[1]['alive']
+    assert not _cliff_case({(5,5):1,(6,5):3}, (5,5), [(4,5)], (1,0))[1]['alive']  # 1→3
+    # shield：崖前有侧路 → 折返不死
+    r, p = _cliff_case({(6,5):2}, (5,5), [(4,5)], (1,0), eff={'shield': serve.now_ms()+9999})
+    assert p['alive'] and p['cells'][0] != (6,5)
+    # ghost：0→9 穿越不死
+    assert _cliff_case({(6,5):9}, (5,5), [(4,5)], (1,0), eff={'ghost': serve.now_ms()+9999})[1]['alive']
+    # AI 前瞻：cur_h=0 时 2 视为墙（首格 (6,5) 即峭壁 → 计数 0）；cur_h=1 可沿路 9 格
+    r = fresh(16); r.hmap = {(6,5):2}; r._reach = None
+    assert r._open_ahead(5, 5, (1,0), cur_h=0) == 0
+    assert r._open_ahead(5, 5, (1,0), cur_h=1) >= 2
+
+
+def test_water_slowdown():
+    r = fresh(16); r.hmap = {(5,5): -1}; r._reach = None
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r.tick_of(p, serve.now_ms()) == int(150 * 1.3)      # 195
+    p2 = mk(r, 2, "B", [(5,8),(4,8)], (1,0))
+    assert r.tick_of(p2, serve.now_ms()) == 150                # 平地不减速
+    p['eff'] = {'speed': serve.now_ms()+9999}
+    assert r.tick_of(p, serve.now_ms()) == int(int(150*0.6) * 1.3)   # 加速再水涉
+
+
+def test_spawn_h0():
+    r = fresh(20)
+    r.hmap = {(x, y): ((x + y) % 3) + 1 for x in range(0, 20, 3) for y in range(20)}
+    r._reach = None
+    p = serve.make_player(1, None, "A", "s0")
+    r.players[1] = p
+    r.spawn_player(p)
+    assert p['cells']
+    assert all(r.hmap.get(c, 0) == 0 for c in p['cells'])
+
+
+def test_ghost_cross_height():
+    r = fresh(16); r.hmap = {(6,5): 9}; r._reach = None
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0)); p['inv'] = 0
+    p['eff'] = {'ghost': serve.now_ms() + 9999}
+    r.step(0.05, serve.now_ms())
+    assert p['alive'] and p['cells'][0] == (6,5)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3397,6 +3460,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_height_cfg_roundtrip]:
+            test_height_gen_invariants, test_height_cfg_roundtrip,
+            test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

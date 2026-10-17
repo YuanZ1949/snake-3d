@@ -819,6 +819,8 @@ class Room:
         # 批14：出界格视为占用（spawn 主路径以本函数替代 _solid，须与 _solid 同等拦截 OOB）
         if not (0 <= x < self.cols and 0 <= y < self.rows):
             return True
+        if self.hmap.get((x, y), 0) >= 2:
+            return True                       # 批32：山峰/建筑/深渊不可作出生/占位格
         if (x, y) in self.rocks or (x, y) in self.walls:
             return True
         if (x, y) in self.portals:
@@ -928,11 +930,14 @@ class Room:
         sess.full_sent = False     # 重连恢复 → 首帧补全量
 
     # -------- 玩家生命周期 --------
-    def _solid(self, x, y, skip_pid=None):
-        """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）"""
+    def _solid(self, x, y, skip_pid=None, cur_h=None):
+        """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）。
+        批32：cur_h 传值时，上行 ≥2（含深渊 9）视为峭壁挡（下行自由）。"""
         if x < 0 or y < 0 or x >= self.cols or y >= self.rows:
             return True
         if (x, y) in self.rocks or (x, y) in self.walls or (x, y) in self.portals:
+            return True
+        if cur_h is not None and self.hmap.get((x, y), 0) - cur_h >= 2:
             return True
         for pid, q in self.players.items():
             if pid == skip_pid or not q['alive']:
@@ -941,10 +946,10 @@ class Room:
                 return True
         return False
 
-    def _open_ahead(self, x, y, d, skip_pid=None, cap=24):
+    def _open_ahead(self, x, y, d, skip_pid=None, cap=24, cur_h=None):
         n = 0
         cx, cy = x + d[0], y + d[1]
-        while n < cap and not self._solid(cx, cy, skip_pid):
+        while n < cap and not self._solid(cx, cy, skip_pid, cur_h=cur_h):
             n += 1
             cx += d[0]
             cy += d[1]
@@ -1000,7 +1005,9 @@ class Room:
             for d in dirs:
                 cells = [(x, y), (x - d[0], y - d[1]), (x - 2 * d[0], y - 2 * d[1])]
                 # 批14①：用 occupied 而非 _solid——不吃食物/道具/星星
-                if any(self.occupied(cx, cy, pid) for cx, cy in cells):
+                # 批32：出生强制 h==0（occupied 已挡 ≥2，此处补 -1/-2 等非平格）
+                if any(self.occupied(cx, cy, pid) or self.hmap.get((cx, cy), 0) != 0
+                       for cx, cy in cells):
                     continue
                 ahead = self._open_ahead(x, y, d, pid)
                 if ahead < 4:
@@ -1025,7 +1032,8 @@ class Room:
                 for d in dirs:
                     cells = [(x, y), (x - d[0], y - d[1]), (x - 2 * d[0], y - 2 * d[1])]
                     if any(not (0 <= cx < self.cols and 0 <= cy < self.rows)
-                           or (cx, cy) in occ for cx, cy in cells):
+                           or (cx, cy) in occ
+                           or self.hmap.get((cx, cy), 0) != 0 for cx, cy in cells):   # 批32：h==0
                         continue
                     o = self._open_ahead(x, y, d, pid)
                     if o > best_o:
@@ -1076,7 +1084,7 @@ class Room:
                 p['cells'][0] in self._reach
                 for p in self.players.values() if p['alive'] and p['cells']):
             return self._reach
-        block = set(self.rocks) | set(self.walls)
+        block = set(self.rocks) | set(self.walls) | {c for c, hh in self.hmap.items() if hh >= 2}
         pm = self.portal_map()
         seen = set()
         dq = deque()
@@ -1178,9 +1186,11 @@ class Room:
 
     def tick_of(self, p, now):
         base = p['tick']
-        if self.effect_active(p, 'speed', now):
-            return max(60, int(base * 0.6))
-        return base
+        t = max(60, int(base * 0.6)) if self.effect_active(p, 'speed', now) else base
+        # 批32：头在水洼（-1）减速 30%（speed 后再乘，可叠加）
+        if p['cells'] and self.hmap.get(p['cells'][0], 0) == -1:
+            t = int(t * 1.3)
+        return t
 
     # -------- 回合控制 --------
     def force_right(self, p):
@@ -1373,6 +1383,7 @@ class Room:
         if not p['cells']:
             return
         hx, hy = p['cells'][0]
+        cur_h = self.hmap.get((hx, hy), 0)      # 批32：AI 避上行 ≥2（spec §8）
         cur = p['dir']
         opp = (-cur[0], -cur[1])
         tgt = None
@@ -1402,9 +1413,9 @@ class Room:
             if nd == opp:
                 continue
             nx, ny = hx + nd[0], hy + nd[1]
-            if self._solid(nx, ny, skip_pid=p['id']):
+            if self._solid(nx, ny, skip_pid=p['id'], cur_h=cur_h):
                 continue
-            openv = self._open_ahead(nx, ny, nd, skip_pid=p['id'])
+            openv = self._open_ahead(nx, ny, nd, skip_pid=p['id'], cur_h=cur_h)
             dist = (abs(nx - tgt[0]) + abs(ny - tgt[1])) if tgt else 0
             align = nd[0] * pref[0] + nd[1] * pref[1]   # 1 同向 / 0 垂直 / -1 反向
             opts.append(((0 if openv > 0 else 1, dist, -align, -openv), nd))
@@ -1555,8 +1566,11 @@ class Room:
             ghost = self.effect_active(p, 'ghost', now)
             wall = not ghost and (hx < 0 or hy < 0 or hx >= self.cols or hy >= self.rows)
             rock = not ghost and (hx, hy) in blockset
+            # 批32：上行 ≥2（含深渊 9）= 撞崖；ghost 豁免（下行/水草本就无障碍）
+            cur_h32 = self.hmap.get(p['cells'][0], 0)
+            cliff = (not ghost) and (self.hmap.get((hx, hy), 0) - cur_h32 >= 2)
             own = (hx, hy) in p['cells'][1:]
-            if not (wall or rock or own):
+            if not (wall or rock or cliff or own):
                 continue
             shielded = self.effect_active(p, 'shield', now)
             # 批17 H：walldeflect 房 = 全员常驻「仅边界墙折返」（与 deflect 道具同语义）
@@ -1570,7 +1584,7 @@ class Room:
                     tent[id(p)] = (p['cells'][0][0] + nd[0], p['cells'][0][1] + nd[1])
                     continue
             dead.add(id(p))
-            p['cause'] = 'wall' if wall else ('rock' if rock else 'self')
+            p['cause'] = 'wall' if wall else ('rock' if rock else ('cliff' if cliff else 'self'))
 
         # 5) 咬到其他蛇身体 → 截断对方（对方至少保留 MIN_LEN 格，被截下的部分并入攻击者长度）
         bites = {}   # victim_id -> (eater_id, index)
