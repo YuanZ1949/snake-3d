@@ -2060,6 +2060,10 @@ class Room:
             pr['y'] += pr['dy'] * PROJ_SPEED * pr.get('spd', 1.0) * dt
             gx, gy = int(pr['x'] + 0.5), int(pr['y'] + 0.5)
             if 0 <= gx < self.cols and 0 <= gy < self.rows and (gx, gy) in rockset:
+                if pr.get('elem'):
+                    # 批33：元素弹触岩直接消散（不碎岩不计分）
+                    self.projectiles.remove(pr)
+                    continue
                 rockset.discard((gx, gy))
                 self.rocks = [r for r in self.rocks if r != (gx, gy)]
                 self._reach = None  # 批15①：子弹碎岩 → 可达集失效
@@ -2087,6 +2091,17 @@ class Room:
                         victim = q
                         break
                 if victim is not None:
+                    if pr.get('elem'):
+                        # 批33：元素弹命中——无 aura 附着 / 同元素刷新 / 异元素反应（不截短）
+                        ve = self.aura_of(victim, now)
+                        kind = reaction_of(pr['elem'], ve)
+                        if kind:
+                            self.apply_reaction(self.players.get(pr['owner']), victim,
+                                                kind, gx, gy, now)
+                        else:
+                            self.set_aura(victim, pr['elem'], now)
+                        self.projectiles.remove(pr)
+                        continue
                     cut = min(BULLET_CUT, max(0, len(victim['cells']) - MIN_LEN))
                     if cut > 0:
                         victim['cells'] = victim['cells'][:len(victim['cells']) - cut]
@@ -2134,7 +2149,7 @@ class Room:
             'players': plist,
             'proj': [{'x': round(pr['x'], 2), 'y': round(pr['y'], 2),
                       'dx': pr['dx'], 'dy': pr['dy'], 'spd': pr.get('spd', 1.0),
-                      'h': pr.get('h', 0)}
+                      'h': pr.get('h', 0), 'elem': pr.get('elem')}
                      for pr in self.projectiles],
             'round': self.round_no, 'cols': self.cols, 'rows': self.rows,
             'winMode': self.win_mode, 'limit': self.limit, 'respawn': self.respawn,
@@ -3186,6 +3201,24 @@ async def handle_msg(sess, m):
                                  'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0,
                                  'h': room.hmap.get((hx, hy), 0)})   # 批32：弹高=发射者头格高
         room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
+    elif t == 'eb':
+        # 批33：元素弹——独立 CD（EB_CD），白名单四元素，门禁对标 atk + elements 总开关 + 冻结
+        if not room.elements or not p['alive'] or room.win_pending or p.get('pause'):
+            return
+        if room.effect_active(p, 'frozen', now):
+            return
+        el = m.get('elem')
+        if el not in ELEMS or not p['cells']:
+            return
+        if now - p.get('eb_at', 0) < EB_CD:
+            return
+        p['eb_at'] = now
+        hx, hy = p['cells'][0]
+        room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
+                                 'dx': p['dir'][0], 'dy': p['dir'][1],
+                                 'spd': EB_SPD, 'h': room.hmap.get((hx, hy), 0),
+                                 'elem': el})
+        room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1], elem=el)
     elif t == 'ult':
         if not p.get('pause'):   # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）
             room.try_ult(p, now)

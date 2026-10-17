@@ -3640,6 +3640,7 @@ def test_bite_reaction_all_six_batch33():
 def test_reaction_dual_consume_and_infect_batch33():
     # 传染：A 有 aura、B 无 → 咬中后 B 获 aura、A 消耗、不触发反应
     r = fresh(16)
+    r.eterrain = {}      # 批33修：seed(42) 后 Room eterrain 确定性落格，步进踩格会重新附着干扰断言
     now = serve.now_ms()
     p1 = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
     p2 = mk(r, 2, 'B', [(7, 5), (6, 5), (6, 6)], (0, 1))
@@ -3653,6 +3654,7 @@ def test_reaction_dual_consume_and_infect_batch33():
     assert not any(e['t'] == 'react' for e in r.events), '同侧无异元素不触发反应'
     # 反应：异元素咬击 → ev react + 双消 + 蒸发额外 -1 + 截短不计分不并 grow
     r2 = fresh(16)
+    r2.eterrain = {}     # 批33修：同上，避免 A 步进踩 pyro 地形重新附着（踩格替换是正确行为）
     now2 = serve.now_ms()
     a = mk(r2, 1, 'A', [(5, 8), (4, 8), (3, 8)], (1, 0))
     b = mk(r2, 2, 'B', [(7, 5), (6, 5), (6, 6), (6, 7), (6, 8), (6, 9)], (0, 1))
@@ -3666,7 +3668,9 @@ def test_reaction_dual_consume_and_infect_batch33():
     assert react[0]['by'] == 1 and react[0]['victim'] == 2, react[0]
     # 咬点 idx=4 → keep=4（bite cut=2）→ 蒸发再 -1 → 3
     assert len(b['cells']) == 3, b['cells']
-    assert r2.aura_of(a, now2) is None and r2.aura_of(b, now2) is None, '反应双消'
+    assert r2.aura_of(a, now2) is None and r2.aura_of(b, now2) is None, (
+        '反应双消', a.get('aura'), b.get('aura'), dict(r2.eterrain),
+        list(a['cells']), list(b['cells']), r2.events)
     # 反应截短不并入 grow 不计分：grow=2（咬击）-1（本 tick 消耗），score=2×BITE（无额外）
     assert a.get('grow', 0) == 1, a.get('grow')
     assert a['score'] == 2 * serve.BITE_SCORE_PER_CELL, a['score']
@@ -3728,6 +3732,131 @@ def test_crush_result_unchanged_batch33():
     assert 'frozen' not in p2.get('eff', {}), '已死降级不写效果'
     # 碾压路自己的 ULT_KILL 照给（30）；victim 已死 → 无 ULT_REACT（有则 45）
     assert p1['ult'] == serve.ULT_KILL, p1['ult']
+
+
+# ---- 批33：元素弹（eb） ----
+def test_eb_attach_and_cd_batch33():
+    """批33：元素弹发射——白名单/独立CD/元素开关/暂停/冻结门禁 + fire ev 带 elem + 快照带 elem"""
+    import asyncio
+    r = fresh(12)
+    sess = _cfg_sess(sid='e1', user=None, room=r)
+    p = mk(r, 1, 'Me', [(4, 4), (4, 5)], (1, 0))
+    p['session'] = sess
+    sess.pid = 1
+    r.events.clear()
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'hydro'}))
+    assert len(r.projectiles) == 1 and r.projectiles[0]['elem'] == 'hydro', r.projectiles
+    assert r.projectiles[0]['spd'] == serve.EB_SPD, r.projectiles[0]
+    assert any(e['t'] == 'fire' and e.get('elem') == 'hydro' for e in r.events), r.events
+    snap = r.snapshot(serve.now_ms())
+    assert snap['proj'][0].get('elem') == 'hydro', snap['proj']
+    # 独立 CD：EB_CD 内二发被拒
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'pyro'}))
+    assert len(r.projectiles) == 1, "EB_CD 内二发应拒"
+    # 白名单：非四元素拒
+    p['eb_at'] = 0
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'geo'}))
+    assert len(r.projectiles) == 1, "非白名单元素应拒"
+    # elements 总开关拒
+    r.elements = False
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'pyro'}))
+    assert len(r.projectiles) == 1, "elements=False 应拒"
+    r.elements = True
+    # 暂停拒
+    p['pause'] = True
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'pyro'}))
+    assert len(r.projectiles) == 1, "暂停应拒"
+    p.pop('pause')
+    # 冻结拒（M2：冻结中不开火）
+    p['eff']['frozen'] = serve.now_ms() + 9999
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'pyro'}))
+    assert len(r.projectiles) == 1, "冻结应拒"
+    p['eff'].pop('frozen')
+    # 门禁解除后可发射
+    p['eb_at'] = 0
+    asyncio.run(serve.handle_msg(sess, {'t': 'eb', 'elem': 'pyro'}))
+    assert len(r.projectiles) == 2, "解除门禁后应可发射"
+    print("eb attach cd batch33 OK")
+
+
+def test_eb_hit_attach_refresh_batch33():
+    """批33：元素弹命中——无 aura 附着不截短/同元素刷新 TTL/异元素走反应（截短+双消+充能）"""
+    r = fresh(12)
+    now = serve.now_ms()
+    a = mk(r, 1, 'A', [(7, 4), (7, 5)], (1, 0))          # 射手
+    v = mk(r, 2, 'V', [(5, 4), (5, 5), (5, 6)], (1, 0))  # 受害者 3 格
+    a['inv'] = v['inv'] = 0
+    # ① 无 aura 命中 → 附着，不截短
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 0, 'elem': 'hydro'})
+    r._step_projectiles(0.001, now)
+    assert not r.projectiles, "命中后弹应消"
+    assert r.aura_of(v, now) == 'hydro', v.get('aura')
+    assert len(v['cells']) == 3, "基础附着不截短"
+    # ② 同元素刷新：旧 TTL 拨到快过期，命中后重置
+    v['aura']['at'] = now - serve.AURA_MS + 100
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 0, 'elem': 'hydro'})
+    r._step_projectiles(0.001, now + 50)
+    assert v['aura']['at'] == now + 50, "同元素命中应刷新 TTL"
+    # ③ 异元素 → vaporize（水×火）：victim -1、双消、射手充能、ev react
+    r.events.clear()
+    a['ult'] = 0
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 0, 'elem': 'pyro'})
+    r._step_projectiles(0.001, now + 100)
+    assert len(v['cells']) == 2, "蒸发应截 1"
+    assert r.aura_of(v, now + 100) is None and r.aura_of(a, now + 100) is None, "反应双消"
+    assert a['ult'] == serve.ULT_REACT, "触发方应充能"
+    assert any(e['t'] == 'react' and e['kind'] == 'vaporize' for e in r.events), r.events
+    print("eb hit attach refresh batch33 OK")
+
+
+def test_eb_no_rock_and_gates_batch33():
+    """批33：元素弹触岩消散（不碎岩不计分）；普通弹对照照碎；高度挡弹对元素弹同样生效"""
+    r = fresh(12)
+    now = serve.now_ms()
+    a = mk(r, 1, 'A', [(7, 4)], (1, 0))
+    r.rocks = [(5, 4)]
+    r._reach = None
+    r.events.clear()
+    # 元素弹触岩 → 弹消、岩在、无分、无 rock ev
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 0, 'elem': 'hydro'})
+    r._step_projectiles(0.001, now)
+    assert not r.projectiles, "元素弹触岩应消散"
+    assert r.rocks == [(5, 4)], "元素弹不应碎岩"
+    assert a['score'] == 0, "元素弹不该计分"
+    assert not any(e['t'] == 'rock' for e in r.events), r.events
+    # 普通弹对照：照碎照计分
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': 1.0, 'h': 0})
+    r._step_projectiles(0.001, now)
+    assert not r.rocks and a['score'] == 5, (r.rocks, a['score'])
+    # 高度挡弹同样生效：地形 h=2 > 弹 h=0 → phit 消散
+    r.hmap = {(4, 4): 2}
+    r._reach = None
+    r.projectiles.append({'owner': 1, 'x': 4.5, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 0, 'elem': 'cryo'})
+    r._step_projectiles(0.0001, now)
+    assert not r.projectiles, "元素弹应被高地形挡下"
+    print("eb no rock gates batch33 OK")
+
+
+def test_eb_cross_layer_batch33():
+    """批33：跨层不命中——弹 h=2 飞过地面蛇不附着不截短（沿用批32 |节h-弹h|≤1）"""
+    r = fresh(12)
+    now = serve.now_ms()
+    mk(r, 1, 'A', [(7, 4)], (1, 0))
+    v = mk(r, 2, 'V', [(5, 4), (5, 5)], (1, 0))
+    v['inv'] = 0
+    r.projectiles.append({'owner': 1, 'x': 5.0, 'y': 4.0, 'dx': -1, 'dy': 0,
+                          'spd': serve.EB_SPD, 'h': 2, 'elem': 'hydro'})
+    r._step_projectiles(0.001, now)
+    assert r.aura_of(v, now) is None, "跨层不该附着"
+    assert len(v['cells']) == 2, "跨层不该截短"
+    assert r.projectiles, "跨层弹应继续飞行"
+    print("eb cross layer batch33 OK")
 
 
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
@@ -3844,6 +3973,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_eterrain_constraints_batch33, test_eterrain_attach_and_spawn_avoid_batch33,
             test_eterrain_full_and_delta_batch33,
             test_bite_reaction_all_six_batch33, test_reaction_dual_consume_and_infect_batch33,
-            test_react_charge_and_dead_degrade_batch33, test_crush_result_unchanged_batch33]:
+            test_react_charge_and_dead_degrade_batch33, test_crush_result_unchanged_batch33,
+           test_eb_attach_and_cd_batch33, test_eb_hit_attach_refresh_batch33,
+           test_eb_no_rock_and_gates_batch33, test_eb_cross_layer_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
