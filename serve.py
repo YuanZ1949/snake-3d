@@ -1017,6 +1017,7 @@ class Room:
         p['last_atk'] = 0
         p['inv'] = now_ms() + SPAWN_INV
         p['eff'] = {}
+        p.pop('aura', None)          # 批33：重生清元素附着
         p['grow'] = 0
         p['combo'] = 0
         p['combo_at'] = 0
@@ -1213,6 +1214,22 @@ class Room:
 
     def effect_active(self, p, kind, now):
         return p.get('eff', {}).get(kind, 0) > now
+
+    # -------- 批33：元素附着（aura） --------
+    def set_aura(self, p, elem, now):
+        """附着/刷新元素附着，TTL AURA_MS。"""
+        p['aura'] = {'e': elem, 'at': now}
+
+    def aura_of(self, p, now):
+        """返回有效元素 id；无附着或 TTL 过期返回 None。"""
+        a = p.get('aura')
+        if not a or a.get('at', 0) + AURA_MS <= now:
+            return None
+        return a.get('e')
+
+    def consume_aura(self, p):
+        """弹出附着（反应双消/传染转移后调用）。"""
+        p.pop('aura', None)
 
     def tick_of(self, p, now):
         base = p['tick']
@@ -1981,6 +1998,9 @@ class Room:
                 'ult': p.get('ult', 0),
                 'bot': bool(p.get('bot')),
                 'off': bool(p.get('off_at')),
+                # 批33：元素附着 None 或 {e, t=剩余ms}（TTL 过期视作无）
+                'aura': (lambda a: None if (not a or a.get('at', 0) + AURA_MS <= now)
+                         else {'e': a.get('e'), 't': a.get('at', 0) + AURA_MS - now})(p.get('aura')),
             })
         out = {
             't': 'snap', 'room': self.id, 'theme': self.theme,

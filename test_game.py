@@ -3488,6 +3488,38 @@ def test_reaction_same_or_none_elem_batch33():
     assert serve.reaction_of(None, 'hydro') is None
 
 
+def test_aura_snapshot_and_ttl_batch33():
+    r = fresh()
+    p = mk(r, 1, 'a', [(1, 1), (1, 2), (1, 3)], (1, 0))
+    now = serve.now_ms()
+    r.set_aura(p, 'pyro', now)
+    assert r.aura_of(p, now) == 'pyro'
+    a = [x for x in r.snapshot(now)['players'] if x['id'] == 1][0]['aura']
+    assert a == {'e': 'pyro', 't': serve.AURA_MS}, a
+    # TTL 过期 → 无 aura、快照 None
+    later = now + serve.AURA_MS + 1
+    assert r.aura_of(p, later) is None
+    a2 = [x for x in r.snapshot(later)['players'] if x['id'] == 1][0]['aura']
+    assert a2 is None, a2
+
+
+def test_spawn_clears_aura_keeps_on_off_batch33():
+    r = fresh()
+    p = mk(r, 1, 'a', [(1, 1), (1, 2), (1, 3)], (1, 0))
+    now = serve.now_ms()
+    r.set_aura(p, 'hydro', now)
+    r.consume_aura(p)
+    assert r.aura_of(p, now) is None, 'consume 后必须无 aura'
+    # 重生清 aura
+    r.set_aura(p, 'cryo', now)
+    r.spawn_player(p)
+    assert r.aura_of(p, serve.now_ms()) is None, '重生必须清 aura'
+    # 挂起（off_at）不清 aura
+    r.set_aura(p, 'cryo', serve.now_ms())
+    p['off_at'] = serve.now_ms()
+    assert r.aura_of(p, serve.now_ms()) == 'cryo', '挂起不应清 aura'
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3597,6 +3629,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
-            test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33]:
+            test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,
+            test_aura_snapshot_and_ttl_batch33, test_spawn_clears_aura_keeps_on_off_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
