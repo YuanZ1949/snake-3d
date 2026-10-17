@@ -1,0 +1,16 @@
+{
+  "goal": "批33 原神元素反应：按 docs/superpowers/plans/2026-10-18-element-reactions.md 完成 10 任务实现（T1-T10），PRO 双端，E2E+门禁+部署+生产复验+文档回写",
+  "acceptance": [
+    "pwsh scripts/local_ci.ps1 → ALL GREEN（含新单测先红后绿、E2E、静态检）",
+    "PROTO_VER=29 双端一致；scp 部署后生产进局 errs=[] 且元素 HUD/附着/反应浮字可见",
+    "HANDOVER.md / BACKLOG.md 回写批33 完成记录"
+  ],
+  "not_do": [
+    "不改既有玩法数值（ULT_KILL/水减速/批32弹道）",
+    "不做 spec 外重构与 Deferred 项",
+    "不改 opencode 配置"
+  ],
+  "flow": "直通（writing-plans 已产出 10 任务计划，按 executing-plans 逐任务执行；任务间接口由计划锁定）",
+  "status": "in_progress",
+  "phase": "T1 开工"
+}
