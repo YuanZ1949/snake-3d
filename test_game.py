@@ -2914,6 +2914,40 @@ def test_update_gift_claim_once():
     print('update gift claim OK')
 
 
+def test_login_gift_batch31():
+    """批31：登录即弹回馈——login/register/authtoken 的 auth 回包随带 gift
+    （待领金额；已领=0。客户端据 authres 即弹，不再等 room-ok）"""
+    import asyncio
+    d, old = _gacha_setup()
+    try:
+        s = _cfg_sess(sid='lg1'); s.ip = '8.8.8.1'; s.joins = 0
+        # 注册回包即带未领标记
+        asyncio.run(serve.handle_msg(s, {'t': 'register', 'user': 'bob', 'pass': '123456'}))
+        r = s.ws.sent[-1]
+        assert r.get('t') == 'auth' and r.get('ok'), r
+        assert r.get('gift') == 14400, '注册回包应带待领回馈：' + repr(r)
+        # 登录回包同样带
+        s2 = _cfg_sess(sid='lg2'); s2.ip = '8.8.8.2'; s2.joins = 0
+        asyncio.run(serve.handle_msg(s2, {'t': 'login', 'user': 'bob', 'pass': '123456'}))
+        r2 = s2.ws.sent[-1]
+        assert r2.get('t') == 'auth' and r2.get('ok') and r2.get('gift') == 14400, r2
+        # authtoken 回包也带（老标签页恢复登录态）
+        tok = r2.get('token')
+        s3 = _cfg_sess(sid='lg3'); s3.ip = '8.8.8.3'; s3.joins = 0
+        asyncio.run(serve.handle_msg(s3, {'t': 'authtoken', 'token': tok}))
+        r3 = s3.ws.sent[-1]
+        assert r3.get('t') == 'auth' and r3.get('ok') and r3.get('gift') == 14400, r3
+        # 领取后登录不再带（0 语义，客户端 truthy 判断不弹）
+        asyncio.run(serve.handle_msg(s2, {'t': 'claimgift'}))
+        assert s2.ws.sent[-1].get('ok'), s2.ws.sent[-1]
+        asyncio.run(serve.handle_msg(s2, {'t': 'login', 'user': 'bob', 'pass': '123456'}))
+        r4 = s2.ws.sent[-1]
+        assert r4.get('gift') in (None, 0), '已领后 auth 包不应再标待领：' + repr(r4)
+    finally:
+        _gacha_teardown(d, old)
+    print('login gift batch31 OK')
+
+
 def test_star_tuning_batch29():
     """批29⑤：星星调参——刷新 0.015 / 寿命 12000ms / 充能 +25 / 吃星尘 +15；
     果子收益保持 +10 不动（用户明确「果子数量不增加 增加星星数量」）"""
@@ -3318,6 +3352,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_online_count_batch30,
             test_gchat_batch30,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
-            test_admin_core_batch30, test_admin_notice_grant_report_batch30]:
+            test_admin_core_batch30, test_admin_notice_grant_report_batch30,
+            test_login_gift_batch31]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

@@ -18,6 +18,13 @@ async function ensureLogin(page, name, pass) {
     await page.click('#btnLogin');       // 账号已存在（跨 run 复用）→ 改登录
     await expect(page.locator('#acctBadge')).toContainText(name, { timeout: 5000 });
   }
+  // 批31：登录即弹更新回馈（新账号未领 → 弹窗盖住 startScreen z-index:45）→ 关掉不挡后续点击
+  const pop = page.locator('#giftPop');
+  try {
+    await pop.waitFor({ state: 'visible', timeout: 2000 });
+    await page.click('#btnGiftClose');
+    await expect(pop).toBeHidden({ timeout: 3000 });
+  } catch { /* 已领过（跨 run 复用账号）不弹，直接继续 */ }
 }
 
 test('管理员：公告全体回显、报告渲染、发奖在线提醒', async ({ page, browser }) => {

@@ -2077,8 +2077,10 @@ async def send(sess, obj):
 
 
 def auth_payload(name):
+    # 批31：登录即弹更新回馈（原仅 room-ok 附带；gift=待领金额，0=已领不带弹窗语义，客户端 truthy 判断）
     return {'t': 'auth', 'ok': True, 'user': name, 'token': tokens_inv(name),
-            'stats': store.stats(name), 'admin': name in ADMIN_USERS}
+            'stats': store.stats(name), 'admin': name in ADMIN_USERS,
+            'gift': _update_gift_pending(name)}
 
 
 def tokens_inv(name):
