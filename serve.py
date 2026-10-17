@@ -1283,6 +1283,73 @@ class Room:
         """弹出附着（反应双消/传染转移后调用）。"""
         p.pop('aura', None)
 
+    def apply_reaction(self, attacker, victim, kind, x, y, now, charge=True):
+        """批33：反应统一入口（spec 决策 16-18）。
+        victim 已死 → 纯视觉（只 ev）；attacker 已死 → 效果在、跳充能（charge=False 同义）。
+        反应截短不并入 grow 不计分，MIN_LEN 保护。"""
+        self.ev('react', kind=kind,
+                by=(attacker or {}).get('id'), victim=victim['id'], x=x, y=y)
+        if not victim.get('alive'):
+            return                          # 已死降级：纯视觉 ev 到此为止
+
+        def cut_one(t):
+            if len(t['cells']) > MIN_LEN:
+                t['cells'] = t['cells'][:-1]
+
+        if kind in ('vaporize', 'melt'):
+            cut_one(victim)
+        elif kind == 'overload':
+            # 半径1（影响点 x,y）：victim（距0）+ 其他蛇各 -1；攻击者免疫
+            for t in self.players.values():
+                if not t.get('alive') or not t['cells']:
+                    continue
+                if attacker is not None and t is attacker:
+                    continue
+                if abs(t['cells'][0][0] - x) + abs(t['cells'][0][1] - y) <= 1:
+                    cut_one(t)
+        elif kind == 'electro':
+            # victim + victim 头格曼哈顿≤2 内 id 序最小的另一条各 -1（确定性）
+            cut_one(victim)
+            vx, vy = victim['cells'][0]
+            best = None
+            for t in self.players.values():
+                if t is victim or not t.get('alive') or not t['cells']:
+                    continue
+                if abs(t['cells'][0][0] - vx) + abs(t['cells'][0][1] - vy) <= 2:
+                    if best is None or t['id'] < best['id']:
+                        best = t
+            if best is not None:
+                cut_one(best)
+        elif kind == 'superconduct':
+            # 影响点半径2 内所有活蛇 slow（tick ×1.5）
+            for t in self.players.values():
+                if t.get('alive') and t['cells'] and (
+                        abs(t['cells'][0][0] - x) + abs(t['cells'][0][1] - y) <= 2):
+                    t['eff'] = t.get('eff', {})
+                    t['eff']['slow'] = max(t['eff'].get('slow', 0), now + SLOW_MS)
+        elif kind == 'frozen':
+            victim['eff'] = victim.get('eff', {})
+            victim['eff']['frozen'] = max(victim['eff'].get('frozen', 0), now + FROZEN_MS)
+        # 反应 → 双方双消
+        self.consume_aura(victim)
+        if attacker is not None:
+            self.consume_aura(attacker)
+            if charge and attacker.get('alive'):
+                attacker['ult'] = min(ULT_MAX, attacker.get('ult', 0) + ULT_REACT)
+
+    def _bite_reaction(self, ep, q, bcell, now, eater_dying=False):
+        """批33：咬击命中后的 aura 处理——异元素反应 / 无 aura 传染（ep→q）。"""
+        ae = self.aura_of(ep, now)
+        ve = self.aura_of(q, now)
+        kind = reaction_of(ae, ve)
+        if kind:
+            self.apply_reaction(ep, q, kind, bcell[0], bcell[1], now,
+                                charge=not eater_dying)
+        elif ae and ve is None and q.get('alive'):
+            # 传染：被咬方获得攻击方元素，攻击方消耗
+            self.set_aura(q, ae, now)
+            self.consume_aura(ep)
+
     def tick_of(self, p, now):
         base = p['tick']
         t = max(60, int(base * 0.6)) if self.effect_active(p, 'speed', now) else base
@@ -1732,6 +1799,7 @@ class Room:
             ep = self.players.get(eid)
             if not q or not ep or not q['alive'] or not ep['alive']:
                 continue
+            bcell = q['cells'][idx]     # 批33：咬点锚位（截断/淘汰前捕获，反应影响点用）
             # 批32：高度调和（stance=撞击前双方头格高，spec §12②）——
             # 高>节h 碾压整条死；同高 现有截断咬击；低<节h 攻击者反噬死
             eh = self.hmap.get(ep['cells'][0], 0)
@@ -1751,6 +1819,7 @@ class Room:
                     store.inc(q['user'], 'deaths')
                 self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
                 self.ev('die', id=vid, cause='crush', by=eid)
+                self._bite_reaction(ep, q, q['cells'][idx], now)   # 批33：victim 已死 → 纯视觉
                 settle_dust(q)
                 continue
             if eh < vh:
@@ -1759,6 +1828,7 @@ class Room:
                     dead.add(id(ep))
                     ep['cause'] = 'crush'
                     ep['by'] = vid
+                self._bite_reaction(ep, q, q['cells'][idx], now, eater_dying=True)
                 continue
             if len(q['cells']) <= MIN_LEN:
                 # 咬蛇淘汰：已是最低长度的蛇再被咬 → 整条淘汰，残躯归攻击者
@@ -1776,6 +1846,7 @@ class Room:
                     store.inc(q['user'], 'deaths')
                 self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
                 self.ev('die', id=vid, cause='bite', by=eid)
+                self._bite_reaction(ep, q, q['cells'][idx], now)   # 批33：victim 已死 → 纯视觉
                 settle_dust(q)          # 批25：死亡并账当场星尘
                 continue
             keep = max(MIN_LEN, idx)
@@ -1788,6 +1859,7 @@ class Room:
             if ep.get('user'):
                 store.inc(ep['user'], 'kills')
             self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained)
+            self._bite_reaction(ep, q, bcell, now)   # 批33：反应截短在咬断之后叠加
 
         # 淘汰结算（仅环境致死：撞墙/岩石/自己）
         for p in due:

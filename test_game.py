@@ -3571,6 +3571,165 @@ def test_eterrain_full_and_delta_batch33():
     assert 'eterrain' not in s2, '未变不得重复下发'
 
 
+def test_bite_reaction_all_six_batch33():
+    r = fresh(16)
+    now = serve.now_ms()
+
+    def pair():
+        r.players.clear()
+        r.events.clear()
+        a = mk(r, 1, 'A', [(1, 1), (1, 2), (1, 3)], (1, 0))
+        b = mk(r, 2, 'B', [(5, 5), (5, 6), (5, 7)], (1, 0))
+        a['inv'] = b['inv'] = 0
+        return a, b
+
+    # frozen：受害者冻结 1.6s，不截短，双方双消
+    a, b = pair()
+    r.set_aura(a, 'cryo', now); r.set_aura(b, 'hydro', now)
+    r.apply_reaction(a, b, 'frozen', 5, 5, now)
+    assert b['eff']['frozen'] == now + serve.FROZEN_MS, b['eff']
+    assert len(b['cells']) == 3, 'frozen 不截短'
+    assert r.aura_of(a, now) is None and r.aura_of(b, now) is None, '反应双方双消'
+    assert any(e['t'] == 'react' and e['kind'] == 'frozen' for e in r.events)
+    # vaporize：victim -1（MIN_LEN 保护）
+    a, b = pair()
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'hydro', now)
+    r.apply_reaction(a, b, 'vaporize', 5, 5, now)
+    assert len(b['cells']) == 2, b['cells']
+    a['cells'].append((1, 4))   # 还原 3 格
+    # melt：victim -1
+    a, b = pair()
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'cryo', now)
+    r.apply_reaction(a, b, 'melt', 5, 5, now)
+    assert len(b['cells']) == 2, b['cells']
+    # overload：半径1 内其他蛇各 -1，攻击者免疫（攻击者头就在半径1）
+    a, b = pair()
+    c = mk(r, 3, 'C', [(4, 5), (4, 6), (4, 7)], (0, 1))
+    d = mk(r, 4, 'D', [(7, 7), (7, 8), (7, 9)], (0, 1))
+    a['cells'] = [(5, 4), (5, 3), (5, 2)]     # A 头贴影响点 (5,5) → 必须免疫
+    c['inv'] = d['inv'] = 0
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'electro', now)
+    r.apply_reaction(a, b, 'overload', 5, 5, now)
+    assert len(b['cells']) == 2 and len(c['cells']) == 2, (b['cells'], c['cells'])
+    assert len(a['cells']) == 3, '攻击者免疫超载'
+    assert len(d['cells']) == 3, '半径外不受波及'
+    # electro：victim + 曼哈顿≤2 内 id 序最小另一条各 -1
+    a, b = pair()
+    c = mk(r, 3, 'C', [(5, 7), (5, 8), (5, 9)], (0, 1))   # dist 2, id=3
+    d = mk(r, 4, 'D', [(7, 5), (7, 6), (7, 7)], (0, 1))   # dist 2, id=4 → 不该中
+    e4 = mk(r, 5, 'E', [(8, 5), (8, 6), (8, 7)], (0, 1))  # dist 3 → 不中
+    c['inv'] = d['inv'] = e4['inv'] = 0
+    r.set_aura(a, 'hydro', now); r.set_aura(b, 'electro', now)
+    r.apply_reaction(a, b, 'electro', 5, 5, now)
+    assert len(b['cells']) == 2, b['cells']
+    assert len(c['cells']) == 2, 'id 序最小的近邻(id=3)中感电'
+    assert len(d['cells']) == 3, 'id 更大不中（确定性）'
+    assert len(e4['cells']) == 3, '距离 3 不中'
+    # superconduct：半径2 全体 slow（含 victim），attacker 距离外
+    a, b = pair()
+    c = mk(r, 3, 'C', [(7, 5), (7, 6), (7, 7)], (0, 1))   # dist 2
+    d = mk(r, 4, 'D', [(8, 5), (8, 6), (8, 7)], (0, 1))   # dist 3
+    c['inv'] = d['inv'] = 0
+    r.set_aura(a, 'cryo', now); r.set_aura(b, 'electro', now)
+    r.apply_reaction(a, b, 'superconduct', 5, 5, now)
+    assert b['eff'].get('slow') == now + serve.SLOW_MS, b['eff']
+    assert c['eff'].get('slow') == now + serve.SLOW_MS, '半径2 内应减速'
+    assert 'slow' not in d['eff'], '半径外不减速'
+
+
+def test_reaction_dual_consume_and_infect_batch33():
+    # 传染：A 有 aura、B 无 → 咬中后 B 获 aura、A 消耗、不触发反应
+    r = fresh(16)
+    now = serve.now_ms()
+    p1 = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+    p2 = mk(r, 2, 'B', [(7, 5), (6, 5), (6, 6)], (0, 1))
+    p1['inv'] = p2['inv'] = 0
+    r.set_aura(p1, 'pyro', now)
+    r.events.clear()
+    r.step(0.05, now)
+    assert p2['alive'] and len(p2['cells']) == serve.MIN_LEN, p2['cells']
+    assert r.aura_of(p2, now) == 'pyro', '传染：被咬方获得攻击方元素'
+    assert r.aura_of(p1, now) is None, '传染：攻击方 aura 消耗'
+    assert not any(e['t'] == 'react' for e in r.events), '同侧无异元素不触发反应'
+    # 反应：异元素咬击 → ev react + 双消 + 蒸发额外 -1 + 截短不计分不并 grow
+    r2 = fresh(16)
+    now2 = serve.now_ms()
+    a = mk(r2, 1, 'A', [(5, 8), (4, 8), (3, 8)], (1, 0))
+    b = mk(r2, 2, 'B', [(7, 5), (6, 5), (6, 6), (6, 7), (6, 8), (6, 9)], (0, 1))
+    a['inv'] = b['inv'] = 0
+    r2.set_aura(a, 'pyro', now2)
+    r2.set_aura(b, 'hydro', now2)
+    r2.events.clear()
+    r2.step(0.05, now2)
+    react = [e for e in r2.events if e['t'] == 'react']
+    assert react and react[0]['kind'] == 'vaporize', r2.events
+    assert react[0]['by'] == 1 and react[0]['victim'] == 2, react[0]
+    # 咬点 idx=4 → keep=4（bite cut=2）→ 蒸发再 -1 → 3
+    assert len(b['cells']) == 3, b['cells']
+    assert r2.aura_of(a, now2) is None and r2.aura_of(b, now2) is None, '反应双消'
+    # 反应截短不并入 grow 不计分：grow=2（咬击）-1（本 tick 消耗），score=2×BITE（无额外）
+    assert a.get('grow', 0) == 1, a.get('grow')
+    assert a['score'] == 2 * serve.BITE_SCORE_PER_CELL, a['score']
+
+
+def test_react_charge_and_dead_degrade_batch33():
+    r = fresh(16)
+    now = serve.now_ms()
+
+    def pair():
+        r.players.clear(); r.events.clear()
+        a = mk(r, 1, 'A', [(1, 1), (1, 2), (1, 3)], (1, 0))
+        b = mk(r, 2, 'B', [(5, 5), (5, 6), (5, 7)], (1, 0))
+        a['inv'] = b['inv'] = 0
+        return a, b
+    # 充能 +15 封顶
+    a, b = pair()
+    a['ult'] = 95
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'cryo', now)
+    r.apply_reaction(a, b, 'melt', 5, 5, now)
+    assert a['ult'] == serve.ULT_MAX, a['ult']
+    # attacker 已死 → 效果在、跳充能
+    a, b = pair()
+    a['alive'] = False
+    a['ult'] = 0
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'cryo', now)
+    r.apply_reaction(a, b, 'melt', 5, 5, now)
+    assert len(b['cells']) == 2, 'attacker 已死效果照常'
+    assert a['ult'] == 0, 'attacker 已死不充能'
+    # victim 已死 → 纯视觉：只 ev，不写效果、不充能、不消耗
+    a, b = pair()
+    b['alive'] = False
+    a['ult'] = 0
+    r.set_aura(a, 'pyro', now); r.set_aura(b, 'cryo', now)
+    r.apply_reaction(a, b, 'frozen', 5, 5, now)
+    assert any(e['t'] == 'react' and e['kind'] == 'frozen' for e in r.events), '纯视觉 ev 必须在'
+    assert 'frozen' not in b.get('eff', {}), '已死不写效果'
+    assert a['ult'] == 0, '已死降级不充能'
+    assert r.aura_of(a, now) == 'pyro', '纯视觉降级不消耗攻击方 aura'
+
+
+def test_crush_result_unchanged_batch33():
+    # 高低差碾压 + 异 aura：cause=crush 照旧，反应走已死降级（纯视觉 ev）
+    r = fresh(16)
+    r.hmap = {(5, 5): 2, (6, 5): 1}
+    r._reach = None
+    now = serve.now_ms()
+    p1 = mk(r, 1, 'A', [(5, 5), (4, 5)], (1, 0))
+    p2 = mk(r, 2, 'B', [(7, 5), (6, 5), (6, 6)], (0, 1))
+    p1['inv'] = p2['inv'] = 0
+    r.set_aura(p1, 'cryo', now)
+    r.set_aura(p2, 'hydro', now)
+    p1['ult'] = 0
+    r.events.clear()
+    r.step(0.05, now)
+    assert not p2['alive'] and p2['cause'] == 'crush' and p2['by'] == 1, (p2['alive'], p2.get('cause'))
+    react = [e for e in r.events if e['t'] == 'react']
+    assert react and react[0]['kind'] == 'frozen', r.events
+    assert 'frozen' not in p2.get('eff', {}), '已死降级不写效果'
+    # 碾压路自己的 ULT_KILL 照给（30）；victim 已死 → 无 ULT_REACT（有则 45）
+    assert p1['ult'] == serve.ULT_KILL, p1['ult']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3683,6 +3842,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,
             test_aura_snapshot_and_ttl_batch33, test_spawn_clears_aura_keeps_on_off_batch33,
             test_eterrain_constraints_batch33, test_eterrain_attach_and_spawn_avoid_batch33,
-            test_eterrain_full_and_delta_batch33]:
+            test_eterrain_full_and_delta_batch33,
+            test_bite_reaction_all_six_batch33, test_reaction_dual_consume_and_infect_batch33,
+            test_react_charge_and_dead_degrade_batch33, test_crush_result_unchanged_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
