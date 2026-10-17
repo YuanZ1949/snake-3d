@@ -3,6 +3,15 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批32（2026-10-17 · 高度地形与建筑 已交付）
+
+来源：用户原话「还想丰富玩法 主要是想增加地形和建筑 以及 原神的元素反应 你看看怎么加」。流程：architectural（spec+计划+oracle 审核+原生执行）；拆两子项目——**A=地形与建筑（本批）**、B=元素反应（后续单独立项）。11 项拍板要点：真高度层（非纯视觉）、蛇逐节高度、仅限上行自动跟随、PVP 碾压式高度裁决、子弹贴发射者头高、纯天然据点、无迷雾、半透明伏击草、服务端随机生成+配置旋钮、服务端权威 hmap 全量下发（否决 seed 双端复现）。
+
+- **服务端**：`Room.hmap` 稀疏单源（-2草/-1水/1丘/2峰/3楼/9深渊；无 cellh 平行数组）；`gen_heights()` 四类共享 `int(0.35*area)` 预算、避开 portals/walls/旧头±4；三旋钮 `height/water/bld`（五主题基准 + `*Custom`，夹 0–4，persist/live/roomcfg/deferred 全通路）；四接入点 `_solid(cur_h)/reach_set/step/occupied`——上行≥2 挡崖（cause `cliff`）、下行自由、水减速 30%、出生 h==0、AI 前瞻传 cur_h；战斗：head-on 低者死、咬击 stance 三分支（高碾压整条死 cause `crush`/同高现有截断/低反噬）、子弹头高+沿途更高挡弹 `ev('phit')`+蛇身命中 `abs(节h-弹h)<=1`。
+- **协议**：PROTO_VER 27→28 双端；`hmap` 进 DELTA_FIELDS（全量帧必带、签变增量）；`proj[]` 每条带 `h`。
+- **客户端**：`syncHeight` kind 池化（柱/水/草/深渊黑柱+Edges child；全 `depthWrite=false` 蛇恒可见）+ `visH`（草0/水-0.12/陆 h×0.35）；蛇逐节 y lerp+头俯仰；预测挡崖（shield/deflect 门控同构）；伏击草整蛇淡出（对方 .35/自己全亮）；水面水花；建房/编辑面「地形/水域/建筑」三下拉；探针 `__mapDbgSet/__heightDbg/__mapSelfCorridorSet/__mapSelfCliffBlock`。
+- **门禁**：单测 10 条（height_gen_invariants/cfg_roundtrip/cliff_move/water_slowdown/spawn_h0/ghost_cross_height/crush/bullet_terrain/bullet_hit_range/snapshot_height）+ `e2e/height32.spec.js`×3 + 全量 e2e 35/35 + `local_ci.ps1` ALL GREEN。计划期修订 6 条见 spec §12（含 §6.2 碰撞语义调和：同高保留咬击不判我死）。e2e 基建：`ensureLogin` 抽 `e2e/_helpers.js`（Playwright 禁止 test 文件互 require）。
+
 ## 批31（2026-10-17 · 登录即弹回馈/五星高级感/抽卡动画原神化 已交付）
 
 来源：用户原话「用户登录的时候弹送的礼物」「五星皮肤貌似没啥特别的 看不出来有什么高级的地方」「抽卡动画还是不像原神 你回顾一下之前的要求 最好完美复刻」。流程：直通（既有结构表现层+协议增量）。澄清拍板：①登录时就弹（非进房）；②局内+皮肤页都要高级感；③差距项全选（夜空氛围/流星轨迹/落地光柱/卡牌揭示仪式感/十连节奏）+流星方向、动画时间、光效、运镜。

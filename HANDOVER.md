@@ -133,8 +133,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `logout` | — | 退出登录 |
 | `leaderboard` | — | 请求全服排行榜 |
 | `rooms` | — | 主动请求房间列表 |
-| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots, pass, wd` | 创建自定义房间；非法值回退主题默认。**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready）。**批6 口令（C3）**：`pass` 可选，给了就必须合法（6-20 位字母+数字混合、非弱口令黑名单，`valid_room_pass()` 前后端同步），非法直接 `error` 拒绝创建（不静默回退）。**批17 H**：`wd` 仅 `true` 生效（碰外墙折返，见 §6.2）。**批22 H3 限速+cap**：单会话 5 分钟窗最多 8 次、同 ip 窗内最多 40 次（超回「建房太频繁」）；全局 `ROOM_MAX=100`，满时先回收「无玩家无观战、超 600s、非 persist、房主不在线」空房，无可回收才拒绝 |
-| `roomcfg` | `room, winMode, limit, respawn, wd, bots` | **批18 E**：房间参数 live 编辑（不重开局、零协议改动——快照/check_win 现读房间字段）。鉴权 `can_edit_room()`：账号匹配 `owner_user`（跨重连有效）**或**仍是在线创建者 `sid` **或（批23 P6）请求带 `otok` 与房间 `owner_tok` `secrets.compare_digest` 一致**，默认/无主房间一律拒绝。语义：`limit` 改小到已超时 → 下一 tick 按时间到结算；score/respawn 房 `limit=0` 兜底 300/120s（与 `__init__` 同不变量）；`bots` 走 `set_bots()` 显式增减（增=补生成、减=优先摘死/挂起再摘低分，不走 drop_player 避开清 AI 级联）；size/theme/rock/portal 属地形**不可编辑**（theme live 改=下局生效为已知限制）；口令独立安全面不在列。回执 `{t:'cfgapplied', room, changed}` + 变更时 `broadcast_rooms` |
+| `create` | `name, size, theme, rock, portal, winMode, limit, respawn, bots, pass, wd, height, water, bld` | 创建自定义房间；非法值回退主题默认。**批32**：`height/water/bld`=地形起伏/水域/建筑密度（夹 0–4，跟随主题=缺省；与 rock 同为地形类，创建即生成、persist/live/roomcfg 全通路镜像）**批1 战场自定义**：`winMode` 只收 `last`(死斗)/`score`(积分)，否则 `last`；`limit` 秒数夹 0–3600（0=不限时；limit=0 时 score 兜底 300s、respawn 兜底 120s）；`respawn` 仅 `true` 生效（无限复活，3s 后原地重生）。**批4 AI**：`bots` 数量夹 0–7（非法回退 0），建房即生成 AI 蛇（负 pid、名字 AI-N、视为永远 ready）。**批6 口令（C3）**：`pass` 可选，给了就必须合法（6-20 位字母+数字混合、非弱口令黑名单，`valid_room_pass()` 前后端同步），非法直接 `error` 拒绝创建（不静默回退）。**批17 H**：`wd` 仅 `true` 生效（碰外墙折返，见 §6.2）。**批22 H3 限速+cap**：单会话 5 分钟窗最多 8 次、同 ip 窗内最多 40 次（超回「建房太频繁」）；全局 `ROOM_MAX=100`，满时先回收「无玩家无观战、超 600s、非 persist、房主不在线」空房，无可回收才拒绝 |
+| `roomcfg` | `room, winMode, limit, respawn, wd, bots, height, water, bld` | **批18 E**：房间参数 live 编辑（不重开局、零协议改动——快照/check_win 现读房间字段）。鉴权 `can_edit_room()`：账号匹配 `owner_user`（跨重连有效）**或**仍是在线创建者 `sid` **或（批23 P6）请求带 `otok` 与房间 `owner_tok` `secrets.compare_digest` 一致**，默认/无主房间一律拒绝。语义：`limit` 改小到已超时 → 下一 tick 按时间到结算；score/respawn 房 `limit=0` 兜底 300/120s（与 `__init__` 同不变量）；`bots` 走 `set_bots()` 显式增减（增=补生成、减=优先摘死/挂起再摘低分，不走 drop_player 避开清 AI 级联）；size/theme/rock/portal 属地形**不可编辑**（theme live 改=下局生效为已知限制）；**批32** `height/water/bld` 镜像 rock 走 deferred「下局生效」循环（回执 `changed` 含同名键）；口令独立安全面不在列。回执 `{t:'cfgapplied', room, changed}` + 变更时 `broadcast_rooms` |
 | `watch` | `room, pass` | 进入旁观（会先 `leave_room`）；口令房必须带对口令（批6）。**批22 M5**：同 (ip, 房间) 5 分钟窗口令错试满 10 次后**正确口令也拒**（回「口令尝试过于频繁」） |
 | `join` | `room, name, skin, pass` | 入局。**新客户端不再发 `size`**（尺寸只在创建时决定）；老客户端仍带 `size`，空房时生效；口令房必须带对口令（批6，断线自动重连也带记忆的口令）。**批22 M5**：口令错试限速同 `watch`；**M1**：匿名断线恢复唯一候选时校验来源 ip 一致（不一致不复用，fail-open） |
 | `leave` | — | **新增**：返回主页，把自己移出房间（旧客户端不发，行为不变） |
@@ -182,7 +182,8 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `giftres` | `ok, amount, balance` | **批29④ 新增**：领取回执；客户端关弹窗 + 刷余额 + 到账 toast |
 | `snap` | 见下 | **50ms 一次快照（批11 起为增量协议）** |
 
-**`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, foods[], bonus`。
+**`snap` 字段**：每帧恒在 —— `t, room, theme, cols, rows, players[](含 bot), proj[], ev[], round, win, over, winMode, limit, respawn, remain`；**仅变化时下发**（批11 C1 增量协议，字段缺失=客户端沿用旧值）—— `walls, portals, rocks, items, foods[], bonus`；**批32** `hmap`（高度地形三元组列表 `[[x,y,h],...]`，0=平不存，签变才带；PROTO_VER 27→28 双端）。
+> **批32**：`proj[]` 每条新增 `h`=发射者头格高度（0=平地），客户端子弹贴该高度渲染。
 > **批25 A**：`food` 更名 **`foods`**（列表）——场上多果（每图 3–8 颗，`food_target()` 按 cols×rows 分档），元素 `{id,x,y,score,color}`，`id` 为全局递增（客户端按 id 对齐 mesh，删果即删 mesh）；旧字段名与单果语义废弃，本字段名变更为**批25 唯一协议 break**（同步升级客户端，老客户端不兼容）。
 > 批1 新增：`winMode('last'/'score')`、`limit`(秒，0=不限)、`respawn`(bool)、`remain`(限时剩余秒，int，无限制时 0)。
 > 批11 增量协议：服务端对 6 个静态字段做签名对比（`Room._field_sig`），变了才带；新订阅者（join/watch/resume）首帧为**全量帧**（6 字段齐全 + `full:1`，由 `Session.full_sent` 控制，`broadcast` 内补组）。稳态实测增量帧较全量帧省 ~31% 字节。协议级验收见 `test_delta_p1.py`（第 8 套 E2E）。
@@ -193,9 +194,10 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 **房间信息（`rooms` 列表项）**：`id, name, cols, rows, theme, themeFixed, rock, portal, players, alive, watchers, round, over, winMode, limit, respawn, bots, hasPass, persist, wd`
 > `players` 是**已连接人数**（含旁观），`alive` 是存活蛇数。
 
-**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / expire / round / win / respawn / ult`
+**事件 `snap.ev[]`**（由 `applyEvent()` 处理）：`join / eat / die / kill / fire / hit / bite / clash / star / rock / phit / expire / round / win / respawn / ult`
 > 顶层消息由 `onMsg` 的 switch 处理，`snap` 在 switch 之外单独分支；事件只随快照下发，不单独成帧。
 > `bite{eater,victim,cut,score}`、`hit{x,y,by,victim,cut,score}` 是截断类事件。
+> **批32** `phit{x,y,h,by}`：子弹撞高度地形碎裂（`h`=该格高度；仅客户端特效，无得分）；新死亡 cause：`cliff`（上行 ≥2 峭壁）、`crush`（高度差碾压/反噬）。
 
 ### 5.3 HTTP 接口
 
@@ -269,6 +271,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 - **公屏聊天与聊天面板（批30③）**：服务端 `gchatin` → `gchat_log`（`deque(maxlen=50)` 内存不落盘）→ `broadcast_gchat` 全体会话，`welcome_payload()` 带历史（组包已从 handler 拆出）。客户端 `#chatPanel` 双 Tab（💬公屏 / 🏠本房），入口三处：首页房间行「💬 公屏」（恒公屏）、顶栏「💬 聊天」（局内默认本房，**手机可点**，批30 拍板「都做+按钮适配手机」）、键盘 `/`（局内本房/局外公屏）；本房 Tab 局外自动回退公屏；Enter 发送、Esc 关闭。本房消息仍走批5 `ev` 通道（左下角 7s 淡出流不变），面板持久列各 100 条、textContent 防注入；旧 `chatIn` 输入框与 `.chatLog.up` 已移除；断线/换世界清本房列表，公屏历史跨世界保留。
 - **对局暂停=挂机（批30③b）**：HUD「⏸ 暂停」`#btnPauseGame` + dpad 中心「暂停」键（对局中=挂机，主页 demo 暂停行为不变）→ `pause` toggle → 服务端原地冻结 + 复用挂起保护（不被咬/不顶头）+ `dir`/`atk`/`ult` 拒收 + session 在不按 `RESUME_MS` 回收；挂机者算在场真人（他人断线原蛇挂起不移出），重连 `resume` 一并解除挂机态。提示胶囊 `#pauseMask`「已挂机 · 点按恢复」为居中小胶囊（非全屏遮挡——**暂停中聊天/HUD 照常可用**），断线/回主页撤提示；协议纯增量不 bump PROTO_VER。门禁：`test_pause_afk_batch30` + `test_pause_counts_as_present_batch30` + `e2e/pause.spec.js`×2。
 - **管理员账户（批30④）**：身份=用户名白名单 `ADMIN_USERS={'yuan'}`（登录名判定，匿名恒否；加人改 serve.py 常量）。五权限消息 `adkick/admute/adnotice/adgrant/adreport`（表见 §5.1），非 admin **静默拒**+`usage.note('adm_denied')`，服务端每分支二次校验。踢人=发 `kicked` 后关该用户全部在线会话连接；禁言=内存 `mutes[name]` 到期自动失效（缺省 10 分钟、钳 1~1440，仅登录账号），`gchatin`/房内 `chat` 同拒；公告复用 gchat 通道（显示名「📢 公告」，历史可见）；发奖 `store.add_stardust` 钳 1~100000 且用户须存在，在线受奖者收 `toast`；报告 `admin_report()` 从 `usage.data` 现算文本行（实时/今日/累计/近7日/活跃 Top10）。客户端：`welcome`/`auth` 携带 `admin` 亮聊天面板「🛡 管理」Tab（`#admPane`：目标用户名+踢出/禁言10分/发奖数额/公告框/报告按钮 + `#admOut` 结果区），登出/过期即时收权，非白名单 `hidden` 仅易用性（权限判定恒在服务端）。协议纯增量不 bump PROTO_VER。门禁：`test_admin_core_batch30` + `test_admin_notice_grant_report_batch30` + `e2e/admin.spec.js`×2（公告回显/发奖踢人/非管理员无入口）。
+- **高度地形（批32）**：**服务端权威 hmap**（稀疏表 `{(x,y): h}`，0=平不存；编码 -2 草丛/-1 水洼/1 丘/2 峰/3 楼/9 深渊）由 `gen_heights()` 生成（build_terrain 后，山包→水洼→建筑→草丛四类共享 `int(0.35*area)` 预算，避开 portals/walls/旧蛇头±4/已放格；**无平行数组 cellh，逐节查表单源**，spec §12①）。三旋钮 `height/water/bld`（THEME_CFG 五主题各有 hill/water/bld 基准，`*Custom` 覆盖，夹 0–4，persist/live/roomcfg/deferred 全通路镜像 rock）。**通行**：`_solid/_open_ahead/occupied/reach_set` 四接入点，上行 ≥2 峭壁（含深渊 9）挡、下行自由、水洼移动减速 30%（`int(t*1.3)`）、出生点必 h==0；**战斗**：头撞身体节 stance 三分支（撞前头格高：高→碾压整条死 `cause='crush'`、同高→现有咬击截断不变、低→攻击者死）；head-on 高度裁决低者死；子弹贴发射者头高、沿途目标格更高挡弹 `ev('phit')`、蛇身命中需 `abs(节h-弹h)<=1`（大招同规则）；ghost 全穿透。**客户端**（PROTO 28）：`syncHeight` 按 kind 池化重建（h=9 黑柱+Edges 描边为 child、水/草呼吸面；全部 `depthWrite=false` 保证蛇恒可见），蛇逐节 y=visH(hmapD) lerp+头俯仰，预测 `advanceStep` 挡崖与 rock/wall 同走 shield/deflect 门控，`proj[]` 带 `h`，伏击草=对方整蛇淡出 `.35`（自己全亮），水面水花粒子。建房/编辑面三下拉「地形/水域/建筑」。探针：`window.__mapDbgSet/__heightDbg/__mapSelfCorridorSet/__mapSelfCliffBlock`。门禁：`test_height_gen_invariants/test_height_cfg_roundtrip/test_cliff_move/test_water_slowdown/test_spawn_h0/test_ghost_cross_height/test_crush/test_bullet_terrain/test_bullet_hit_range/test_snapshot_height` + `e2e/height32.spec.js`×3。
 - **房间口令（批6，C3）**：建房可设口令 `pass`（6-20 位字母+数字混合、`WEAK_PASSES` 黑名单前后端同步校验），非法 `error` 拒绝创建；口令房 `join`/`watch` 必须带对口令（先校验再动状态，避免把自己踢出原房）。`info` 带 `hasPass`（口令本身不下发）。客户端：建房面板「口令」输入框（可选）、进房 `prompt` 要一次口令后内存记忆（页面生命周期免重输，含断线自动重连）、创建者免重输、口令错误清记忆并 toast 提示。
 - **空房保留/保存（批6，新#11）**：自定义房间创建后 **24h 内不回收**（`ROOM_KEEP_SECS=86400`，之后仍按"没人+没观战+创建者不在线"才删）；创建者可在房间卡片点「⭐ 保存」→ `persist` 消息 → `persist=True` 写盘 `data/persist_rooms.json`，**常驻不回收 + 重启后重建**（`load_persist_rooms()` 于 `main()` 启动时调用）。`info` 带 `persist`，meta 显示「🔒口令」「⭐常驻」。
 - **丝滑移动插值（批7，新#3）**：逻辑仍按格走（服务端不动）；客户端渲染在 `prev→next` 格间按 tick 进度**线性插值**——实体位移时记 `moveAt/moveDt`（按观测间隔自适应，夹 60–400ms），`syncBody` 按 `phase=(now-moveAt)/moveDt` 在两格间取插值目标再走脊柱平滑；头部大跳变（>6 格，传送门/跨图出生）不插值直接贴新位置。演示蛇同理按 `(now-lastTick)/180` 插值。
@@ -286,13 +289,13 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 
 ### 6.3 主题（`THEME_CFG`）
 
-| 主题 | 岩石倍率 | 传送门 | 固定墙块 |
-|---|---|---|---|
-| `default` | 1.0 | 有 | 0 |
-| `lava` | 1.7 | 无 | 6 |
-| `ice` | 0.5 | 无 | 0 |
-| `space` | 0.6 | 有 | 4 |
-| `day` | 0.8 | 有 | 0 |
+| 主题 | 岩石倍率 | 传送门 | 固定墙块 | 地形 hill | 水域 water | 建筑 bld |
+|---|---|---|---|---|---|---|
+| `default` | 1.0 | 有 | 0 | 0.9 | 0.6 | 0.5 |
+| `lava` | 1.7 | 无 | 6 | 1.4 | 0 | 0.3 |
+| `ice` | 0.5 | 无 | 0 | 0.5 | 0.9 | 0.4 |
+| `space` | 0.6 | 有 | 4 | 1.1 | 0 | 0.9 |
+| `day` | 0.8 | 有 | 0 | 0.8 | 0.7 | 0.6 |
 
 房间未固定主题时**每局随机**（池含 5 种主题，批7 新增 `day` 白天：浅色天空、亮堂棋盘）；自定义房间的 `theme_fixed / rock_mult / portal_on` 覆盖主题默认值。传送门开启时按地图大小生成多对（见 §6.2 传送门扩容），快照 `portals` 为扁平坐标列表，客户端按索引两两配对、交替紫/蓝配色。
 
