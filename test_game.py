@@ -1312,6 +1312,7 @@ def test_free_cells_big_map():
     r.items = [{"x": 20, "y": 20, "kind": "shield", "born": 0}]
     r.foods = [{"id": 1, "x": 30, "y": 30, "score": 1, "color": "red"}]
     blocked = {(5, 5), (6, 5), (7, 5), (10, 10), (11, 11), (0, 0), (20, 20), (30, 30)}
+    blocked |= set(r.eterrain)   # 批33：元素地形计入占用（M7 单点挂钩，放置类全避开）
     free = r.free_list()
     assert len(free) == 96 * 96 - len(blocked), len(free)
     assert not (blocked & set(free)), "占用格不该出现在空格里"
@@ -3520,6 +3521,56 @@ def test_spawn_clears_aura_keeps_on_off_batch33():
     assert r.aura_of(p, serve.now_ms()) == 'cryo', '挂起不应清 aura'
 
 
+def test_eterrain_constraints_batch33():
+    r = fresh(size=40, elem_amt=1.0)   # 预算 40*40*1.5%*1.0=24 格 → ≥6 簇，round-robin 必覆盖四元素
+    assert r.eterrain, 'elem_amt=1.0 必须生成元素地形'
+    assert len(r.eterrain) <= 60, len(r.eterrain)
+    hard = set(r.rocks) | set(r.walls) | set(r.portals)
+    for (x, y), el in r.eterrain.items():
+        assert el in serve.ELEMS, el
+        assert (x, y) not in hard, ((x, y), 'eterrain 压硬障碍')
+        assert r.hmap.get((x, y), 0) in (0, -1, -2), ((x, y), 'eterrain 压非平/水/草')
+    assert set(r.eterrain.values()) == set(serve.ELEMS), '四元素必须都有'
+    # 关闭开关 → 不生成
+    r2 = fresh(size=20, elements=False, elem_amt=1.0)
+    assert not r2.eterrain, 'elements=False 不得生成'
+
+
+def test_eterrain_attach_and_spawn_avoid_batch33():
+    r = fresh(size=20, elem_amt=1.0)
+    assert r.eterrain
+    # spawn 主路径 + 兜底都避开 eterrain
+    p = mk(r, 1, 'a', [(0, 0), (0, 1), (0, 2)], (1, 0))
+    r.spawn_player(p)
+    assert all(c not in r.eterrain for c in p['cells']), p['cells']
+    # 蛇头走到 eterrain 格 → 踩格替换：附着该元素（覆盖旧 aura、时长重置）
+    tgt, el = next(((c, e) for c, e in r.eterrain.items() if c[0] >= 3), (None, None))
+    assert tgt, '需要一个 x>=1 的元素格做测试落点'
+    r.set_aura(p, 'pyro', serve.now_ms())
+    p['cells'] = [(tgt[0] - 1, tgt[1]), (tgt[0] - 2, tgt[1]), (tgt[0] - 3, tgt[1])]
+    p['dir'] = (1, 0)
+    p['queue'] = []
+    now = serve.now_ms()
+    p['last_move'] = now - 999
+    r.step(0.05, now)
+    assert p['cells'][0] == tgt, p['cells']
+    assert r.aura_of(p, now) == el, '进格必须附着 eterrain 元素（替换旧 aura）'
+
+
+def test_eterrain_full_and_delta_batch33():
+    r = fresh(size=20, elem_amt=1.0)
+    now = serve.now_ms()
+    full = r.snapshot(now, full=True)
+    assert 'eterrain' in full, full.keys()
+    assert all(len(t) == 3 and t[2] in serve.ELEMS for t in full['eterrain'])
+    r.snapshot(now)                       # 建立增量基线
+    r.eterrain[(3, 3)] = 'pyro'           # 变化 → DELTA 必须带三元组
+    s = r.snapshot(now)
+    assert [3, 3, 'pyro'] in s.get('eterrain', []), s.get('eterrain')
+    s2 = r.snapshot(now)
+    assert 'eterrain' not in s2, '未变不得重复下发'
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3630,6 +3681,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
             test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,
-            test_aura_snapshot_and_ttl_batch33, test_spawn_clears_aura_keeps_on_off_batch33]:
+            test_aura_snapshot_and_ttl_batch33, test_spawn_clears_aura_keeps_on_off_batch33,
+            test_eterrain_constraints_batch33, test_eterrain_attach_and_spawn_avoid_batch33,
+            test_eterrain_full_and_delta_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

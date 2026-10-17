@@ -531,7 +531,8 @@ usage = Usage()
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
                  win_mode='last', limit=0, respawn=False, bots=0, passw=None,
-                 walldeflect=False, height_mult=None, water_amt=None, bld_amt=None):
+                 walldeflect=False, height_mult=None, water_amt=None, bld_amt=None,
+                 elements=True, elem_amt=0.6):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
@@ -548,7 +549,15 @@ class Room:
             self.water_amt = max(0.0, min(4.0, float(self.water_amt)))
         if self.bld_amt is not None:
             self.bld_amt = max(0.0, min(4.0, float(self.bld_amt)))
+        # ---- 批33：元素反应总开关与元素地形密度（0-2；T3 建字段，T7 接四路 ingress）----
+        self.elements = elements if isinstance(elements, bool) else True
+        try:
+            elem_amt = float(elem_amt)
+        except (TypeError, ValueError):
+            elem_amt = 0.6
+        self.elem_amt = max(0.0, min(2.0, elem_amt))
         self.hmap = {}             # 批32：稀疏高度表 (x,y)->h（0=平不存；-2草/-1水/1丘/2峰/3楼/9深渊）
+        self.eterrain = {}         # 批33：元素地形 (x,y)->元素 id（蛇可踩不进 occupied）
         self.pending_size = None            # 批23 N2：编辑面改尺寸 → 下局 new_round 应用
         # ---- 战场自定义：获胜模式（last=死斗留最后一人 / score=积分赛）/ 限时秒（0=不限）/ 无限复活 ----
         self.win_mode = win_mode if win_mode in ('last', 'score') else 'last'
@@ -725,6 +734,7 @@ class Room:
         self.rocks = []
         self.walls = []
         self.portals = []
+        self.eterrain = {}         # 批33：每局随静态地形重建
         self._reach = None          # 批15①：静态地形重建 → 可达集缓存失效
         if self.eff_portal():
             used = set()
@@ -749,6 +759,46 @@ class Room:
             self.walls.append((x, y))
             placed += 1
         self.gen_heights()          # 批32：墙块之后生成高度地形（需避开已放的门/墙/头）
+        self.build_eterrain()       # 批33：高度地形之后撒元素地形（依赖 hmap 约束）
+
+    def build_eterrain(self):
+        """批33：元素地形——四元素按簇均匀撒，每簇 2-4 格（连续格）。
+        平(0)/水(-1)/草(-2)可放（不压丘峰楼深渊/门墙岩/头±4）；
+        候选取 free_list()（rocks/walls/portals/foods/items/蛇身全避让，M7 单点挂钩）。"""
+        self.eterrain = {}
+        if not self.elements or self.elem_amt <= 0:
+            return
+        budget = min(60, int(self.cols * self.rows * 0.015 * self.elem_amt))
+        if budget <= 0:
+            return
+        free = self.free_list()     # 此刻 eterrain 已清空 → 候选天然不含旧元素格
+        hard = set(self.rocks) | set(self.walls) | set(self.portals)
+        cand = [c for c in free
+                if c not in hard and self.hmap.get(c, 0) in (0, -1, -2)
+                and all(abs(c[0] - hx) + abs(c[1] - hy) >= 4
+                        for hx, hy in self._heads())]
+        random.shuffle(cand)
+        elems = list(ELEMS)
+        i = 0
+        n = 0
+        while n < budget and cand:
+            el = elems[i % len(elems)]
+            i += 1
+            cluster = [cand.pop()]
+            want = random.randint(2, 4)
+            for _ in range(want * 6):
+                if len(cluster) >= want or n >= budget:
+                    break
+                x, y = random.choice(cluster)
+                nx, ny = x + random.choice((-1, 0, 1)), y + random.choice((-1, 0, 1))
+                if (nx, ny) in cand:
+                    cand.remove((nx, ny))
+                    cluster.append((nx, ny))
+            for c in cluster:
+                if n >= budget:
+                    break
+                self.eterrain[c] = el
+                n += 1
 
     # -------- 批32：高度地形 --------
     def gen_heights(self):
@@ -1038,6 +1088,7 @@ class Room:
                 # 批14①：用 occupied 而非 _solid——不吃食物/道具/星星
                 # 批32：出生强制 h==0（occupied 已挡 ≥2，此处补 -1/-2 等非平格）
                 if any(self.occupied(cx, cy, pid) or self.hmap.get((cx, cy), 0) != 0
+                       or (cx, cy) in self.eterrain
                        for cx, cy in cells):
                     continue
                 ahead = self._open_ahead(x, y, d, pid)
@@ -1090,6 +1141,7 @@ class Room:
         """一次性构建占用集合，避免逐格调用 occupied() 时反复遍历所有蛇。
         大地图（最高 96×96）扫描一次只需 1-2ms，否则会卡住主循环。"""
         occ = set(self.rocks) | set(self.walls) | set(self.portals)
+        occ.update(self.eterrain)   # 批33：食物/道具/岩石/出生兜底统一避开元素地形（M7 单点挂钩）
         occ.update((f['x'], f['y']) for f in self.foods)
         if self.bonus:
             occ.add((self.bonus['x'], self.bonus['y']))
@@ -1755,6 +1807,9 @@ class Room:
             hx, hy = tent[id(p)]
             p['cells'].insert(0, (hx, hy))
             p.pop('hstreak', None)               # 批14④：成功移动即解除僵持计数
+            el33 = self.eterrain.get((hx, hy))
+            if el33:
+                self.set_aura(p, el33, now)      # 批33：踩格替换——覆盖旧 aura、时长重置
             ate = False
             hit = next((f for f in self.foods
                         if (hx, hy) == (f['x'], f['y'])), None)   # 批25 多果
@@ -1976,7 +2031,7 @@ class Room:
                 self.projectiles.remove(pr)
 
     # -------- 快照 / 广播 --------
-    DELTA_FIELDS = ('foods', 'bonus', 'rocks', 'walls', 'portals', 'items', 'hmap')  # 仅变化才下发（C1）
+    DELTA_FIELDS = ('foods', 'bonus', 'rocks', 'walls', 'portals', 'items', 'hmap', 'eterrain')  # 仅变化才下发（C1）
 
     @staticmethod
     def _sig(v):
@@ -2026,6 +2081,7 @@ class Room:
             out['portals'] = [list(r) for r in self.portals]
             out['items'] = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
             out['hmap'] = [[x, y, hh] for (x, y), hh in self.hmap.items()]   # 批32：稀疏三元组
+            out['eterrain'] = [[x, y, e] for (x, y), e in self.eterrain.items()]  # 批33：full+DELTA 双路（M4）
             out['full'] = 1
         else:
             # 增量帧：静态字段与上次下发签名对比，变了才带；客户端缺失即沿用旧值（C1）
@@ -2036,6 +2092,8 @@ class Room:
                     v = [{'id': it['id'], 'type': it['type'], 'x': it['x'], 'y': it['y']} for it in self.items]
                 elif k == 'hmap':
                     v = [[x, y, hh] for (x, y), hh in self.hmap.items()]   # 元组键 JSON 化不了
+                elif k == 'eterrain':
+                    v = [[x, y, e] for (x, y), e in self.eterrain.items()]  # 批33：三元组同 hmap
                 elif k in ('rocks', 'walls', 'portals'):
                     v = [list(r) for r in getattr(self, k)]
                 else:
