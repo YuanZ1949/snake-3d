@@ -1945,8 +1945,9 @@
     c2: new THREE.MeshStandardMaterial({color: 0x8a94a6, roughness: .7, depthWrite: false}),    // 峰·岩灰
     c3: new THREE.MeshStandardMaterial({color: 0xcabfae, roughness: .45, metalness: .2, depthWrite: false}),  // 楼·亮规整
     ab: new THREE.MeshStandardMaterial({color: 0x0a0a14, roughness: 1, depthWrite: false}),     // 深渊·近黑
-    w: new THREE.MeshBasicMaterial({color: 0x3a7bd5, transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide}),
-    g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide})
+    // 批33修复：polygonOffset -2（比地板 -1 更靠前）→ 远距深度平局时水面/草面恒胜地板
+    w: new THREE.MeshBasicMaterial({color: 0x3a7bd5, transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
+    g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2})
   };
   const hEdgeMat = new THREE.LineBasicMaterial({color: 0x7fd8ff});
 
@@ -1969,9 +1970,11 @@
 
   function applyHeight(m, kind, x, y, h) {
     const w = cellW(x, y);
-    if (kind === 'ab') { m.position.set(w.x, -.6, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, 1.2, 1); }
+    // 批33修复（地形可见性）：地板(y=+.005,不透明)遮挡 → 三类面必须抬到地板之上：
+    //   水 +.02 / 草 +.04 / 深渊顶面 +.03（原 -.05/.005/顶0 全在地板下或共面 → 永远不可见）
+    if (kind === 'ab') { m.position.set(w.x, -.57, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, 1.2, 1); }
     else if (kind === 'w' || kind === 'g') {
-      m.position.set(w.x, kind === 'w' ? -.05 : .005, w.z);
+      m.position.set(w.x, kind === 'w' ? .02 : .04, w.z);
       m.rotation.set(-Math.PI / 2, 0, 0); m.scale.set(1, 1, 1);
     } else { const hh = Math.max(.02, visH(h)); m.position.set(w.x, hh / 2, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, hh, 1); }
   }
