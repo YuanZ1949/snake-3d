@@ -158,11 +158,11 @@ def combo_mult(combo):
 THEMES = ('default', 'lava', 'ice', 'space', 'day')
 # 主题参数：岩石密度倍率 / 是否生成传送门 / 固定墙块数量 / 配色（供前端参考）
 THEME_CFG = {
-    'default': {'rock': 1.0, 'portal': True,  'walls': 0, 'accent': 0x7ee787},
-    'lava':    {'rock': 1.7, 'portal': False, 'walls': 6, 'accent': 0xff6b3d},
-    'ice':     {'rock': 0.5, 'portal': False, 'walls': 0, 'accent': 0x61b0ff},
-    'space':   {'rock': 0.6, 'portal': True,  'walls': 4, 'accent': 0xb197fc},
-    'day':     {'rock': 0.8, 'portal': True,  'walls': 0, 'accent': 0x4dabf7},
+    'default': {'rock': 1.0, 'portal': True,  'walls': 0, 'accent': 0x7ee787, 'hill': 0.9, 'water': 0.6, 'bld': 0.5},
+    'lava':    {'rock': 1.7, 'portal': False, 'walls': 6, 'accent': 0xff6b3d, 'hill': 1.4, 'water': 0.0, 'bld': 0.3},
+    'ice':     {'rock': 0.5, 'portal': False, 'walls': 0, 'accent': 0x61b0ff, 'hill': 0.5, 'water': 0.9, 'bld': 0.4},
+    'space':   {'rock': 0.6, 'portal': True,  'walls': 4, 'accent': 0xb197fc, 'hill': 1.1, 'water': 0.0, 'bld': 0.9},
+    'day':     {'rock': 0.8, 'portal': True,  'walls': 0, 'accent': 0x4dabf7, 'hill': 0.8, 'water': 0.7, 'bld': 0.6},
 }
 
 # 地图尺寸档位 → 房间名（用于默认房间）
@@ -508,13 +508,24 @@ usage = Usage()
 class Room:
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
                  win_mode='last', limit=0, respawn=False, bots=0, passw=None,
-                 walldeflect=False):
+                 walldeflect=False, height_mult=None, water_amt=None, bld_amt=None):
         self.id = rid
         self.name = name
         # ---- 地图自定义（组合配置）：None 表示"跟随主题" ----
         self.theme_fixed = theme_fixed if theme_fixed in THEMES else None  # 固定主题（None=每局随机）
         self.rock_mult = rock_mult          # 岩石密度倍率覆盖
         self.portal_on = portal_on          # 传送门开关覆盖
+        # ---- 批32：高度地形三旋钮（None=跟随主题；0=关闭）----
+        self.height_mult = height_mult if isinstance(height_mult, (int, float)) and not isinstance(height_mult, bool) else None
+        self.water_amt = water_amt if isinstance(water_amt, (int, float)) and not isinstance(water_amt, bool) else None
+        self.bld_amt = bld_amt if isinstance(bld_amt, (int, float)) and not isinstance(bld_amt, bool) else None
+        if self.height_mult is not None:
+            self.height_mult = max(0.0, min(4.0, float(self.height_mult)))
+        if self.water_amt is not None:
+            self.water_amt = max(0.0, min(4.0, float(self.water_amt)))
+        if self.bld_amt is not None:
+            self.bld_amt = max(0.0, min(4.0, float(self.bld_amt)))
+        self.hmap = {}             # 批32：稀疏高度表 (x,y)->h（0=平不存；-2草/-1水/1丘/2峰/3楼/9深渊）
         self.pending_size = None            # 批23 N2：编辑面改尺寸 → 下局 new_round 应用
         # ---- 战场自定义：获胜模式（last=死斗留最后一人 / score=积分赛）/ 限时秒（0=不限）/ 无限复活 ----
         self.win_mode = win_mode if win_mode in ('last', 'score') else 'last'
@@ -646,6 +657,22 @@ class Room:
             return self.portal_on
         return bool(THEME_CFG[self.theme]['portal'])
 
+    # ---- 批32：高度地形三旋钮 eff（None=跟随主题；0=关闭）----
+    def eff_height(self):
+        if self.height_mult is not None:
+            return self.height_mult
+        return THEME_CFG[self.theme]['hill']
+
+    def eff_water(self):
+        if self.water_amt is not None:
+            return self.water_amt
+        return THEME_CFG[self.theme]['water']
+
+    def eff_bld(self):
+        if self.bld_amt is not None:
+            return self.bld_amt
+        return THEME_CFG[self.theme]['bld']
+
     def life_mult(self):
         """资源有效期随地图放大：base × clamp((cols*rows)/(24*24), 1, 4)（#6）"""
         return max(1.0, min(4.0, (self.cols * self.rows) / (24.0 * 24.0)))
@@ -698,6 +725,80 @@ class Room:
                 continue
             self.walls.append((x, y))
             placed += 1
+        self.gen_heights()          # 批32：墙块之后生成高度地形（需避开已放的门/墙/头）
+
+    # -------- 批32：高度地形 --------
+    def gen_heights(self):
+        """spec §7.3：山包→水洼→建筑→草丛，共享 35% 预算，全避开 门/墙/头±4/已放格。
+        hmap 稀疏表只写非 0；预算耗尽即停。"""
+        self.hmap = {}
+        self._reach = None
+        area = self.cols * self.rows
+        budget = int(0.35 * area)
+        used = set(self.rocks) | set(self.walls) | set(self.portals)
+
+        def ok(x, y):
+            return (0 <= x < self.cols and 0 <= y < self.rows
+                    and (x, y) not in used and (x, y) not in self.hmap
+                    and all(abs(x - hx) + abs(y - hy) >= 4 for hx, hy in self._heads()))
+
+        def take(x, y, h):
+            nonlocal budget
+            if budget <= 0 or not ok(x, y):
+                return False
+            self.hmap[(x, y)] = h
+            used.add((x, y))
+            budget -= 1
+            return True
+
+        def walk_blob(cx, cy, n, h):
+            """随机游走放 n 格 h；从种子起，成功即继续，塞不进就算了"""
+            put, x, y = 0, cx, cy
+            for _ in range(n * 6):
+                if put >= n:
+                    break
+                if take(x, y, h):
+                    put += 1
+                x += random.choice((-1, 0, 1))
+                y += random.choice((-1, 0, 1))
+            return put
+
+        # 1) 山包：种子 h=2，70% 全环 h=1 阶梯 / 30% 缺一侧成立地峭壁
+        for _ in range(int(area / 40 * self.eff_height())):
+            cx, cy = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
+            if not take(cx, cy, 2):
+                continue
+            ring = [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)]
+            # 30% 缺一侧：随机丢掉环上一格（该面成 0→2 立地峭壁）
+            drop = random.choice(ring) if random.random() < 0.3 else None
+            for c in ring:
+                if c != drop:
+                    take(*c, 1)
+        # 2) 水洼：随机游走 3~8 格全 h=-1
+        for _ in range(int(area / 60 * self.eff_water())):
+            walk_blob(random.randint(0, self.cols - 1), random.randint(0, self.rows - 1),
+                      random.randint(3, 8), -1)
+        # 3) 建筑：矩形 footprint，h1(40%)/h2(35%,60% 带入口坡)/h3(25%)
+        fps = [(1, 2), (2, 2), (1, 3), (2, 3)]
+        for _ in range(int(area / 80 * self.eff_bld())):
+            fw, fh = random.choice(fps)
+            x0 = random.randint(0, max(0, self.cols - fw))
+            y0 = random.randint(0, max(0, self.rows - fh))
+            cells = [(x0 + i, y0 + j) for i in range(fw) for j in range(fh)]
+            if not all(ok(*c) for c in cells):
+                continue
+            rv = random.random()
+            h = 1 if rv < 0.40 else (2 if rv < 0.75 else 3)
+            if h == 2 and random.random() < 0.6:
+                # 外接一格 h=1 入口坡（贴 footprint 左/上侧）
+                gx, gy = ((x0 - 1, y0) if fw >= 1 else (x0, y0 - 1))
+                take(gx, gy, 1)
+            for c in cells:
+                take(*c, h)
+        # 4) 草丛：随 water 旋钮（熔岩 water=0 天然无草），blob 2~5 格 h=-2
+        for _ in range(int(area / 70 * self.eff_water())):
+            walk_blob(random.randint(0, self.cols - 1), random.randint(0, self.rows - 1),
+                      random.randint(2, 5), -2)
 
     def _heads(self):
         return [p['cells'][0] for p in self.players.values() if p['alive'] and p['cells']]
@@ -748,6 +849,12 @@ class Room:
             'rockCustom': self.rock_mult,                 # 批23 N2：覆盖值原样回传（编辑面精确回填；None=跟随主题）
             'portal': self.eff_portal(),                  # 是否生成传送门
             'portalCustom': self.portal_on,               # 批23 N2：覆盖值原样回传（None=跟随主题）
+            'height': self.eff_height(),                  # 批32：丘陵量级（eff）
+            'heightCustom': self.height_mult,             # 批32：覆盖值原样回传（None=跟随主题）
+            'water': self.eff_water(),                    # 批32：水洼/草丛量级（eff）
+            'waterCustom': self.water_amt,                # 批32
+            'bld': self.eff_bld(),                        # 批32：建筑量级（eff）
+            'bldCustom': self.bld_amt,                    # 批32
             'pendingSize': self.pending_size,             # 批23 N2：已改待下局应用的尺寸（None=无）
             'players': len(self.players),                 # 房间内人数（含已阵亡）
             'humans': sum(1 for p in self.players.values() if not p.get('bot')),  # 批23 N1：真人数（AI 不计）
@@ -1874,6 +1981,7 @@ def persist_rooms_dump():
                     'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
                     'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect,
+                    'height': r.height_mult, 'water': r.water_amt, 'bld': r.bld_amt,   # 批32
                     'ownerUser': r.owner_user, 'ownerTok': r.owner_tok})  # 批23 P6
     return out
 
@@ -1913,12 +2021,19 @@ def load_persist_rooms(path=PERSIST_FILE):
         else:
             rock = max(0.0, min(4.0, float(rock)))
         portal = d.get('portal')
+
+        def _hclamp(v):                 # 批32：height/water/bld 解析（同 rock：数字夹 0..4，否则 None）
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            return max(0.0, min(4.0, float(v)))
         r = Room(rid, str(d.get('name') or rid)[:16], size,
                  theme_fixed=d.get('theme'), rock_mult=rock,
                  portal_on=portal if isinstance(portal, bool) else None,
                  win_mode=d.get('winMode'), limit=d.get('limit') or 0,
                  respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
-                 passw=d.get('pass'), walldeflect=d.get('wd') is True)
+                 passw=d.get('pass'), walldeflect=d.get('wd') is True,
+                 height_mult=_hclamp(d.get('height')), water_amt=_hclamp(d.get('water')),
+                 bld_amt=_hclamp(d.get('bld')))
         ou = d.get('ownerUser')
         r.owner_user = ou if isinstance(ou, str) and ou else None   # 批18
         ot = d.get('ownerTok')
@@ -2330,6 +2445,12 @@ async def handle_msg(sess, m):
         portal = m.get('portal')
         if not isinstance(portal, bool):
             portal = None
+        # ---- 批32：高度地形三旋钮（非法/缺省=None=跟随主题；数字夹 0..4） ----
+        def _hclamp(v):
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            return max(0.0, min(4.0, float(v)))
+        height, water, bld = _hclamp(m.get('height')), _hclamp(m.get('water')), _hclamp(m.get('bld'))
         # ---- 战场配置：获胜模式 / 限时秒 / 无限复活（非法值回退默认） ----
         win_mode = m.get('winMode')
         if win_mode not in ('last', 'score'):
@@ -2372,7 +2493,7 @@ async def handle_msg(sess, m):
                 return
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
                           win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
-                          walldeflect=walldeflect)
+                          walldeflect=walldeflect, height_mult=height, water_amt=water, bld_amt=bld)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
         rooms[rid].owner_tok = secrets.token_hex(16)   # 批23 P6：一次性 owner 凭据
@@ -2470,6 +2591,20 @@ async def handle_msg(sess, m):
                 room.portal_on = nv
                 changed = True
                 deferred.append('portal')
+        # ---- 批32：height/water/bld 三旋钮（字段→属性镜像 rock 模式；下局生效）----
+        for _kf, _af in (('height', 'height_mult'), ('water', 'water_amt'), ('bld', 'bld_amt')):
+            if _kf in m:
+                _v = m.get(_kf)
+                if _v in (None, ''):
+                    _nv = None
+                elif isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                    _nv = getattr(room, _af)        # 非法类型忽略，不动原值
+                else:
+                    _nv = max(0.0, min(4.0, float(_v)))
+                if _nv != getattr(room, _af):
+                    setattr(room, _af, _nv)
+                    changed = True
+                    deferred.append(_kf)
         if 'size' in m:
             try:
                 nsz = int(m.get('size'))

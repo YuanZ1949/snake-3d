@@ -3249,6 +3249,49 @@ def test_admin_notice_grant_report_batch30():
     print('admin notice grant report batch30 OK')
 
 
+def test_height_gen_invariants():
+    r = fresh(24)                       # 默认主题
+    mk(r, 1, "A", [(12, 12), (11, 12)], (1, 0))   # 造旧蛇头做 ±4 避让验证
+    r.build_terrain()
+    vals = set(r.hmap.values())
+    assert vals                                                # 默认主题必出地形
+    assert vals <= {-2, -1, 1, 2, 3, 9}, vals                  # 值域；0 不存
+    assert 0 not in vals
+    assert -2 in vals                                          # 草丛必有生成来源（spec §7.3 第4类）
+    assert len(r.hmap) <= int(0.35 * 24 * 24), len(r.hmap)   # ≤35% 预算
+    assert not (set(r.rocks) & set(r.hmap))                  # 不与岩石重叠
+    assert not (set(r.walls) & set(r.hmap))                  # 不压墙块
+    assert not (set(r.portals) & set(r.hmap))                # 不压传送门
+    assert all(abs(x - 12) + abs(y - 12) >= 4 for (x, y) in r.hmap)   # 不压旧蛇头 ±4
+    rl = fresh(24, theme_fixed='lava')
+    rl.build_terrain()
+    assert -1 not in rl.hmap.values() and -2 not in rl.hmap.values()  # 熔岩无水洼无草
+    r0 = fresh(16, height_mult=0.0, water_amt=0.0, bld_amt=0.0)
+    r0.build_terrain()
+    assert r0.hmap == {}                                     # 三旋钮全 0（预算=0 早退）= 纯平地
+
+
+def test_height_cfg_roundtrip():
+    r = fresh(16, height_mult=0.0, water_amt=2.0, bld_amt=None)
+    inf = r.info()
+    assert inf['height'] == 0.0 and inf['heightCustom'] == 0.0
+    assert inf['water'] == 2.0 and inf['bldCustom'] is None
+    r.build_terrain()
+    assert any(v == -1 for v in r.hmap.values())             # water=2.0 必出水洼
+    # 消息级（仿 test_roomcfg_extended_fields_unified 的 _cfg_sess/_cfg_room 方式）：
+    import asyncio
+    s = _cfg_sess(sid='s1'); r2 = _cfg_room(s); s.room = r2
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rc',
+                                     'height': 0, 'water': 1.5, 'bld': 0}))
+    assert r2.height_mult == 0.0 and r2.water_amt == 1.5 and r2.bld_amt == 0.0
+    cap = [x for x in s.ws.sent if x.get('t') == 'cfgapplied'][-1]
+    assert cap['changed'] is True
+    assert sorted(cap['deferred']) == ['bld', 'height', 'water']   # 三字段同 rock：下局生效
+    info2 = r2.info()
+    assert info2['heightCustom'] == 0.0 and info2['waterCustom'] == 1.5 and info2['bldCustom'] == 0.0
+    del serve.rooms['rc']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -3353,6 +3396,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
             test_gchat_batch30,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
-            test_login_gift_batch31]:
+            test_login_gift_batch31,
+            test_height_gen_invariants, test_height_cfg_roundtrip]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
