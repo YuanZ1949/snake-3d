@@ -937,6 +937,8 @@ class Room:
             'waterCustom': self.water_amt,                # 批32
             'bld': self.eff_bld(),                        # 批32：建筑量级（eff）
             'bldCustom': self.bld_amt,                    # 批32
+            'elements': self.elements,                    # 批33：元素反应总开关
+            'elemAmt': self.elem_amt,                     # 批33：元素地形密度（0-2）
             'pendingSize': self.pending_size,             # 批23 N2：已改待下局应用的尺寸（None=无）
             'players': len(self.players),                 # 房间内人数（含已阵亡）
             'humans': sum(1 for p in self.players.values() if not p.get('bot')),  # 批23 N1：真人数（AI 不计）
@@ -2261,6 +2263,7 @@ def persist_rooms_dump():
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
                     'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect,
                     'height': r.height_mult, 'water': r.water_amt, 'bld': r.bld_amt,   # 批32
+                    'elements': r.elements, 'elemAmt': r.elem_amt,   # 批33（旧档缺字段→默认）
                     'ownerUser': r.owner_user, 'ownerTok': r.owner_tok})  # 批23 P6
     return out
 
@@ -2312,7 +2315,8 @@ def load_persist_rooms(path=PERSIST_FILE):
                  respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
                  passw=d.get('pass'), walldeflect=d.get('wd') is True,
                  height_mult=_hclamp(d.get('height')), water_amt=_hclamp(d.get('water')),
-                 bld_amt=_hclamp(d.get('bld')))
+                 bld_amt=_hclamp(d.get('bld')),
+                 elements=d.get('elements'), elem_amt=d.get('elemAmt'))   # 批33：旧档缺字段→__init__ 默认 True/0.6
         ou = d.get('ownerUser')
         r.owner_user = ou if isinstance(ou, str) and ou else None   # 批18
         ot = d.get('ownerTok')
@@ -2730,6 +2734,15 @@ async def handle_msg(sess, m):
                 return None
             return max(0.0, min(4.0, float(v)))
         height, water, bld = _hclamp(m.get('height')), _hclamp(m.get('water')), _hclamp(m.get('bld'))
+        # ---- 批33：元素反应两旋钮（elements=bool 非法回退默认 True；elemAmt 数字夹 0..2）----
+        el_on = m.get('elements')
+        if not isinstance(el_on, bool):
+            el_on = True
+        try:
+            el_amt = float(m.get('elemAmt'))
+        except (TypeError, ValueError):
+            el_amt = 0.6
+        el_amt = max(0.0, min(2.0, el_amt))
         # ---- 战场配置：获胜模式 / 限时秒 / 无限复活（非法值回退默认） ----
         win_mode = m.get('winMode')
         if win_mode not in ('last', 'score'):
@@ -2772,7 +2785,8 @@ async def handle_msg(sess, m):
                 return
         rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
                           win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
-                          walldeflect=walldeflect, height_mult=height, water_amt=water, bld_amt=bld)
+                          walldeflect=walldeflect, height_mult=height, water_amt=water, bld_amt=bld,
+                          elements=el_on, elem_amt=el_amt)
         rooms[rid].owner = sess.sid   # 创建者在时房间不回收
         rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
         rooms[rid].owner_tok = secrets.token_hex(16)   # 批23 P6：一次性 owner 凭据
@@ -2884,6 +2898,19 @@ async def handle_msg(sess, m):
                     setattr(room, _af, _nv)
                     changed = True
                     deferred.append(_kf)
+        # ---- 批33：elements/elem_amt 两旋钮（字段→属性；下局 new_round 重建 eterrain 生效）----
+        if 'elements' in m and isinstance(m.get('elements'), bool) and m['elements'] != room.elements:
+            room.elements = m['elements']
+            changed = True
+            deferred.append('elements')
+        if 'elemAmt' in m:
+            _v = m.get('elemAmt')
+            if isinstance(_v, (int, float)) and not isinstance(_v, bool):
+                _nv = max(0.0, min(2.0, float(_v)))
+                if _nv != room.elem_amt:
+                    room.elem_amt = _nv
+                    changed = True
+                    deferred.append('elemAmt')
         if 'size' in m:
             try:
                 nsz = int(m.get('size'))

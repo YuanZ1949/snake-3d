@@ -3953,6 +3953,71 @@ def test_slow_tick_multiplier_batch33():
     print("slow tick multiplier batch33 OK")
 
 
+def test_elements_roomcfg_and_persist_batch33():
+    """T7：elements/elem_amt 四 ingress——roomcfg 生效、create 透传、persist 往返、旧档缺字段默认 True/0.6"""
+    import asyncio
+    import json
+    import os
+    # 默认值
+    r0 = fresh(16)
+    assert (r0.elements, r0.elem_amt) == (True, 0.6)
+    # info() 回传
+    d = r0.info()
+    assert d['elements'] is True and d['elemAmt'] == 0.6
+    # roomcfg 改 False/0 生效（live，下局生效 eterrain 由 elements 控制）
+    s = _cfg_sess(sid='s1')
+    serve.rooms['rel'] = serve.Room('rel', '元素房', 16)
+    r = serve.rooms['rel']
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rel',
+                                     'elements': False, 'elemAmt': 0}))
+    assert (r.elements, r.elem_amt) == (False, 0.0), (r.elements, r.elem_amt)
+    # 非法值忽略不动原值
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rel',
+                                     'elements': 'x', 'elemAmt': 'bad'}))
+    assert (r.elements, r.elem_amt) == (False, 0.0)
+    # elemAmt clamp 0-2
+    asyncio.run(serve.handle_msg(s, {'t': 'roomcfg', 'room': 'rel', 'elemAmt': 9}))
+    assert r.elem_amt == 2.0
+    # create 透传
+    s2 = _cfg_sess(sid='s2')
+    s2.ip = '9.9.9.9'
+    asyncio.run(serve.handle_msg(s2, {'t': 'create', 'name': 'e1',
+                                      'elements': False, 'elemAmt': 1.5}))
+    created = [x for x in s2.ws.sent if x.get('t') == 'created']
+    assert created, s2.ws.sent
+    rc = serve.rooms[created[0]['room']]
+    assert (rc.elements, rc.elem_amt) == (False, 1.5), (rc.elements, rc.elem_amt)
+    del serve.rooms[created[0]['room']]
+    # persist 保存→恢复往返保留
+    path = os.path.join(os.environ.get('TEMP', '.'), 't_persist_elem.json')
+    try:
+        r.persist = True
+        serve.save_persist_rooms(path)
+        serve.rooms.pop('rel')
+        assert serve.load_persist_rooms(path) == 1
+        rr = serve.rooms.get('rel')
+        assert rr is not None and (rr.elements, rr.elem_amt) == (False, 2.0)
+        del serve.rooms['rel']
+        # 旧档缺字段 → 默认 True/0.6（M3：升级不静默关元素）
+        with open(path, encoding='utf-8') as f:
+            lst = json.load(f)
+        for d2 in lst:
+            d2.pop('elements', None)
+            d2.pop('elemAmt', None)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(lst, f)
+        assert serve.load_persist_rooms(path) == 1
+        ro = serve.rooms.get('rel')
+        assert ro is not None and (ro.elements, ro.elem_amt) == (True, 0.6)
+        del serve.rooms['rel']
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    print("elements roomcfg/persist batch33 OK")
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -4072,6 +4137,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_eb_no_rock_and_gates_batch33, test_eb_cross_layer_batch33,
            test_frozen_no_move_and_resume_batch33, test_frozen_head_static_obstacle_batch33,
            test_frozen_input_gate_batch33, test_frozen_biteable_batch33,
-           test_slow_tick_multiplier_batch33]:
+           test_slow_tick_multiplier_batch33,
+             test_elements_roomcfg_and_persist_batch33]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
