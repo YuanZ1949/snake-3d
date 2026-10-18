@@ -8,6 +8,8 @@
 
 ## 批33 结项证据（2026-10-19 记，契约 3/3 pass，state=closed）
 
+> 注：按 schema 规则，`acceptance[]` 只保留 `id/text/verdict`，证据一律写在本文件（`contract.json` 里曾多出 `evidence` 字段导致续跑报 `acceptance[0] has unknown field(s): evidence`，已剥离）。下列 ①②③ 与契约三条验收一一对应。
+
 **① `pwsh scripts/local_ci.ps1` → `ALL GREEN — 本地 CI 全部通过`（结项前复跑，EXIT=0）**
 - 9 套 python E2E 全 Exit 0，含新增 `test_reactions_p33.py` → `reactions E2E PASS`（5 断言）
 - 单测 `ALL GAME UNIT TESTS PASSED`（183 用例注册即跑，批33 +21 项 `*_batch33`）

@@ -1,24 +1,21 @@
 {
   "version": 1,
-  "goal": "批33 原神元素反应：按 docs/superpowers/plans/2026-10-18-element-reactions.md 完成 10 任务实现（T1-T10），PRO 双端，E2E+门禁+部署+生产复验+文档回写",
+  "goal": "批33 原神元素反应：按 docs/superpowers/plans/2026-10-18-element-reactions.md 完成 10 任务实现（T1-T10），PROTO 29 双端，E2E+门禁+部署+生产复验+文档回写",
   "acceptance": [
     {
       "id": "1",
       "text": "pwsh scripts/local_ci.ps1 → ALL GREEN（含新单测先红后绿、E2E、静态检）",
-      "verdict": "pass",
-      "evidence": "pwsh scripts/local_ci.ps1 → 'ALL GREEN — 本地 CI 全部通过'、EXIT=0（2026-10-19 结项前复跑，全部改动落定后）：9 套 E2E 全 Exit 0（含新增 test_reactions_p33.py → 'reactions E2E PASS'，进程内双 ws 反应链 5/5 断言）、单测尾行 'ALL GAME UNIT TESTS PASSED'（183 用例注册即跑，批33 +21）、静态检查 'ids=135 dup=0 div=69/69 css=350/350 js=878/878' + 'ALL STATIC CHECKS PASSED'、Playwright '39 passed (1.7m)'（13 spec，新增 e2e/reactions.spec.js ×4）"
+      "verdict": "pass"
     },
     {
       "id": "2",
       "text": "PROTO_VER=29 双端一致；scp 部署后生产进局 errs=[] 且元素 HUD/附着/反应浮字可见",
-      "verdict": "pass",
-      "evidence": "①双端常量：serve.py:48 `PROTO_VER = 29`、index.html:1128 `const PROTO_VER = 29`（批33 aura/eterrain/eb/react）。②部署：`scp index.html serve.py tencent:/home/ubuntu/snake-3d/` + `sudo systemctl restart snake-3d` → `systemctl is-active snake-3d`=active、http 193.112.172.83:8090 返回 200（index.html 静态每次读盘，后续增量 scp 无需重启）。③生产复验 `BASE=http://193.112.172.83:8090 npx playwright test e2e/reactions.spec.js e2e/smoke.spec.js` → '9/9 passed'（reactions ×4 + smoke ×5）；`--repeat-each=6` → 18/18。④聚焦脚本 prod_verify.js → 'PROTO_VER room-ok ver=29 (29 OK)'、'errs=[]'（console/pageerror/ws error 全空）、'PROD VERIFY PASS'。⑤视觉：截图 test-results/p33_attach_react.png（279KB，生产运行产出）肉眼确认顶部元素 HUD 4 按钮（🔥/💧/❄/⚡）+ 棋盘「冻结」反应浮字 + P 名牌 + 小地图；用户另发的生产游戏截图同样可见 HUD 四键与「冻结」浮字，作为确认。附着断言：注入 aura {e:'cryo'} 后 `__auraDbg().e==='cryo'`、react 事件后 `__floatDbg()` 递增。"
+      "verdict": "pass"
     },
     {
       "id": "3",
       "text": "HANDOVER.md / BACKLOG.md 回写批33 完成记录",
-      "verdict": "pass",
-      "evidence": "HANDOVER.md：头部更新 2026-10-19/功能基线=批33；§1 加「批33 元素反应」；§2 交付物行数与新增 test_reactions_p33.py；§5.1 新增 `eb` 消息行 + create/roomcfg 补 elements/elemAmt；§5.2 snap 补 eterrain/aura/elem/react + PROTO 28→29 注；§6.1 补 8 个批33 常量行；§6.2 新增「元素反应（批33）」长条目；§10 单测 ×183（批33 +21 明细）+ test_reactions_p33.py 行 + e2e/reactions.spec.js 行 + local_ci 9套/39 passed + 静态检 135/69/350；§13 新增 #10（三处测试性约束与对策）/#11（CI 未含第 9 套）。BACKLOG.md：`git diff --stat` → 13 insertions（纯插入），新增「## 批33（2026-10-19 · 原神元素反应）已完成」段，含服务端/协议/客户端/门禁/部署生产/E2E 对策/遗留七条。"
+      "verdict": "pass"
     }
   ],
   "notDo": [
@@ -29,5 +26,5 @@
   "assumptions": [],
   "flow": "直通",
   "state": "closed",
-  "updatedAt": "2026-10-18T16:57:31.844Z"
+  "updatedAt": "2026-10-18T17:05:00.000Z"
 }
