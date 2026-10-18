@@ -621,6 +621,7 @@
   @keyframes ultPulse { 50% { box-shadow: 0 0 16px rgba(255,209,102,.9); } }
   /* 批33：元素弹按钮组 */
   #elemBar { gap: 2px; }
+  #elemBar.hidden { display: none; }                     /* 仓内无全局 .hidden，组件自写 */
   #elemBar .ebtn {
     padding: 2px 6px; font-size: 13px; line-height: 1.4; border-radius: 6px;
     border: 1px solid transparent; background: transparent; color: #6a6f96;
@@ -1867,6 +1868,7 @@
   }
   // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
   window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
+  window.__projDbg = () => projMeshes.length;             // 批33 探针：弹药渲染体数量（syncProjectiles 链路）
   window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
   window.__heightMeshDump = () => heightMeshes.map(e => ({k: e.key, kind: e.kind, x: +e.mesh.position.x.toFixed(2), y: +e.mesh.position.y.toFixed(2), z: +e.mesh.position.z.toFixed(2), vis: e.mesh.visible, inScene: e.mesh.parent === scene}));
   window.__camDbg = () => ({x: +camera.position.x.toFixed(2), y: +camera.position.y.toFixed(2), z: +camera.position.z.toFixed(2), snake: myEnt ? myEnt.cells[0] : null, dir: myEnt ? myEnt.dir : null, sp0: myEnt && myEnt.spine[0] ? {x: +myEnt.spine[0].x.toFixed(2), y: +myEnt.spine[0].y.toFixed(2), z: +myEnt.spine[0].z.toFixed(2)} : null});
