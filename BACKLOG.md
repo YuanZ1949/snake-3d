@@ -3,6 +3,19 @@
 > **批23 已全清（8/8，2026-10-15）**，批末收尾（push 双远端 + 部署生产 8090）亦完成。
 > 本文件转为批23 归档；新需求请另起批24 段落或新建候选池。
 
+## 批33（2026-10-19 · 原神元素反应）已完成
+
+> 计划：`docs/superpowers/plans/2026-10-18-element-reactions.md`（T1–T10，inline executing-plans 逐任务 TDD）；spec：`docs/superpowers/specs/2026-10-18-element-reactions-design.md`（oracle 审定 M1–M9，数值均为提案非承诺）。
+> 目标原话（计划 Goal）：「四元素（火水冰雷）反应系统——常驻 aura、元素弹/元素地面/地形旋钮、6 种反应与反应充能机制，PROTO 29 双端。」
+
+- **服务端**：常量 `ELEMS/AURA_MS=8000/EB_CD=2000/EB_SPD=1.2/ULT_REACT=15/FROZEN_MS=1600/SLOW_MS=3000` + `REACTIONS` 六反应表与 `reaction_of()`；`players[].aura` 附着（TTL、重生清、断线挂起保留、落盘前 `pop('aura')`）；`eterrain` 元素地面（`build_eterrain()` 预算 `min(60, cols*rows*0.015*elem_amt)`、计进 `occupied()`、`new_round` 重建）；消息 `eb` 元素弹（独立 CD、门禁「开关→存活→非 win_pending→非挂机→非冻结→查 CD」、不碎岩、跨高度层）；`apply_reaction()` 统一出口（先 `ev('react')` 即使 victim 已死 → 截断类效果 → 双方消耗 aura → 攻击者 +15 充能，不改 `grow/MIN_LEN` 既有语义）；咬击 `_bite_reaction`（感染+反应）与落格/命中两条附着路径；`frozen`（不可动、不可发射、头静止当障碍、仍可被咬）与 `slow`（tick×1.5）接入 `eff`（due 排除、门禁）；`elements/elem_amt` 三入口（create / roomcfg deferred / persist）+ 旧存档缺字段回退 True/0.6。
+- **协议（PROTO_VER 28→29 双端同步 bump）**：`snap.eterrain` 进 `DELTA_FIELDS`（full+DELTA 双路）、`players[]` 带 `aura`、`proj[]` 带 `elem`、新事件 `react{kind,by,victim,x,y}`、`fire` 带 `elem`、房间配置 `elements/elemAmt`。
+- **客户端**：HUD `#elemBar` 四元素按钮（键 1–4 切元素、`E` 发射、CD `.cool`）、aura 元素色光晕、frozen/slow 罩色、`eterrain` 面片、`react` 3D 浮字、元素弹染色、建房/房间编辑两旋钮、预测侧 frozen/slow 门控；探针 `__stateDbg/__auraDbg/__floatDbg/__projDbg`。**修复 2 个真 bug**：仓内无全局 `.hidden` 工具类 → 补 `#elemBar.hidden{display:none}`；`lastEb=0` 初值吞掉页面启动 2s 内首发 → 改 `let lastEb = -2000`。
+- **门禁**：`test_game.py` +21 项（183 用例全注册全跑，`ALL GAME UNIT TESTS PASSED`）；新增第 9 套 E2E `test_reactions_p33.py`（进程内双 ws 反应链 5 断言，`reactions E2E PASS`）；`e2e/reactions.spec.js` ×4（HUD/40ms 紧采断言元素弹/注入附着+浮字+截图 `test-results/p33_attach_react.png`/`elements=false` 时 HUD 隐藏）；`pwsh scripts/local_ci.ps1` → **ALL GREEN**（9 套 E2E + 单测 + 静态检 ids=135 dup=0 + Playwright **39 passed**）。
+- **部署与生产复验**：`scp index.html serve.py tencent:/home/ubuntu/snake-3d/` + `systemctl restart snake-3d`；生产 `npx playwright test e2e/reactions.spec.js e2e/smoke.spec.js` → **9/9 passed**（`--repeat-each=6` 曾 18/18），`prod_verify.js` → `room-ok ver=29`、`errs=[]`，截图肉眼可见元素 HUD 四键 + 「冻结」反应浮字。
+- **E2E 对策（写给后来者）**：元素弹存活仅 ~60–400ms、solo 蛇 1.3–3.5s 撞墙死进 `over` 拒发射、生产注册限流 REG_MAX=30/300s —— 已固化为 `waitPlaying()` + `playing&&alive` 才按 e + 40ms 紧采 + 固定账号 `p33elem`。
+- **遗留**：`.github/workflows/ci.yml` 的 python E2E 仍 7 套（未含 `test_reactions_p33.py`；Actions 因远端非 GitHub/Gitee 本就未触发，见 HANDOVER §13 #11）。
+
 ## 批32（2026-10-17 · 高度地形与建筑 已交付）
 
 来源：用户原话「还想丰富玩法 主要是想增加地形和建筑 以及 原神的元素反应 你看看怎么加」。流程：architectural（spec+计划+oracle 审核+原生执行）；拆两子项目——**A=地形与建筑（本批）**、B=元素反应（后续单独立项）。11 项拍板要点：真高度层（非纯视觉）、蛇逐节高度、仅限上行自动跟随、PVP 碾压式高度裁决、子弹贴发射者头高、纯天然据点、无迷雾、半透明伏击草、服务端随机生成+配置旋钮、服务端权威 hmap 全量下发（否决 seed 双端复现）。

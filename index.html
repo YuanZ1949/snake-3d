@@ -1103,7 +1103,7 @@
   let lastAtk = 0;
   const ATK_COOL = 800;
   let curElem = 'pyro';              // 批33：当前元素（键 1-4 切换，E 发射元素弹）
-  let lastEb = 0;
+  let lastEb = -2000;                // 批33 修：= -EB_CD；初值 0 会在页面启动 2s 内吞掉首发（performance.now() 也从 0 起算）
   const EB_CD = 2000;
   const ELEM_EMOJI = {pyro: '🔥', hydro: '💧', cryo: '❄', electro: '⚡'};
   const ELEM_COLOR = {pyro: '#ff7b4d', hydro: '#6cb8ff', cryo: '#9be8ff', electro: '#c99bff'};
@@ -1869,6 +1869,9 @@
   // 批25 探针钩子（P4 __qual 同先例）：多果渲染状态自检
   window.__foodsDbg = () => ({list: foods.map(f => ({x: f.x, y: f.y, key: f._key})), meshes: foodMeshes.size});
   window.__projDbg = () => projMeshes.length;             // 批33 探针：弹药渲染体数量（syncProjectiles 链路）
+  window.__stateDbg = () => ({state, joined, alive: !!(myEnt && myEnt.alive), ebAge: Math.round(performance.now() - lastEb)});  // 批33 探针：对局态/存活/距上次发射
+  window.__auraDbg = () => (myEnt ? myEnt.aura : null);   // 批33 探针：自机元素附着 {e,t} 或 null（附着可见性断言）
+  window.__floatDbg = () => floaters.length;              // 批33 探针：3D 浮字 sprite 存活数（反应浮字出现断言）
   window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
   window.__heightMeshDump = () => heightMeshes.map(e => ({k: e.key, kind: e.kind, x: +e.mesh.position.x.toFixed(2), y: +e.mesh.position.y.toFixed(2), z: +e.mesh.position.z.toFixed(2), vis: e.mesh.visible, inScene: e.mesh.parent === scene}));
   window.__camDbg = () => ({x: +camera.position.x.toFixed(2), y: +camera.position.y.toFixed(2), z: +camera.position.z.toFixed(2), snake: myEnt ? myEnt.cells[0] : null, dir: myEnt ? myEnt.dir : null, sp0: myEnt && myEnt.spine[0] ? {x: +myEnt.spine[0].x.toFixed(2), y: +myEnt.spine[0].y.toFixed(2), z: +myEnt.spine[0].z.toFixed(2)} : null});
