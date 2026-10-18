@@ -1,30 +1,34 @@
 {
   "version": 1,
-  "goal": "批33 原神元素反应：按 docs/superpowers/plans/2026-10-18-element-reactions.md 完成 10 任务实现（T1-T10），PROTO 29 双端，E2E+门禁+部署+生产复验+文档回写",
+  "goal": "批34 地形遮挡：山体/深渊改成真遮挡（depthWrite=true），让地形和建筑会挡视线，山后之蛇被正确挡住",
   "acceptance": [
     {
       "id": "1",
-      "text": "pwsh scripts/local_ci.ps1 → ALL GREEN（含新单测先红后绿、E2E、静态检）",
+      "text": "node scripts/static_check.js index.html 通过，且 pwsh scripts/local_ci.ps1 → ALL GREEN（不回归 height32.spec.js 四条）",
       "verdict": "pass"
     },
     {
       "id": "2",
-      "text": "PROTO_VER=29 双端一致；scp 部署后生产进局 errs=[] 且元素 HUD/附着/反应浮字可见",
+      "text": "新增 e2e 断言：注入 hmap 后 丘/峰/楼/深渊 材质 depthWrite===true，水/草/元素面片仍 depthWrite===false（先红后绿）",
       "verdict": "pass"
     },
     {
       "id": "3",
-      "text": "HANDOVER.md / BACKLOG.md 回写批33 完成记录",
+      "text": "生产 scp index.html 后：丘陵局里蛇开到峰背后被峰挡住（截图存证 test-results/），prod_verify 无新增 console 错误",
       "verdict": "pass"
     }
   ],
   "notDo": [
-    "不改既有玩法数值（ULT_KILL/水减速/批32弹道）",
-    "不做 spec 外重构与 Deferred 项",
-    "不改 opencode 配置"
+    "不加开关/设置项（用户拍板：直接改死）",
+    "不改相机高度与距离（CAM.h/camDist）",
+    "不动 PROTO 与 serve.py（纯客户端渲染）",
+    "不给蛇加剪影/半透透视，不加阴影投射"
   ],
-  "assumptions": [],
+  "assumptions": [
+    "深渊(ab) 是地板下的坑、蛇进不去，改真遮挡只影响坑口显示不影响玩法",
+    "建筑（墙块/石头）本就 depthWrite=true 已挡视线，无需改动"
+  ],
   "flow": "直通",
   "state": "closed",
-  "updatedAt": "2026-10-18T17:15:12.000Z"
+  "updatedAt": "2026-10-19T00:00:00.000Z"
 }

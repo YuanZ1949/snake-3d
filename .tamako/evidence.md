@@ -45,3 +45,26 @@
   "phase": "T1 开工"
 }
 ```
+
+
+---
+
+## 批34 地形遮挡（2026-10-19）· flow=直通 · 3/3 PASS
+
+### ① 先红后绿（height32.spec.js 新增「批34 地形遮挡」用例）
+- 红：\\='http://127.0.0.1:20000'; npx playwright test height32 --grep '批34' → 失败 height32.spec.js:63「kind=c1 必须写深度」Received false（真红）
+- 绿：改材质后 npx playwright test height32 → 4 passed（19.5s）
+
+### ② 全量门禁
+- node scripts/static_check.js index.html → ids=135 dup=0 div=69/69 css=350/350 js=879/879 + ALL STATIC CHECKS PASSED
+- pwsh scripts/local_ci.ps1 → ALL GREEN：单测 183 ALL GAME UNIT TESTS PASSED、静态检 PASS、Playwright 40 passed、python E2E test_reactions_p33.py PASS
+
+### ③ 生产部署
+- scp -i C:\\Users\\yuan\\.ssh\\1.pem index.html ubuntu@193.112.172.83:/home/ubuntu/snake-3d/index.html → SCP_EXIT=0
+- 远端 grep -c '批34' = 4；PROTO_VER = 29（未变 → 服务端无需重启）
+
+### ④ 生产遮挡视觉存证（临时探针 _tmp_occl_shot.js：注册→单人局→暂停冻结→身后注入 h=12 高墙→截图 A→清空→截图 B）
+- PAUSED=true；CAM={x:7.5,y:5.4,z:-3.51,snake:{x:8,y:8},dir:{x:-1,y:0}} → 相机 cell≈19、蛇 cell=8、墙 cells x=11..13 正好在视线中间
+- WALLCELLS=21 meshesA=21 dwAllTrue=true
+- CONSOLE_ERRS=[]（无新增 console 错误）
+- 截图：test-results/occl_prod_A_wall.png（高墙充满视野、蛇完全不可见）／ occl_prod_B_nowall.png（清空地形后棋盘地板+绿色蛇身清晰可见）→ 山后之蛇被正确挡住

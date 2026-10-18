@@ -48,3 +48,28 @@ test('蛇节按 hmap 抬升 + 预测挡崖', async ({ page }) => {
   const d2 = await page.evaluate(() => window.__heightDbg());
   expect(d2.blocked).toBe(true);
 });
+
+test('批34 地形遮挡：实体地形 depthWrite=true，水/草/元素面片 depthWrite=false', async ({ page }) => {
+  await ensureLogin(page, 'yuan', '123456');
+  await page.click('#btnSolo');
+  await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
+  // 一次注入全部 6 类：丘1/峰2/楼3/深渊9/水-1/草-2
+  await page.evaluate(() => window.__mapDbgSet([[5, 5, 1], [5, 6, 2], [5, 7, 3], [5, 8, 9], [5, 9, -1], [5, 10, -2]]));
+  await page.waitForTimeout(300);
+  const dw = await page.evaluate(() => window.__heightMeshDump());
+  const byKind = k => dw.filter(m => m.kind === k);
+  for (const k of ['c1', 'c2', 'c3', 'ab']) {
+    expect(byKind(k).length, `kind=${k} 应有 mesh`).toBe(1);
+    expect(byKind(k)[0].dw, `kind=${k} 必须写深度（真遮挡，山后之蛇被挡住）`).toBe(true);   // 批34：丘/峰/楼/深渊 挡视线
+  }
+  for (const k of ['w', 'g']) {
+    expect(byKind(k).length, `kind=${k} 应有 mesh`).toBe(1);
+    expect(byKind(k)[0].dw, `kind=${k} 是地板贴层不得写深度（否则会挡住地板上的蛇）`).toBe(false);
+  }
+  // 元素面片（批33）同理：贴层不遮挡
+  await page.evaluate(() => window.__elemDbgSet([[6, 5, 'pyro'], [6, 6, 'cryo']]));
+  await page.waitForTimeout(200);
+  const ed = await page.evaluate(() => window.__elemMeshDump());
+  expect(ed.length).toBe(2);
+  for (const e of ed) expect(e.dw, `元素面片 ${e.elem} 不得写深度`).toBe(false);
+});

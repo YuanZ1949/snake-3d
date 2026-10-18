@@ -1873,7 +1873,7 @@
   window.__auraDbg = () => (myEnt ? myEnt.aura : null);   // 批33 探针：自机元素附着 {e,t} 或 null（附着可见性断言）
   window.__floatDbg = () => floaters.length;              // 批33 探针：3D 浮字 sprite 存活数（反应浮字出现断言）
   window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
-  window.__heightMeshDump = () => heightMeshes.map(e => ({k: e.key, kind: e.kind, x: +e.mesh.position.x.toFixed(2), y: +e.mesh.position.y.toFixed(2), z: +e.mesh.position.z.toFixed(2), vis: e.mesh.visible, inScene: e.mesh.parent === scene}));
+  window.__heightMeshDump = () => heightMeshes.map(e => ({k: e.key, kind: e.kind, dw: e.mesh.material.depthWrite, x: +e.mesh.position.x.toFixed(2), y: +e.mesh.position.y.toFixed(2), z: +e.mesh.position.z.toFixed(2), vis: e.mesh.visible, inScene: e.mesh.parent === scene}));   // 批34：+dw（材质是否写深度=是否会挡视线）
   window.__camDbg = () => ({x: +camera.position.x.toFixed(2), y: +camera.position.y.toFixed(2), z: +camera.position.z.toFixed(2), snake: myEnt ? myEnt.cells[0] : null, dir: myEnt ? myEnt.dir : null, sp0: myEnt && myEnt.spine[0] ? {x: +myEnt.spine[0].x.toFixed(2), y: +myEnt.spine[0].y.toFixed(2), z: +myEnt.spine[0].z.toFixed(2)} : null});
   window.__heightProject = () => { const v = new THREE.Vector3(); return heightMeshes.map(e => { v.copy(e.mesh.position).project(camera); return {k: e.key, ndc: [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)], dist: +camera.position.distanceTo(e.mesh.position).toFixed(1), visible: e.mesh.visible, inScene: e.mesh.parent === scene, matVis: e.mesh.material.visible, scale: e.mesh.scale.y}; }); };
   window.__heightDbg = () => {
@@ -1977,7 +1977,8 @@
   }
 
   // ---- 服务器地形：高度 hmap（批32）/ 墙块 / 传送门 / 道具 ----
-  // 批32：hmap 三元组 [x,y,h]（-2草/-1水/0平不存/1丘/2峰/3楼/9深渊）；全部 depthWrite=false 保证蛇恒可见
+  // 批34：实体地形（丘/峰/楼/深渊）depthWrite=true 真遮挡——山后之蛇会被正确挡住；
+  //       水/草/元素面片是地板贴层，仍 depthWrite=false（否则贴层会挡住地板上的蛇）。
   const H_UNIT = 0.35;
   const visH = h => h >= 0 ? h * H_UNIT : (h === -1 ? -0.12 : 0);
   let hmapD = new Map(), heightMeshes = [], heightKey = '';
@@ -1989,10 +1990,11 @@
   const heightGeo = {c1: heightColGeo, c2: heightColGeo, c3: heightColGeo, ab: heightColGeo,
                      w: heightPlaneGeo, g: heightPlaneGeo};
   const heightMat = {
-    c1: new THREE.MeshStandardMaterial({color: 0x5d6b45, roughness: .85, depthWrite: false}),   // 丘·草岩
-    c2: new THREE.MeshStandardMaterial({color: 0x8a94a6, roughness: .7, depthWrite: false}),    // 峰·岩灰
-    c3: new THREE.MeshStandardMaterial({color: 0xcabfae, roughness: .45, metalness: .2, depthWrite: false}),  // 楼·亮规整
-    ab: new THREE.MeshStandardMaterial({color: 0x0a0a14, roughness: 1, depthWrite: false}),     // 深渊·近黑
+    // 批34（地形遮挡）：实体地形 depthWrite=true → 真遮挡，山/楼/深渊会挡住蛇与弹（撤掉批32 的「蛇恒可见」妥协）
+    c1: new THREE.MeshStandardMaterial({color: 0x5d6b45, roughness: .85}),   // 丘·草岩
+    c2: new THREE.MeshStandardMaterial({color: 0x8a94a6, roughness: .7}),    // 峰·岩灰
+    c3: new THREE.MeshStandardMaterial({color: 0xcabfae, roughness: .45, metalness: .2}),  // 楼·亮规整
+    ab: new THREE.MeshStandardMaterial({color: 0x0a0a14, roughness: 1}),     // 深渊·近黑
     // 批33修复：polygonOffset -2（比地板 -1 更靠前）→ 远距深度平局时水面/草面恒胜地板
     w: new THREE.MeshBasicMaterial({color: 0x3a7bd5, transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
     g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2})
@@ -2094,6 +2096,8 @@
     }
     elemMeshes = next;
   }
+  window.__elemDbgSet = t => syncElemTerrain(t);          // 批34 探针：注入元素地形（e2e 用，不走服务端）
+  window.__elemMeshDump = () => elemMeshes.map(e => ({k: e.key, elem: e.elem, dw: e.mesh.material.depthWrite, vis: e.mesh.visible, inScene: e.mesh.parent === scene}));
 
   let wallPool = [], wallKey = '';
   let portalMeshes = [], portalKey = '';

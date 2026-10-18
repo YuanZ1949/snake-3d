@@ -2,6 +2,7 @@
 
 > 最后更新：2026-10-19 ｜ 分支 `dev` ｜ 文档描述的功能基线：批33「原神元素反应」完成（当前 HEAD 用 `git log` 查）
 > 生产地址：**http://193.112.172.83:8090/**
+> **批34（2026-10-19）**：地形真遮挡——丘/峰/楼/深渊材质 depthWrite=true（撤掉批32「蛇恒可见」妥协），山后之蛇被正确挡住；水/草/元素面片仍 depthWrite=false（否则贴层挡住地板上的蛇）。新增 `e2e/height32.spec.js` 批34 用例（断言各类 dw）、探针 `__heightMeshDump().dw`/`__elemDbgSet`/`__elemMeshDump`。协议 PROTO_VER 未变，纯客户端渲染。
 
 ---
 
