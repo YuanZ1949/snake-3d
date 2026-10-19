@@ -1,59 +1,63 @@
 {
   "version": 1,
-  "goal": "批35 交付可复现性补齐：生产补 predeploy 备份（先不推远端）、新增可复现的 prod_verify 脚本、把批35 存证图挪进仓库",
+  "goal": "按整体评估报告的建议逐个修复（P0 落盘/写盘安全、P1 roomcfg 口径+生产备份+门禁补套、P2 拆分起步+DOM 节流），逐项独立 commit",
   "acceptance": [
     {
       "id": "1",
-      "text": "生成器单测通过：node scripts/gen_models.js 产出的 models/nailong.glb 与 models/furina.glb 结构合法（magic 'glTF'、chunk 长度对齐、JSON 可解析、accessor 字节数与 BIN chunk 一致）",
+      "text": "store.inc/record_best 改为脏标记批量落盘：新增单测先红后绿（断言连发多次 inc 期间不逐次写盘、flush 后必落盘），python test_game.py 全绿（183 → ≥184）",
       "verdict": "pass"
     },
     {
       "id": "2",
-      "text": "e2e 新增批35 断言（先红后绿）：SKINS 含 id16 奶龙/id17 芙宁娜；选中后 __modelDbg() 返回已挂载 mesh 数 >0 且回退路径不报错",
+      "text": "save_persist_rooms 改 tmp+replace 原子写；Store.load 损坏时先落 .corrupt-<时间戳> 备份再兜底：各配新单测先红后绿，test_game.py 全绿",
       "verdict": "pass"
     },
     {
       "id": "3",
-      "text": "node scripts/static_check.js index.html 通过，且 pwsh scripts/local_ci.ps1 → ALL GREEN（不回归既有用例）",
+      "text": "roomcfg 按拍板口径：有口令的房间仅房主（账号/sid/owner_tok 三轨）可改，无口令房间任何人可改；新增单测先红后绿（陌生人改口令房被拒且参数不变、房主放行、无口令房陌生人仍放行）",
       "verdict": "pass"
     },
     {
       "id": "4",
-      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证 test-results/，prod_verify 无新增 console 错误",
+      "text": "ssh 生产生成 data/ 备份 tar，tar tzf 输出含 store.json",
       "verdict": "pass"
     },
     {
       "id": "5",
-      "text": "生产机生成 predeploy 备份 /home/ubuntu/snake-3d-predeploy-<今日>.tar.gz，且 tar tzf 能列出 index.html / serve.py / models/nailong.glb",
+      "text": "scripts/local_ci.ps1 的 python E2E 9→11 套（+test_ws3.py/test_ws4.py）、.github/workflows/ci.yml 补一行 python test_reactions_p33.py；实跑 pwsh scripts/local_ci.ps1 输出 ALL GREEN",
       "verdict": "pass"
     },
     {
       "id": "6",
-      "text": "新增 scripts/prod_verify35.js 并实跑通过：node scripts/prod_verify35.js 退出码 0，输出含 verdict=pass、皮肤16/17 均 mine.node=true、ERRS=[]（pageerror+console.error 全空）",
+      "text": "handle_msg 32 分支注册表化（逻辑零改动）+ index.html 分区编号索引；node scripts/static_check.js 输出 ALL STATIC CHECKS PASSED 且 test_game.py 全绿",
       "verdict": "pass"
     },
     {
       "id": "7",
-      "text": "10 张 prod35_*.png 移入 docs/evidence/batch35/ 且 git ls-files 计数=10；.tamako/evidence.md 路径与之一致且无「项目没有 prod_verify」类过时陈述；node scripts/static_check.js 仍 ALL STATIC CHECKS PASSED",
+      "text": "#elemBar 每帧查询与榜单每 snap 重建加缓存/脏标记；static_check PASS 且 npx playwright test 14 spec 全绿",
+      "verdict": "pass"
+    },
+    {
+      "id": "8",
+      "text": "每项独立 commit（≥6 个新 commit，不 push），最终 git status --short 为空",
       "verdict": "pass"
     }
   ],
   "notDo": [
-    "不 push 任何远端（用户拍板「只补备份，先不推」）",
-    "不改 index.html / serve.py / 任何游戏代码与玩法数值",
-    "不动批35 以外的存证（p33_attach_react.png、smoke-home.png、smoke-ingame.png 留在 test-results/）",
-    "不新增或修改 CI workflow",
-    "不改相机高度与距离（CAM.h/camDist）",
-    "不引入 ESM 打包器（保持 <script> 无模块架构）",
-    "不动 GACHA_POOL 抽卡概率",
-    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）"
+    "不做评估建议7的三项：three r161+ ESM 升级、配置外置、状态多副本统一",
+    "不重命名/移除 window.__* 探针（保护 scripts/prod_verify35.js 与 e2e 链路）",
+    "不 push 任何远端",
+    "不动 GACHA_POOL / CAM.h / camDist / 碰撞判定 / 玩法数值",
+    "不动他批存证与 docs/evidence/",
+    "不改 persist/delroom 的放开口径（本轮只收 roomcfg，其余列报告）",
+    "不引入新依赖与打包器"
   ],
   "assumptions": [
-    "playwright 已在 node_modules，新增脚本不引入新依赖",
-    "生产 http://193.112.172.83:8090 从本机可直连 HTTP",
-    "docs/evidence/ 不在 .gitignore 忽略范围内"
+    "「设密码的只有房主能改 没密码的所有人都能改」按房间级状态解释：room.pass 非空时仅三轨房主可 roomcfg；room.pass 为空时任何人可 roomcfg（含首次设置口令）",
+    "「房主」复用既有 can_edit_room 三轨（账号所有者 / sid / owner_tok 凭据）",
+    "每项独立 commit、全程不 push"
   ],
   "flow": "直通",
   "state": "closed",
-  "updatedAt": "2026-10-19T02:05:00.000Z"
+  "updatedAt": "2026-10-19T09:30:00.000Z"
 }

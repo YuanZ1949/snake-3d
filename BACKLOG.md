@@ -219,3 +219,15 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **生产零漂移复核**：本地与生产 5 文件 sha256 逐字节一致（`index.html` d0687bb7…、`gltf-loader.js` 87492709…、`serve.py` f5ceeb5c…、`models/nailong.glb` 550fd911…、`models/furina.glb` 70c10d91…），`PID 1676685` 存活、`HTTP 200 249141B`、`PROTO_VER = 30`，生产目录无 `_tmp` 散件。
 - **仍待人工**：`git push`（`dev` ahead `origin/dev` 16 / ahead `server/dev` 27）——用户明确「先不推」，故本轮未执行；本 clone 无 GitHub/Gitee 远端，`ci.yml` 在此不会触发（本地等价门禁是 `scripts/local_ci.ps1`）。
 - **契约**：`.tamako/contract.json` 增补 acceptance 5/6/7（备份 / 脚本 / 存证入仓）并全部 `pass`，`state=closed`；证据 `.tamako/evidence.md` 增「第 2 轮 · 可复现性补齐」章节。
+## 批36（2026-10-19 · 按整体评估建议逐个修复 · 已完成）
+
+- **背景**：用户看过整体代码评估报告后拍板「按建议逐个修复」，并拍板两点口径：roomcfg「设密码的只有房主能改 没密码的所有人都能改」、逐项独立 commit（不 push）。
+- **P0-1 落盘节流（db1f509）**：`store.inc/record_best` 改 `_mark_dirty()` 脏标记 + 5s 节流批量落盘（`STORE_SAVE_INTERVAL=5.0`），主循环不再逐事件整份重写 store.json；register/add_stardust/grant_skin 仍立即写，`shutdown_settle` 无条件 flush 兜底。测试 2 条（哨兵法先红后绿）。
+- **P0-2 写盘安全（629620f）**：`save_persist_rooms` 改 tmp+`os.replace` 原子写（异常吞掉删半截 tmp 返 False）；`Store.load` 损坏先备份 `store.json.corrupt-<时间戳>` 再 `users={}` 兜底。测试 2 条先红后绿。顺带修既存随机 flaky `test_eterrain_attach_and_spawn_avoid_batch33`（20×20 只撒 6 格且依赖全局 RNG 残留 → 测试钉死 (5,5)/hydro 构造性消除）。
+- **P1 roomcfg 口径（a0095e1）**：有口令房仅三轨房主（账号/sid/owner_tok，复用 `can_edit_room`）可改，无口令房任何人可改（含首次设口令）；persist/delroom 维持放开（契约 notDo）。测试 2 条先红后绿，客户端已带 otok 无需改。
+- **P1 生产备份**：ssh 生成 `/home/ubuntu/snake-3d-data-20261019-153034.tar.gz`（28834 B，tar tzf 含 data/store.json ✓），无本地代码改动。
+- **P1 门禁补套（7dda151）**：`local_ci.ps1` python E2E 9→11 套（+test_ws3/ws4）；两套断言原停在批6 之前（期望创建者断开即回收自定义房）→ 改为对齐现行 GC 口径（24h 内保留）；`ci.yml` 补 `test_reactions_p33.py` 一行。实跑 local_ci ALL GREEN（189 单测 + 11 套 E2E + Playwright 46 passed）。
+- **P2 拆分起步（0b03f4e）**：`handle_msg` 698 行/32 分支 if 链逐支平移为 28 个 `_msg_*` handler + `MSG_HANDLERS` 注册表（逻辑零改动，脚本化平移带断言；局内 9 名共用 `_room_actor`），新消息 `@msg_handler` 注册即可；`index.html` 18 主分区头注编号 01-18 + 祈愿升 19，IIFE 开头加分区编号索引块。
+- **P2 热路径减负（2e160fd）**：frame() 每帧 `$()`/querySelectorAll 改启动期缓存（elAtkBtn/elElemBar/elEbBtns）；placeEdge 的 canvas 包围盒缓存（resize 失效）；updateBoard 加内容签名脏标记跳过榜单 DOM 重建（款式同 effHudSig）。
+- **已知问题披露**：reactions.spec「元素弹渲染链路」在全量跑中偶发落在已 win 的 solo 局而超时（spec 注释自述既有竞态），本轮复跑全绿，未归因于本批改动；未修（越界，改 spec 属新决策）。
+- **契约**：`.tamako/contract.json` acceptance 1-8 全 pass、`state=closed`；7 个本地 commit（db1f509/629620f/a0095e1/7dda151/0b03f4e/2e160fd + 收尾文档提交），未 push（契约 notDo）。

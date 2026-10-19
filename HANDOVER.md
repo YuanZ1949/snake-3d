@@ -1,10 +1,11 @@
 # 贪吃蛇 3D —— 项目交接文档
 
-> 最后更新：2026-10-19 ｜ 分支 `dev` ｜ 文档描述的功能基线：批35「奶龙/芙宁娜 角色皮肤 + 迷你 3D 模型」完成（当前 HEAD 用 `git log` 查）
+> 最后更新：2026-10-19 ｜ 分支 `dev` ｜ 文档描述的功能基线：批36「按整体评估建议逐个修复（P0 落盘/写盘安全、P1 roomcfg 口径/生产备份/门禁补套、P2 拆分起步/热路径减负）」完成（当前 HEAD 用 `git log` 查）
 > 生产地址：**http://193.112.172.83:8090/**
 > **批34（2026-10-19）**：地形真遮挡——丘/峰/楼/深渊材质 depthWrite=true（撤掉批32「蛇恒可见」妥协），山后之蛇被正确挡住；水/草/元素面片仍 depthWrite=false（否则贴层挡住地板上的蛇）。新增 `e2e/height32.spec.js` 批34 用例（断言各类 dw）、探针 `__heightMeshDump().dw`/`__elemDbgSet`/`__elemMeshDump`。协议 PROTO_VER 未变，纯客户端渲染。
 > **批35（2026-10-19）**：新增「奶龙」「芙宁娜」两款角色蛇皮肤（`SKIN_N` 16→18，id 16/17），蛇头挂可辨识低多边形迷你 3D 模型——`scripts/gen_models.js` 自产 `models/{nailong,furina}.glb` + three r160 GLTFLoader 经**机械** ESM→UMD 改写的 `gltf-loader.js`（`<script>` 无模块架构不变）；两款入 `FREE_SKINS` 恒免费、**不进 GACHA_POOL**；`applyOffTint` 断线灰化改为逐实体克隆材质。**`PROTO_VER` 29→30（双端 bump）**，投放方式 = scp 5 文件 + 重启进程。取证探针 `myHeadSel`/`__modelBoxDbg`/`__modelShowDbg(on,zoom)`/`__modelDbg().mine`；证据 `.tamako/evidence.md`、契约 `.tamako/contract.json`（closed，4/4 pass）。
 
+> **批36（2026-10-19）**：按整体评估建议修复——P0：`store.inc/record_best` 脏标记 5s 节流批量落盘（`STORE_SAVE_INTERVAL`，关停自动 flush）、`save_persist_rooms` 改 tmp+`os.replace` 原子写、`Store.load` 损坏先备份 `.corrupt-<时间戳>` 再兜底；P1：roomcfg 口令房仅房主可改（用户拍板，无口令房维持放开）、生产 data/ 备份 tar、`local_ci` python E2E 9→11 套（补 `test_ws3/ws4`，断言对齐批6 GC 口径）+ `ci.yml` 补 `test_reactions_p33`；P2：`handle_msg` 32 分支注册表化为 `MSG_HANDLERS`（逻辑零改动）+ `index.html` JS 分区编号 01-19 索引 + 帧循环 DOM 缓存与榜单脏标记。未部署生产（PROTO_VER 30 不变）。
 ---
 
 ## 1. 项目概览
@@ -30,8 +31,8 @@
 
 ```
 snake-3d/
-├── serve.py          3590 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录
-├── index.html       5047 行  前端：CSS + HTML + JS 全在一个文件
+├── serve.py          3782 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录（批36：MSG_HANDLERS 注册表）
+├── index.html       5073 行  前端：CSS + HTML + JS 全在一个文件（批36：JS 分区编号 01-19）
 ├── three.min.js      654 KB  Three.js r160 本地 vendor（批10 从 r128 升级；r160 是最后带 UMD three.min.js 的版本，r161+ 仅 ESM）
 ├── gltf-loader.js            three r160 GLTFLoader 的 UMD 产物（批35，机械 ESM→UMD 改写，供 <script> 引入）
 ├── models/                   nailong.glb / furina.glb（批35，由 scripts/gen_models.js 自产的低模，可复现）
