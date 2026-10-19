@@ -29,7 +29,7 @@ jobs:
       - name: Unit tests (test_game.py)
         run: python test_game.py
 
-      # ---- 8 套 websocket/python E2E ----
+      # ---- 9 套 websocket/python E2E（批36 起补 test_reactions_p33）----
       - name: Start WS servers (28000 / 8090)
         run: |
           PORT=28000 python serve.py > /tmp/serve_28000.log 2>&1 &
@@ -44,7 +44,7 @@ jobs:
           python test_ws.py
           python test_ws2.py
 
-      - name: "E2E (round 2: rooms / p1 / bots / reconnect / pass / delta)"
+      - name: "E2E (round 2: rooms / p1 / bots / reconnect / pass / delta / reactions)"
         run: |
           python verify_rooms.py
           python test_p1.py
@@ -52,6 +52,7 @@ jobs:
           python test_reconnect_p5.py
           python test_pass_p6.py
           python test_delta_p1.py
+          python test_reactions_p33.py
 
       - name: Stop WS servers
         if: always()

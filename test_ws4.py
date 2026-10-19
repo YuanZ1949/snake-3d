@@ -93,14 +93,16 @@ async def main():
         await ws.send(json.dumps({"t": "leave"}))
         await recv_until(ws, "left")
 
-    # ---- 5. 创建者断线后，超大空房间被回收 ----
+    # ---- 5. 创建者断线后：超大空房 24h 内保留（批6 起语义）----
+    # 批36 对齐口径：原断言「立即回收」为批6 之前的老口径（本套件不在任何
+    # 门禁里 → 腐化无人发现），改为与 gc_empty_rooms 的 ROOM_KEEP_SECS 一致。
     await asyncio.sleep(0.6)
     async with websockets.connect(WS) as ws2:
         w2 = await recv_until(ws2, "welcome")
         ids = [r["id"] for r in w2["rooms"]]
         print("after disconnect:", ids)
-        assert rid not in ids and cr2["room"] not in ids, ids
         assert {"a", "b", "c"} <= set(ids), ids
+        assert rid in ids and cr2["room"] in ids, (ids, rid, cr2["room"])
 
     print("WS4 (max map + speed instant + leave) OK")
 

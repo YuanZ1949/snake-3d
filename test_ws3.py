@@ -89,13 +89,17 @@ async def main():
         print("custom rooms while owner online:", myrooms)
         assert rid in myrooms and cr2["room"] in myrooms, myrooms   # 创建者在线 → 房间保留
 
-    # ---- 6. 创建者断线后，空的自定义房间被回收，默认房间常驻 ----
+    # ---- 6. 创建者断线后：新建房 24h 内保留（批6 起语义），默认房常驻 ----
+    # 批36 对齐口径：本例原断言「空自定义房立即被回收」是批6 之前的老口径；
+    # gc_empty_rooms 现为 ROOM_KEEP_SECS=24h 内一律保留（新#11 需求）。本套件
+    # 此前不在任何门禁里（local_ci 9 套/ci.yml 8 套都不含它）→ 腐化无人发现。
     await asyncio.sleep(0.5)   # 等服务端处理完断开
     async with websockets.connect(WS) as ws3:
         w3 = await recv_until(ws3, "welcome")
         ids = [r["id"] for r in w3["rooms"]]
         print("after owner disconnect:", ids)
-        assert set(ids) == {"a", "b", "c"}, ids
+        assert {"a", "b", "c"} <= set(ids), ids                       # 默认房常驻
+        assert rid in ids and cr2["room"] in ids, (ids, rid, cr2["room"])   # 24h 内保留
 
     print("WS3 (room list + custom map + gc) OK")
 
