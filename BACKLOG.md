@@ -195,3 +195,17 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - 改法：实体地形 `depthWrite=true` 真遮挡；水/草/元素面片（地板贴层）保持 `false`。
 - 验证：height32 批34 用例先红后绿；local_ci ALL GREEN（183 单测 + 40 Playwright + 7 套 python E2E）；生产 scp 后遮挡 A/B 截图存证 `test-results/occl_prod_A_wall.png`（蛇被墙完全挡住）与 `_B_nowall.png`（清空后可见），`CONSOLE_ERRS=[]`。
 - 协议：PROTO_VER 29 未变，未重启服务端。
+
+## 批35（2026-10-19 · 奶龙/芙宁娜 角色皮肤 + 迷你 3D 模型 · 已完成）
+
+- **需求**：新增「奶龙」「芙宁娜」两款角色蛇皮肤，蛇头挂**可辨识低多边形迷你 3D 模型**（GLB + GLTFLoader），**纯外观改动**。
+- **素材定案**：Sketchfab 下载 API 401、许可不干净 → **不走第三方素材**，改自建生成器 `scripts/gen_models.js`（可复现、零版权风险）；`gltf-loader.js` = three r160 GLTFLoader 由 ESM **机械**改写成的 UMD 产物（**不引入 ESM 打包器**，`<script>` 架构不变）。
+- **服务端**：`SKIN_N` 16→18；`FREE_SKINS={0,1,2,3,4,16,17}` 恒免费（角色款**不进 GACHA_POOL**，故无需持有记录）；`ALLOWED` 白名单加 `gltf-loader.js` 与两个 `.glb`；`/download` zip 清单同步；**`PROTO_VER` 29→30 双端 bump**。
+- **客户端**：`applySkin` 加载 GLB 挂 `myEnt.head`；GLB 404 **静默回退** skull 球；`applyOffTint` 断线灰化改为**逐实体克隆材质**（避免一条蛇灰化污染全场蛇的贴图材质）；**未改** `CAM.h`/`camDist`、碰撞盒/判定/移动/玩法数值、`GACHA_POOL`，未加开关/设置项。
+- **探针根因**：`applySkin` 原挂模块级 `head`，入局后 `demoBodyShow(false)` 把它隐藏、屏上渲染的是 `myEnt.head` → 旧探针瞄错对象（ON/OFF 字节完全相同 15411）。修复：`myHeadSel()`（优先 `myEnt.head`）+ `__modelBoxDbg()` + `__modelShowDbg(on, zoom)`（**zoom 只放大模型节点、相机不动**，原 scale 存 `node.userData.__zoom0`）+ `__modelDbg().mine`。
+- **门禁**：`node scripts/gen_models.js` + `node scripts/test_gen_models.js` → `GENERATOR CHECKS PASSED`（16/16）；`e2e/skin35.spec.js` **6/6**；`node scripts/static_check.js` → `ALL STATIC CHECKS PASSED`（ids=135 dup=0 div=69/69 css=350/350 js=917/917）；`pwsh scripts/local_ci.ps1` → **ALL GREEN**（`npx playwright test` 跑整个 `e2e/`，含批35 spec）。
+- **生产验收（验收 4）**：5 文件 scp + 重启（PID 1676685）、白名单全 200、远端 `index.html` 249141 B（`myHeadSel`=3）、`loader=true`、`MOUNT_* node=true skull=false`、`FALLBACK node=false skull=true`、三个取证会话 **`ERRS=[]`**（项目无 `prod_verify` 脚本，以取证脚本收集的 `pageerror`+`console.error` 为空作等价证据）。存证 `test-results/`：真实比例同会话配对 `prod35_{nailong,furina}_{ts,tsOff}.png`（ON=模型可辨 vs OFF=素金球）+ 8× 放大 `{head,headOff}` + 全帧语境 `zoomOn`。
+- **证伪掉的取证路线（别再走）**：截图差分法、严格颜色计数法、投影盒子裁剪对比法 —— ON/OFF 字节数完全相同 / 地板干扰。最终用「**必须放大取证法**」（先 OFF 帧再 ON 帧）+ 真实比例同会话配对。
+- **清理**：`prod35_*_normal.png` 实为登录页截图（无效，已删）；`*_full.png`、裸名 `prod35_{furina,nailong}.png`、`ab_/frz_/iso_` 过程帧全删；根目录 17 个一次性 `_tmp_*.js` 全删。
+- **协议**：`PROTO_VER` 29→30 双端（皮肤数与模型资源属服务端语义变化）；bump 会再触发批29④ 每账号 14,400 更新回馈（预期行为）。
+- **交付落点**：契约 `.tamako/contract.json`（`state=closed`，acceptance 4/4 `pass`）、证据 `.tamako/evidence.md`。

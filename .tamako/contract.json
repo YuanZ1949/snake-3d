@@ -1,34 +1,43 @@
 {
   "version": 1,
-  "goal": "批34 地形遮挡：山体/深渊改成真遮挡（depthWrite=true），让地形和建筑会挡视线，山后之蛇被正确挡住",
+  "goal": "批35 角色皮肤：新增「奶龙」「芙宁娜」两款迷你模型皮肤——用生成器产出低模 GLB，配 UMD 化的 GLTFLoader 挂到蛇头，纯外观改动",
   "acceptance": [
     {
       "id": "1",
-      "text": "node scripts/static_check.js index.html 通过，且 pwsh scripts/local_ci.ps1 → ALL GREEN（不回归 height32.spec.js 四条）",
+      "text": "生成器单测通过：node scripts/gen_models.js 产出的 models/nailong.glb 与 models/furina.glb 结构合法（magic 'glTF'、chunk 长度对齐、JSON 可解析、accessor 字节数与 BIN chunk 一致）",
       "verdict": "pass"
     },
     {
       "id": "2",
-      "text": "新增 e2e 断言：注入 hmap 后 丘/峰/楼/深渊 材质 depthWrite===true，水/草/元素面片仍 depthWrite===false（先红后绿）",
+      "text": "e2e 新增批35 断言（先红后绿）：SKINS 含 id16 奶龙/id17 芙宁娜；选中后 __modelDbg() 返回已挂载 mesh 数 >0 且回退路径不报错",
       "verdict": "pass"
     },
     {
       "id": "3",
-      "text": "生产 scp index.html 后：丘陵局里蛇开到峰背后被峰挡住（截图存证 test-results/），prod_verify 无新增 console 错误",
+      "text": "node scripts/static_check.js index.html 通过，且 pwsh scripts/local_ci.ps1 → ALL GREEN（不回归既有用例）",
+      "verdict": "pass"
+    },
+    {
+      "id": "4",
+      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证 test-results/，prod_verify 无新增 console 错误",
       "verdict": "pass"
     }
   ],
   "notDo": [
-    "不加开关/设置项（用户拍板：直接改死）",
     "不改相机高度与距离（CAM.h/camDist）",
-    "不动 PROTO 与 serve.py（纯客户端渲染）",
-    "不给蛇加剪影/半透透视，不加阴影投射"
+    "不改碰撞盒、判定、移动、玩法数值",
+    "不引入 ESM 打包器（保持 <script> 无模块架构）",
+    "不动 GACHA_POOL 抽卡概率",
+    "不加开关/设置项",
+    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）"
   ],
   "assumptions": [
-    "深渊(ab) 是地板下的坑、蛇进不去，改真遮挡只影响坑口显示不影响玩法",
-    "建筑（墙块/石头）本就 depthWrite=true 已挡视线，无需改动"
+    "serve.py 需改动并重启：ALLOWED 白名单加 gltf-loader.js 与两个 .glb、skin %16→%18、新增 FREE_SKINS 恒免费、/download zip 清单同步",
+    "PROTO_VER 29→30（服务端语义变化，需重启并强制老客户端 reload），部署方式由「scp 即生效」变回「scp + 重启」",
+    "模型为程序生成的低多边形风格化迷你模型，不是官方高精度还原",
+    "applyOffTint 断线灰化须逐实体克隆材质，避免一条蛇灰化污染全场蛇的贴图材质"
   ],
-  "flow": "直通",
+  "flow": "vertical-slice",
   "state": "closed",
-  "updatedAt": "2026-10-18T18:12:35.000Z"
+  "updatedAt": "2026-10-19T00:40:00.000Z"
 }

@@ -45,7 +45,7 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 29          # 批33：aura/eterrain/eb/react 元素反应；改协议必须同步 bump 双端
+PROTO_VER = 30          # 批35：皮肤 16 -> 18（新增角色款 16 奶龙/17 芙宁娜 + 免费门禁）；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
 ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
@@ -323,6 +323,8 @@ class Store:
 # ---- 批25 抽卡：卡池与纯函数（概率/保底/50-50，不碰 Store/全局） ----
 
 GACHA_POOL = {3: [5, 6, 7, 8, 9, 10], 4: [11, 12, 13], 'up': 15, 'std': 14}
+SKIN_N = 18                    # 批35：16 款 + 角色款 16 奶龙 / 17 芙宁娜
+FREE_SKINS = {0, 1, 2, 3, 4, 16, 17}   # 批35：免费恒含（角色款不进卡池，故无需持有记录）
 GACHA_PRICE = 160          # 批25：单抽星尘价（十连 = 10×，无折扣，spec §4.3）
 UPDATE_GIFT = GACHA_PRICE * 90   # 批29④：版本更新庆祝回馈 = 90 抽 = 14,400 星尘（每账号每版本一次）
 GACHA_P5 = 0.016      # 5★ 基础概率
@@ -3018,12 +3020,13 @@ async def handle_msg(sess, m):
             pname = sess.user
         else:
             pname = None
-        # 批25：join 皮肤先归一化（16 款）；越界/未拥有静默回退 0（可降级展示，不拒入局）
+        # 批25：join 皮肤先归一化；批35：16 款 -> SKIN_N(18) 款，角色款 16/17 恒免费
+        # 越界/未拥有静默回退 0（可降级展示，不拒入局）
         try:
-            skin = int(m.get('skin', 0) or 0) % 16
+            skin = int(m.get('skin', 0) or 0) % SKIN_N
         except (TypeError, ValueError):
             skin = 0
-        if skin >= 5 and skin not in store.skins_of(sess.user or ''):
+        if skin not in FREE_SKINS and skin not in store.skins_of(sess.user or ''):
             skin = 0
         # 第一个入局者决定房间尺寸（空房间时生效）
         if not room.round_ids and m.get('size'):
@@ -3263,16 +3266,16 @@ async def handle_msg(sess, m):
     elif t == 'speed':
         apply_speed(p, m.get('ms', 150))
     elif t == 'skin':
-        # 批25：皮肤扩至 16 款——先归一化再鉴权（负数/越界不绕过拥有检查）
+        # 批25：皮肤归一化再鉴权（负数/越界不绕过拥有检查）；批35：16 -> SKIN_N(18)，角色款免费
         try:
             i = int(m.get('i', 0) or 0)
         except (TypeError, ValueError):
             i = 0
-        i %= 16
+        i %= SKIN_N
         if sess.user and p.get('user') != sess.user:
             # 批25 终审 MINOR-2：换号后不许改写他家玩家外观（匿名换免费皮肤不受影响）
             await send(sess, {'t': 'error', 'err': '身份不一致，请重新登录'})
-        elif i >= 5 and i not in store.skins_of(sess.user or ''):
+        elif i not in FREE_SKINS and i not in store.skins_of(sess.user or ''):
             await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
         else:
             p['skin'] = i
@@ -3460,7 +3463,11 @@ async def handler(ws):
 # ============================================================ 静态文件
 ALLOWED = {'/': ('index.html', 'text/html; charset=utf-8'),
            '/index.html': ('index.html', 'text/html; charset=utf-8'),
-           '/three.min.js': ('three.min.js', 'application/javascript; charset=utf-8')}
+           '/three.min.js': ('three.min.js', 'application/javascript; charset=utf-8'),
+           # 批35：角色迷你模型（GLTFLoader + 生成器产出的低模 GLB）
+           '/gltf-loader.js': ('gltf-loader.js', 'application/javascript; charset=utf-8'),
+           '/models/nailong.glb': ('models/nailong.glb', 'model/gltf+binary'),
+           '/models/furina.glb': ('models/furina.glb', 'model/gltf+binary')}
 
 
 async def process_request(path, headers):
@@ -3474,7 +3481,8 @@ async def process_request(path, headers):
     if key in ('/download', '/download.zip'):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
-            for fn in ('index.html', 'serve.py', 'three.min.js'):
+            for fn in ('index.html', 'serve.py', 'three.min.js', 'gltf-loader.js',
+                       'models/nailong.glb', 'models/furina.glb'):
                 f = ROOT / fn
                 if f.is_file():
                     z.writestr(fn, f.read_bytes())

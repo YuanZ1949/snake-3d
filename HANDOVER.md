@@ -1,8 +1,9 @@
 # 贪吃蛇 3D —— 项目交接文档
 
-> 最后更新：2026-10-19 ｜ 分支 `dev` ｜ 文档描述的功能基线：批33「原神元素反应」完成（当前 HEAD 用 `git log` 查）
+> 最后更新：2026-10-19 ｜ 分支 `dev` ｜ 文档描述的功能基线：批35「奶龙/芙宁娜 角色皮肤 + 迷你 3D 模型」完成（当前 HEAD 用 `git log` 查）
 > 生产地址：**http://193.112.172.83:8090/**
 > **批34（2026-10-19）**：地形真遮挡——丘/峰/楼/深渊材质 depthWrite=true（撤掉批32「蛇恒可见」妥协），山后之蛇被正确挡住；水/草/元素面片仍 depthWrite=false（否则贴层挡住地板上的蛇）。新增 `e2e/height32.spec.js` 批34 用例（断言各类 dw）、探针 `__heightMeshDump().dw`/`__elemDbgSet`/`__elemMeshDump`。协议 PROTO_VER 未变，纯客户端渲染。
+> **批35（2026-10-19）**：新增「奶龙」「芙宁娜」两款角色蛇皮肤（`SKIN_N` 16→18，id 16/17），蛇头挂可辨识低多边形迷你 3D 模型——`scripts/gen_models.js` 自产 `models/{nailong,furina}.glb` + three r160 GLTFLoader 经**机械** ESM→UMD 改写的 `gltf-loader.js`（`<script>` 无模块架构不变）；两款入 `FREE_SKINS` 恒免费、**不进 GACHA_POOL**；`applyOffTint` 断线灰化改为逐实体克隆材质。**`PROTO_VER` 29→30（双端 bump）**，投放方式 = scp 5 文件 + 重启进程。取证探针 `myHeadSel`/`__modelBoxDbg`/`__modelShowDbg(on,zoom)`/`__modelDbg().mine`；证据 `.tamako/evidence.md`、契约 `.tamako/contract.json`（closed，4/4 pass）。
 
 ---
 
@@ -19,7 +20,7 @@
 | 账户 | 昵称与账号合并（一个输入框）、6 位数字密码、token 恢复登录、可游客游玩 |
 | 排行榜/战绩 | 全服排行榜、个人战绩（胜场/击杀/死亡/场次/最高分/吃果数） |
 | 界面 | 统一 `.chip` 按钮风格、开始页布局、房间列表、创建面板、排行榜屏、暂停屏、结束屏、**三处 🏠 返回主页**、移动端触屏方向盘 |
-| 视听 | 环境光+半球光+平行光、粒子/飘字、音效与背景音乐、**16 款皮肤（5 免费 + 11 抽卡）**、5 种地图主题（常规/熔岩/冰原/星空/白天） |
+| 视听 | 环境光+半球光+平行光、粒子/飘字、音效与背景音乐、**18 款皮肤（7 免费 + 11 抽卡；批35 新增 16 奶龙 / 17 芙宁娜，恒免费 + 迷你 3D 模型）**、5 种地图主题（常规/熔岩/冰原/星空/白天） |
 | 抽卡（祈愿） | **批25**：星尘货币（局内吃果 10/颗、**吃星星 15/颗（批29⑤，原 10）** + 局末并账）、卡池 12 款（3★×6 / 4★×3 / 5★ 白金圣蛇+UP 辉夜）、160 星尘/抽、1.6% 5★ + 90 抽硬保底 + 50/50 歪则下个 5★ 必 UP、10 抽必出 4★、重复返还 10/50/200、流星抽卡动画（单抽/十连、最高档压轴、跳过），**批31**：动画原神化重做——夜空天幕（星空+山峦剪影地平线）、长彗尾流星右上入场向中央下方消失点透视飞行（单抽 ~1.4s / 十连每颗 550ms 依次）、落地光柱冲天（5★ 金柱+震动）、单抽剪影 hold→翻牌+星徽光圈绽放、十连流星飞完直接进陈列依次翻卡；五星皮肤高级感三件套（局内 emissive 强脉动+头部星尘拖尾+光环，大厅演示蛇同享；皮肤页 5★ 金框流光大卡 `.s5`/4★ 紫框 `.s4`）；我的皮肤页签（按星级分组点选）、大厅入口 ✨祈愿；**批29④**：版本更新庆祝回馈（每账号每 `PROTO_VER` 一次，14,400 = 90 抽×160，**批31 起登录 auth 即弹**，room-ok 路保留兜底） |
 | 后台 | 服务器使用情况记录（`usage.log`/`usage.json` + 报表脚本），**不体现在页面上** |
 
@@ -29,9 +30,14 @@
 
 ```
 snake-3d/
-├── serve.py          3582 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录
-├── index.html       4896 行  前端：CSS + HTML + JS 全在一个文件
+├── serve.py          3590 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录
+├── index.html       5047 行  前端：CSS + HTML + JS 全在一个文件
 ├── three.min.js      654 KB  Three.js r160 本地 vendor（批10 从 r128 升级；r160 是最后带 UMD three.min.js 的版本，r161+ 仅 ESM）
+├── gltf-loader.js            three r160 GLTFLoader 的 UMD 产物（批35，机械 ESM→UMD 改写，供 <script> 引入）
+├── models/                   nailong.glb / furina.glb（批35，由 scripts/gen_models.js 自产的低模，可复现）
+├── scripts/                  gen_models.js · test_gen_models.js · static_check.js · local_ci.ps1 …
+├── e2e/                      Playwright 用例（_helpers.js · smoke · skin35（批35）…）
+├── .tamako/                  契约 contract.json + 证据 evidence.md（每批的验收落点）
 ├── test_game.py      24 项单元测试（纯逻辑，不起服务）
 ├── test_ws.py        E2E：入局/移动/攻击/排行榜/房间
 ├── test_ws2.py       E2E：HTTP 三接口 / 注册登录 / 入局快照 / 观战 / 排行榜 / 建房
@@ -146,7 +152,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | `eb` | `elem` | **批33 新增**：发射元素弹——`elem` ∈ `pyro/hydro/cryo/electro`（否则静默忽略）。门禁顺序：`elements` 总开关 + 存活 + 非 win_pending + 非挂机（`pause`）+ 非 `frozen` 冻结 → 才查独立冷却 `EB_CD`（未过闸不吞 CD）；弹体入 `projectiles` 带 `elem` 与头格高度 `h`，广播 `ev('fire')` 带 `elem` |
 | `ult` | — | **批2 新增**：释放大招（蓄力满 `ULT_MAX=100`、冷却 `ULT_COOL=3s`，否则服务端静默忽略）；8 方向环形弹幕 |
 | `speed` | `ms` | 速度档，服务端夹到 80–300，**立即生效** |
-| `skin` | `i` | 换皮肤。**批25**：`i %= 16` 归一化（负值/越界先折返），`i≥5` 必须已拥有（未拥有回 error 静默回退到 `join` 带的 i 或先前值），免费 0–4 恒可选 |
+| `skin` | `i` | 换皮肤。**批25**：`i %= SKIN_N` 归一化（负值/越界先折返），`i≥5` 必须已拥有（未拥有回 error 静默回退到 `join` 带的 i 或先前值），免费 0–4 恒可选；**批35**：`SKIN_N` 16→18、`FREE_SKINS={0,1,2,3,4,16,17}`（角色款恒免费且不进卡池，故无需持有记录） |
 | `gacha` | `n` | **批25 T3 新增**：抽卡，`n` 白名单只收 1/10（其余回「无效的抽数」）；需已登录（否则「抽卡需要先登录」）；入局时玩家 `p.user` 必须与登录账号一致（防中途换号跨账号搬资产）；余额 = 总账 + 当场星尘 ≥ 160×n 才可（扣减先总账后当场，检查→扣减→save 无 await 关键区） |
 | `gachainfo` | — | **批25 T3 新增**：拉抽卡状态（进祈愿界面/入局时各拉一次）；未登录回零值占位（防客户端卡死）；**批26**：登录账号与入局玩家 `p.user` 不一致（换号场景）同样回零值占位（与 `gacha` 同口径的身份校验，防跨账号混显总账/当场星尘） |
 | `persist` | `room, otok?` | **批6 新增（新#11）**：把房间标记为常驻（成功后广播刷新列表；写盘 `data/persist_rooms.json`，重启重建、永不回收）。鉴权 **批23 P6** 从「仅在线 `owner==sid`」扩为 `can_edit_room()` 三轨（账号 / 在线 sid / `otok` owner 凭据常数时间比对）——匿名断线重连后仍可保存 |
@@ -452,7 +458,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`d86942c`**（批29 全部 6 项 + 批30 全部 4 项（新手村配置/在线人数/公屏聊天+暂停挂机/管理员账户），2026-10-17 02:56 部署，origin/server 双远端均已推送；运行时 `serve.py` 与 `d86942c` blob 一致 `35711753…`、`index.html` 一致 `dfe7c5ec…`、首页含管理 Tab 探针（`cpTabA`/`admPane` 8 处命中）、200 201183B、journal 零 error）。部署前漂移零（生产原为批28 `b5ae801` blob `dfc85c33…`）。回滚点：`snake-3d-predeploy-20261017-025629.tar.gz`（另有批28 `20261016-181919` 及批26 `113444` 与更早 `20261015-*` 多个）。注意：**批29④ PROTO_VER 26→27 已随本次部署生效**——生产每账号进房会弹更新回馈（一次性 14,400 星尘，`update_ver_claimed` 单调防重放）；批29/30 全部改动纯增量+增量协议，无破坏性数据迁移，`data/` 目录未动。批22 起的限速/防爆破等以单测+`local_ci` ALL GREEN（Playwright 30 passed）为门禁证据，未在生产做破坏性探针。
+当前生产版本：**dev 工作区（批35，尚未 commit）** —— 批35「奶龙/芙宁娜 角色皮肤 + 迷你 3D 模型」于 2026-10-19 **直接 `scp` 5 文件 + 重启进程**投放（`index.html` + `gltf-loader.js` + `models/nailong.glb` + `models/furina.glb` + `serve.py`，**未走 git archive**，因改动仍在 dev 工作区未提交）。投放后核验：远端 `PROTO_VER = 30`、新 PID 1676685、资源白名单全 200、远端 `index.html` 249141 B 且 `grep -c myHeadSel` = 3；运行时 `loader=true`、`skins[16]=nailong` / `skins[17]=furina`、`MOUNT_* node=true skull=false`、`FALLBACK node=false skull=true`、取证三会话 `ERRS=[]`（`pageerror` + `console.error` 全空）。注意：**批35 `PROTO_VER` 29→30 双端 bump** —— 老标签页进房即 `location.reload()`，并会再触发批29④ 每账号 14,400 星尘更新回馈（`update_ver_claimed` 单调比较，属预期行为而非 bug）。回滚点：沿用既有 `snake-3d-predeploy-*.tar.gz` 系列（本次投放**未新建** predeploy 备份；回滚须按 §11.2 重投上一版文件）。上一已提交版本记录：**dev@`d86942c`**（批29 全部 6 项 + 批30 全部 4 项，2026-10-17 02:56 部署，origin/server 双远端均已推送）。
 
 详细端口/1Panel 说明见 `DEPLOY.md`。
 

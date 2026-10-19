@@ -1102,16 +1102,17 @@ def test_skin_normalize_and_auth():
         s = _cfg_sess(sid='g10', user='alice', room=r)
         s.ip = '3.3.3.10'
         s.pid = 1
-        # -1 → 15（辉夜 5★ 未拥有）→ error 且 skin 不变
-        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -1}))
+        # 批35：SKIN_N 16→18，边界值随之换挡（语义不变：先归一化再鉴权）
+        # -3 → 15（辉夜 5★ 未拥有）→ error 且 skin 不变
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -3}))
         assert s.ws.sent[-1].get('t') == 'error' and p['skin'] == 0, s.ws.sent[-1]
-        # -16 → 0（免费档）→ 生效不报错
+        # -18 → 0（免费档）→ 生效不报错
         n0 = len(s.ws.sent)
-        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -16}))
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': -18}))
         assert p['skin'] == 0 and not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), \
             s.ws.sent[n0:]
-        # 21 → 5（赤霞 3★ 未拥有）→ error（终审 NIT-7：原注释误标 4★）
-        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 21}))
+        # 23 → 5（赤霞 3★ 未拥有）→ error（终审 NIT-7：原注释误标 4★）
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 23}))
         assert s.ws.sent[-1].get('t') == 'error' and p['skin'] == 0, s.ws.sent[-1]
         # 拥有 15 后生效
         serve.store.grant_skin('alice', 15)
@@ -1120,6 +1121,17 @@ def test_skin_normalize_and_auth():
         # 免费档 2 生效
         asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 2}))
         assert p['skin'] == 2, p['skin']
+        # 批35 T5：角色款 16/17 恒免费（不进卡池、无需持有记录）→ 直接生效
+        for i in (16, 17):
+            n0 = len(s.ws.sent)
+            asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': i}))
+            assert p['skin'] == i, (i, p['skin'])
+            assert not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), s.ws.sent[n0:]
+        # 免费档外的 5★ 角色款不存在 → 18 越界归一化到 0（免费）不报错
+        n0 = len(s.ws.sent)
+        asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 18}))
+        assert p['skin'] == 0 and not any(x.get('t') == 'error' for x in s.ws.sent[n0:]), \
+            s.ws.sent[n0:]
         # 'abc' → 回退 0 不炸
         n0 = len(s.ws.sent)
         asyncio.run(serve.handle_msg(s, {'t': 'skin', 'i': 'abc'}))
@@ -3466,7 +3478,10 @@ def test_snapshot_height():
     assert s['proj'][0]['h'] == 2         # 弹道高度字段随每帧 proj 下发
     src = open('serve.py', encoding='utf-8').read()
     html = open('index.html', encoding='utf-8').read()
-    assert 'PROTO_VER = 29' in src and 'const PROTO_VER = 29' in html   # 批33：元素反应协议 bump
+    # 双端协议号必须一致且等于服务端常量（批35 起改为动态读，bump 协议不必再改本测试）
+    v = serve.PROTO_VER
+    assert f'PROTO_VER = {v}' in src, v
+    assert f'const PROTO_VER = {v}' in html, v
 
 
 def test_reactions_table_complete_batch33():

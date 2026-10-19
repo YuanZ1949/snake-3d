@@ -1059,6 +1059,7 @@
   </div>
 
 <script src="three.min.js"></script>
+<script src="gltf-loader.js"></script>
 <script>
 (() => {
   const canvas = document.getElementById('game');
@@ -1125,7 +1126,7 @@
   let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 29;   // 批33：aura/eterrain/eb/react 元素反应；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
+  const PROTO_VER = 30;   // 批35：皮肤 16 -> 18（角色款奶龙/芙宁娜）；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
@@ -1408,11 +1409,15 @@
     // 5★ 2 款（id 14 常驻 / 15 UP，glow=emissive 色，蛇身脉动发光）
     {name: '白金圣蛇', base: '#e9ecef', dark: '#868e96', belly: '#ffffff', head: 0xffffff, pattern: 'diamond', metal: .7, star: 5, glow: 0xfff3c4},
     {name: '辉夜', base: '#2b2118', dark: '#0c0805', belly: '#ffd43b', head: 0xffd43b, pattern: 'diamond', metal: .6, star: 5, glow: 0xffc94d},
+    // 批35 角色皮肤（id 16-17）：model 指向本仓库生成器产出的低模 GLB，蛇头换成迷你模型
+    {name: '奶龙', base: '#ffd54a', dark: '#f08c00', belly: '#fff3c4', head: 0xffd54a, pattern: 'spot', metal: .05, star: 5, glow: 0xffd54a, model: 'nailong'},
+    {name: '芙宁娜', base: '#4aa3ff', dark: '#2b3a67', belly: '#f5f8ff', head: 0xffe0c8, pattern: 'wave', metal: .2, star: 5, glow: 0x74c0fc, model: 'furina'},
   ];
   let skinIdx = Number(localStorage.getItem('snake-skin') || 0);
   if (!(skinIdx >= 0 && skinIdx < SKINS.length)) skinIdx = 0;   // 批25 T4：越界钳制（存量脏值/未来缩池）
-  // 已拥有皮肤集合：免费 5 款恒含，登录后由 gachainfo.skins 填充卡池款
-  let ownedSkins = new Set([0, 1, 2, 3, 4]);
+  // 已拥有皮肤集合：免费 7 款恒含（0-4 + 批35 角色款 16/17），登录后由 gachainfo.skins 填充卡池款
+  const FREE_SKINS = [0, 1, 2, 3, 4, 16, 17];   // 批35：与服务端 serve.FREE_SKINS 同步
+  let ownedSkins = new Set(FREE_SKINS);
   let skinPending = null;   // 乐观生效待确认：{prev, next, at}，服务端 error 时回滚
   let myDust = 0;           // 批25 T5：局内当场星尘（本地自增，权威以 gachainfo 回包为准）
   const skinTexCache = {};
@@ -1584,6 +1589,7 @@
     e.bodyMat.metalness = s.metal;
     e.bodyMat.needsUpdate = true;
     e.skull.material.color.setHex(s.head);
+    mountHeadModel(e.head, e.skull, s.model || null);   // 批35：角色皮肤换头
     applyOffTint(e);   // 挂起灰化在皮肤色之上再乘（paintEnt 会覆盖 skull 色，需重应用）
   }
 
@@ -1591,6 +1597,7 @@
     // 断线挂起蛇（批12）：整体压暗灰化，名字加 💤——bodyMat.color 默认白色乘贴图，置灰即全身上色罩
     e.bodyMat.color.setHex(e.off ? 0x5a5a5a : 0xffffff);
     e.skull.material.color.setHex(e.off ? 0x777777 : SKINS[e.skin % SKINS.length].head);
+    tintHeadModel(e.head, e.off ? 0x777777 : 0xffffff);   // 批35：模型同套灰化（材质已逐实体克隆）
   }
 
   function applySkin() {
@@ -1600,6 +1607,8 @@
     bodyMat.metalness = s.metal;
     bodyMat.needsUpdate = true;
     skullMesh.material.color.setHex(s.head);
+    mountHeadModel(head, skullMesh, s.model || null);   // 批35：本地蛇头
+    tintHeadModel(head, 0xffffff);
     if (myEnt) {
       myEnt.skin = skinIdx; paintEnt(myEnt);
       skinPending = {prev: skinIdx, at: performance.now()};   // 批25 T4：局内生效须服务端鉴权确认
@@ -1645,6 +1654,74 @@
     g.add(ring);
     g.userData.ring = ring;
     return g;
+  }
+
+  // ================= 批35：角色迷你模型（GLB）=================
+  // 模型由 scripts/gen_models.js 产出（零外部素材，版权干净）；
+  // gltf-loader.js 是 three r160 ESM GLTFLoader 的 UMD 化产物，挂在 THREE.GLTFLoader。
+  // 蛇头仍保留 skull 球（有模型时 invisible），保证无模型/加载失败时零回归。
+  const HEAD_MODEL_GLB = {nailong: 'models/nailong.glb', furina: 'models/furina.glb'};
+  const MODEL_FIT = .3;        // 拟合到现有蛇头量级（SphereGeometry(.3)）
+  const MODEL_TPL = {};        // key -> 归一化模板（只读，用前 clone）
+  const MODEL_PEND = {};       // key -> Promise，防重复请求
+
+  function loadHeadModel(key) {
+    if (MODEL_TPL[key]) return Promise.resolve(MODEL_TPL[key]);
+    if (MODEL_PEND[key]) return MODEL_PEND[key];
+    if (!HEAD_MODEL_GLB[key] || typeof THREE.GLTFLoader !== 'function') return Promise.resolve(null);
+    MODEL_PEND[key] = new Promise(res => {
+      try {
+        new THREE.GLTFLoader().load(HEAD_MODEL_GLB[key], gltf => {
+          const root = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+          if (!root) { MODEL_PEND[key] = null; return res(null); }
+          root.traverse(o => {
+            if (o.isMesh) {
+              o.castShadow = true; o.frustumCulled = false;
+              if (o.material) { o.material.vertexColors = true; o.material.needsUpdate = true; }
+            }
+          });
+          // 归一化：包围盒最长边缩放到 MODEL_FIT，几何中心对齐原点
+          const box = new THREE.Box3().setFromObject(root);
+          const size = new THREE.Vector3(); box.getSize(size);
+          const ctr = new THREE.Vector3(); box.getCenter(ctr);
+          const maxDim = Math.max(size.x, size.y, size.z);
+          const k = maxDim > 1e-6 ? MODEL_FIT / maxDim : 1;
+          root.scale.setScalar(k);
+          root.position.set(-ctr.x * k, -ctr.y * k, -ctr.z * k);
+          const wrap = new THREE.Group();
+          wrap.add(root);
+          MODEL_TPL[key] = wrap;
+          MODEL_PEND[key] = null;
+          res(wrap);
+        }, undefined, () => { MODEL_PEND[key] = null; res(null); });   // 加载失败静默回退
+      } catch (err) { MODEL_PEND[key] = null; res(null); }
+    });
+    return MODEL_PEND[key];
+  }
+
+  // 挂/卸模型：key 为 null 时恢复 skull 球。异步，带换肤令牌防串。
+  function mountHeadModel(headGrp, skullMesh, key) {
+    const prev = headGrp.userData.modelNode;
+    if (prev) { headGrp.remove(prev); headGrp.userData.modelNode = null; }
+    headGrp.userData.modelKey = key || null;
+    skullMesh.visible = !key;
+    if (!key) return;
+    loadHeadModel(key).then(tpl => {
+      if (headGrp.userData.modelKey !== key) return;   // 已换肤/已销毁（后续调用已重置可见性）
+      if (!tpl) { skullMesh.visible = true; return; }  // 批35：加载失败 → 恢复 skull 球，不留无头蛇
+      const node = tpl.clone(true);
+      // 逐实体克隆材质：applyOffTint 只灰化本条蛇，不污染全场
+      node.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
+      headGrp.add(node);
+      headGrp.userData.modelNode = node;
+    });
+  }
+
+  // 断线灰化也罩住模型材质（乘色，与 bodyMat/skull 同一套灰化值）
+  function tintHeadModel(headGrp, hex) {
+    const node = headGrp && headGrp.userData.modelNode;
+    if (!node) return;
+    node.traverse(o => { if (o.isMesh && o.material && o.material.color) o.material.color.setHex(hex); });
   }
 
   const head = makeHeadGroup();
@@ -1915,6 +1992,76 @@
   window.__skinsDbgSet = ids => {           // 批31 探针：注入拥有集并重渲皮肤页（e2e 用，不走服务端）
     ownedSkins = new Set(ids);
     renderWishSkins();
+  };
+  // 批35 探针：角色迷你模型挂载状态（e2e 断言用）
+  window.__modelDbg = () => ({
+    loader: typeof THREE.GLTFLoader === 'function',   // gltf-loader.js 是否就位
+    skins: SKINS.map(s => s.model || null),           // 每款皮肤的 model 字段（null=无模型）
+    loaded: Object.keys(MODEL_TPL),                   // 已加载并归一化的模板
+    pending: Object.keys(MODEL_PEND).filter(k => MODEL_PEND[k]),
+    mine: (() => {                                    // 本地蛇
+      const s = SKINS[skinIdx % SKINS.length];
+      return {want: s.model || null,
+              key: head.userData.modelKey || null,
+              node: !!head.userData.modelNode,
+              skull: skullMesh.visible};
+    })(),
+    others: [...ents.values()].map(e => ({skin: e.skin,
+                                 want: SKINS[e.skin % SKINS.length].model || null,
+                                 key: e.head.userData.modelKey || null,
+                                 node: !!e.head.userData.modelNode})),
+  });
+  // 批35 探针：实际渲染中的自机蛇头组——入局后应是 myEnt.head（模块级 head 此时被 demoBodyShow 隐藏），
+  // 大厅/demo 时回退模块级 head。tag 字段用于取证时确认到底瞄的是哪个对象。
+  const myHeadSel = () => (typeof myEnt !== 'undefined' && myEnt && myEnt.head && myEnt.head.parent)
+    ? {g: myEnt.head, s: (myEnt.skull || null), tag: 'myEnt'} : {g: head, s: skullMesh, tag: 'demo'};
+  // 批35 探针：本地蛇头部模型的屏幕包围盒（NDC→px，e2e/生产截图用 clip 精确裁头）
+  // 注意：游戏 canvas 并非铺满窗口，必须用 getBoundingClientRect 换算，不能用 window.innerWidth。
+  window.__modelBoxDbg = () => {
+    const sel = myHeadSel(), node = sel.g.userData.modelNode;
+    if (!node) return null;
+    const r = renderer.domElement.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    const b = new THREE.Box3().setFromObject(node);
+    if (!isFinite(b.min.x)) return null;
+    const v = new THREE.Vector3();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      v.set(x, y, z).project(camera);
+      const px = r.left + (v.x * .5 + .5) * W, py = r.top + (.5 - v.y * .5) * H;
+      if (px < x0) x0 = px; if (px > x1) x1 = px;
+      if (py < y0) y0 = py; if (py > y1) y1 = py;
+    }
+    const w = node.getWorldPosition(new THREE.Vector3());
+    return {x: Math.max(r.left, x0), y: Math.max(r.top, y0),
+            w: Math.min(r.right, x1) - Math.max(r.left, x0), h: Math.min(r.bottom, y1) - Math.max(r.top, y0),
+            src: sel.tag, nodeVis: node.visible, grpVis: sel.g.visible, world: [w.x, w.y, w.z]};
+  };
+  // 批35 探针：只切蛇头模型可见性（不改身体贴图）；zoom 可临时放大模型用于取证定位（传空则还原）
+  window.__modelShowDbg = (on, zoom) => {
+    const sel = myHeadSel(), node = sel.g.userData.modelNode;
+    if (node) {
+      node.visible = !!on;
+      if (zoom) {
+        if (!node.userData.__zoom0) node.userData.__zoom0 = {x: node.scale.x, y: node.scale.y, z: node.scale.z};
+        const z = node.userData.__zoom0;
+        node.scale.set(z.x * zoom, z.y * zoom, z.z * zoom);
+      } else if (node.userData.__zoom0) {
+        const z = node.userData.__zoom0;
+        node.scale.set(z.x, z.y, z.z);
+      }
+    }
+    if (sel.s) sel.s.visible = !on || !node;
+    return {node: !!(node && node.visible), skull: sel.s ? sel.s.visible : null, src: sel.tag};
+  };
+  // 批35 探针：局内直接切换皮肤（等价点卡片的 handler，避开面板层级；e2e 用）
+  window.__applySkinDbg = id => {
+    const n = Number(id);
+    if (!(n >= 0 && n < SKINS.length)) return false;
+    skinIdx = n;
+    localStorage.setItem('snake-skin', n);
+    applySkin();
+    return true;
   };
 
   function maybeBonus(now) {
@@ -3195,7 +3342,7 @@
         return;
       case 'gachainfo':
         // 批25 T4：回填已拥有皮肤集合（免费 5 款恒含）；当前皮肤被收回时回退 0
-        ownedSkins = new Set([0, 1, 2, 3, 4].concat(Array.isArray(m.skins) ? m.skins : []));
+        ownedSkins = new Set(FREE_SKINS.concat(Array.isArray(m.skins) ? m.skins : []));
         if (!ownedSkins.has(skinIdx)) {
           skinIdx = 0;
           localStorage.setItem('snake-skin', 0);
