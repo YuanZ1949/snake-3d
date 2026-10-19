@@ -208,12 +208,21 @@ def _hash_pw(pw, salt):
     return hashlib.pbkdf2_hmac('sha256', pw.encode('utf-8'), salt.encode('utf-8'), 60000).hex()
 
 
+# 批36 P0-1：热路径（step 内吃果/击杀/死亡共 7 处 inc）落盘节流窗口——
+# 窗内只标脏，窗过期才整份重写 store.json（同 Usage._maybe_save 范式）。
+STORE_SAVE_INTERVAL = 5.0
+
+
 class Store:
-    """账户与战绩的 JSON 持久化。密码要求 6 位数字，加盐 PBKDF2 存储。"""
+    """账户与战绩的 JSON 持久化。密码要求 6 位数字，加盐 PBKDF2 存储。
+批36：inc/record_best 走脏标记 + 节流批量落盘；注册/星尘/皮肤等低频写仍立即落盘；
+      优雅关停 shutdown_settle() 无条件 save() 兜底 flush。"""
 
     def __init__(self, path):
         self.path = path
         self.users = {}
+        self._dirty = False
+        self._last = time.time()
         self.load()
 
     def load(self):
@@ -223,6 +232,8 @@ class Store:
             self.users = {}
 
     def save(self):
+        self._last = time.time()
+        self._dirty = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix('.tmp')
@@ -230,6 +241,13 @@ class Store:
             tmp.replace(self.path)
         except Exception:
             traceback.print_exc()
+
+    def _mark_dirty(self):
+        """批36 P0-1：标脏 + 到点才落盘。热路径（游戏 tick 内）不再每次战绩
+变更都整份重写 store.json——磁盘抖动会卡死 50ms 主循环与全部房间。"""
+        self._dirty = True
+        if time.time() - self._last >= STORE_SAVE_INTERVAL:
+            self.save()
 
     def register(self, name, pw):
         name = (name or '').strip()
@@ -269,7 +287,7 @@ class Store:
             return
         st = u.setdefault('stats', blank_stats())
         st[key] = st.get(key, 0) + n
-        self.save()
+        self._mark_dirty()
 
     def record_best(self, name, score):
         u = self.users.get(name)
@@ -278,7 +296,7 @@ class Store:
         st = u.setdefault('stats', blank_stats())
         if score > st.get('best', 0):
             st['best'] = score
-            self.save()
+            self._mark_dirty()
 
     def leaderboard(self, limit=20):
         rows = []

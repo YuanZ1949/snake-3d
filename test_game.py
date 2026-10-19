@@ -4033,6 +4033,65 @@ def test_elements_roomcfg_and_persist_batch33():
     print("elements roomcfg/persist batch33 OK")
 
 
+# ---- 批36 P0：store.json 落盘节流（热路径 inc 不再逐次整份重写） ----
+
+def test_store_inc_throttled_batched_save():
+    """批36 建议1（先红后绿）：inc 只标脏 + 节流批量落盘。
+刚落过盘的节流窗内连发 inc 不得重写 store.json（哨兵必须幸存）；
+节流窗过期后的 inc 自动落盘；save() 兜底 flush。"""
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    p = Path(tempfile.mkdtemp(prefix='snake-store-throttle-')) / 'store.json'
+    st = serve.Store(p)
+    ok, err = st.register('alice', '123456')
+    assert ok, err
+    # 哨兵：与内存状态(food=0)不一致——任何一次真实写盘都会把它抹掉
+    raw = p.read_text('utf-8').replace('"food": 0', '"food": 999')
+    assert '"food": 999' in raw, '哨兵注入失败（夹具问题）'
+    p.write_text(raw, 'utf-8')
+    st._last = time.time()                      # 刚落过盘 → 处于节流窗内
+    for _ in range(5):
+        st.inc('alice', 'food')
+    assert '"food": 999' in p.read_text('utf-8'), '节流窗内 inc 不得重写 store.json'
+    assert st._dirty is True, 'inc 后必须标脏'
+    st._last = time.time() - (serve.STORE_SAVE_INTERVAL + 1)   # 窗口过期
+    st.inc('alice', 'food')
+    assert st._dirty is False, '窗口过期落盘后脏标记清零'
+    data = _json.loads(p.read_text('utf-8'))
+    assert data['alice']['stats']['food'] == 6, '窗口过期的 inc 必须落盘'
+    st.inc('alice', 'food')                     # 再次标脏
+    st.save()                                   # 兜底 flush（关停路径同款）
+    assert _json.loads(p.read_text('utf-8'))['alice']['stats']['food'] == 7
+
+
+def test_store_record_best_and_shutdown_flush():
+    """批36 建议1（先红后绿）：record_best 同样标脏不逐次写；
+shutdown_settle() 必须 flush 脏数据——否则节流窗内的战绩在优雅关停时丢失。"""
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    p = Path(tempfile.mkdtemp(prefix='snake-store-flush-')) / 'store.json'
+    keep = serve.store
+    try:
+        serve.store = serve.Store(p)
+        ok, err = serve.store.register('bob', '135792')
+        assert ok, err
+        raw = p.read_text('utf-8').replace('"best": 0', '"best": 999')
+        assert '"best": 999' in raw, '哨兵注入失败（夹具问题）'
+        p.write_text(raw, 'utf-8')
+        serve.store._last = time.time()         # 节流窗内
+        serve.store.record_best('bob', 42)
+        assert '"best": 999' in p.read_text('utf-8'), '节流窗内 record_best 不得重写 store.json'
+        assert serve.store._dirty is True, 'record_best 后必须标脏'
+        serve.shutdown_settle()                 # 优雅关停路径必须 flush
+        assert serve.store._dirty is False, 'shutdown_settle 后脏数据必须已落盘'
+        data = _json.loads(p.read_text('utf-8'))
+        assert data['bob']['stats']['best'] == 42, '关停 flush 后 best 必须在盘上'
+    finally:
+        serve.store = keep
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -4153,6 +4212,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_frozen_no_move_and_resume_batch33, test_frozen_head_static_obstacle_batch33,
            test_frozen_input_gate_batch33, test_frozen_biteable_batch33,
            test_slow_tick_multiplier_batch33,
-             test_elements_roomcfg_and_persist_batch33]:
+             test_elements_roomcfg_and_persist_batch33,
+             test_store_inc_throttled_batched_save,
+             test_store_record_best_and_shutdown_flush]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
