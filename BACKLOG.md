@@ -231,3 +231,20 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **P2 热路径减负（2e160fd）**：frame() 每帧 `$()`/querySelectorAll 改启动期缓存（elAtkBtn/elElemBar/elEbBtns）；placeEdge 的 canvas 包围盒缓存（resize 失效）；updateBoard 加内容签名脏标记跳过榜单 DOM 重建（款式同 effHudSig）。
 - **已知问题披露**：reactions.spec「元素弹渲染链路」在全量跑中偶发落在已 win 的 solo 局而超时（spec 注释自述既有竞态），本轮复跑全绿，未归因于本批改动；未修（越界，改 spec 属新决策）。
 - **契约**：`.tamako/contract.json` acceptance 1-8 全 pass、`state=closed`；7 个本地 commit（db1f509/629620f/a0095e1/7dda151/0b03f4e/2e160fd + 收尾文档提交），未 push（契约 notDo）。
+
+## 批37（2026-10-19 · 「都做」全量清扫 · 进行中）
+
+来源：用户原话「都做」——完成上轮盘点的全部未做项。流程：直通（12 条验收契约 `.tamako/contract.json`）。
+
+- **项1 生产部署批36**：predeploy `snake-3d-predeploy-20261019-202345.tar.gz`（546497 B）→ scp serve.py + index.html → 远端 sha256 与本地逐字节一致、新 PID 1812083、HTTP 200 251348 B、`PROTO_VER = 30`、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）。
+- **项2 文档债（7d36306）**：HANDOVER §10 对齐现状（11 套 / 14 spec / 46 passed / 单测 191 / js 915）、§13 #10 追加批37 竞态修复记录、#11 改写为已修、当前生产版本改 dev@a341db5；DEPLOY.md 标题改「批1-23 基线 + 批24-37 已交付」与工程化数字对齐（191 单测 / 11 套 / 14 spec）；**BACKLOG 既存 NUL 字节 ×2（offset 49571 起）清除**——这是本文件被 ripgrep/read 判为二进制的根因，97 处 CRLF 混排随 autocrlf add 一并归一为 LF（内容零改动）。
+- **项3 ci.yml（c882fcf）**：round2 补 `test_ws3.py`/`test_ws4.py`，9→11 套与 `local_ci.ps1` 一致。
+- **项4 账号口令强度（eddbfb3）**：register/login 放开为 6-64 位任意字符（旧 6 位数字账号兼容），客户端 `#passIn` 同步；新单测 `test_password_policy_accepts_6plus_chars` 先红后绿；test_game.py 190 全绿。
+- **项5 房口令哈希存储（a7a09bd）**：`Room.passw` property（明文 + `salt$hash` 并存）、`has_pass`、`check_pass()`；persist 只写 `pass_h`、加载后内存不留明文（旧档明文自动转哈希）；新单测 `test_room_passw_hashed_at_rest` 先红后绿；test_game.py 191 全绿。
+- **项6 批33 4 条 oracle NIT（本段）**：**逐条原文不可恢复**——已穷尽检索 `ho-export.json`（10.8MB 会话导出，独立 NIT 0 次）与本会话 dcp 压缩存储（95 处独立 NIT 全为批25 抽卡审查 / 批28 预测审查，或「批33 4条 NIT」这句盘点文字自引用），原始 oracle 评审输出已被压缩丢弃且不在任何可读存储。改用替代口径（与 explore 结论一致），现存最接近的 4 条可考遗留逐条核对：
+  1. HANDOVER §13 #10「批33 三处测试性约束」——`e2e/reactions.spec.js` 已内置对策（`waitPlaying` + `playing&&alive` 才按 e + 40ms 紧采 + 固定账号 p33elem），且批37 前一轮再修「win 态卡准备屏」全量偶发竞态（`5e59f6e`，全量 46 passed）→ **已修**；
+  2. HANDOVER §13 #11「ci.yml 缺第 9 套」——项3 已修（`c882fcf`，round2 现 11 套）→ **已修**；
+  3. BACKLOG:17 批33 遗留「ci.yml 仍 7 套」——被项3 覆盖（reactions + ws3 + ws4 均已补）→ **已修**；
+  4. 批33 元素弹 E2E 采样竞态——同第 1 条，spec 已固化对策并经批37 前一轮修复复验 → **已修**。
+  四条全部「已修」，无遗留需记理由项；原文丢失事实披露于此，检索方法可复现（node 读 JSON 统计独立 NIT 出现）。
+- **项7-12 进行中**：serve.py 配置外置、state 写入收敛单一入口、three r161+ ESM、真实 CI、批28 §7.3 转向手感量化、收尾 push 双远端 + 生产再部署。
