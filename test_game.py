@@ -4272,6 +4272,65 @@ def test_roomcfg_no_pass_anyone_edits():
         del serve.rooms['rc']
 
 
+# ---- 批37：运行配置外置（用户拍板「都做」）----
+
+def test_runtime_config_precedence_and_fallback():
+    """批37（先红后绿）：配置取值优先级 cfg 字典 > SNAKE_<KEY> 环境变量 > 默认值。
+类型非法回退默认、越界钳位到区间；缺省时与历史默认完全一致。"""
+    cfg = {'CREATE_IP_MAX': 5}
+    assert serve.cfg_val('CREATE_IP_MAX', 40, lo=1, cfg=cfg, env={}) == 5, '文件配置优先'
+    assert serve.cfg_val('CREATE_IP_MAX', 40, lo=1, cfg={}, env={'SNAKE_CREATE_IP_MAX': '7'}) == 7, 'env 次之'
+    assert serve.cfg_val('CREATE_IP_MAX', 40, lo=1, cfg={}, env={}) == 40, '缺省=原默认'
+    assert serve.cfg_val('CREATE_IP_MAX', 40, lo=1, cfg={'CREATE_IP_MAX': 'abc'}, env={}) == 40, '类型非法回退'
+    assert serve.cfg_val('ROOM_MAX', 100, lo=1, cfg={'ROOM_MAX': 0}, env={}) == 1, '下界钳位'
+    assert serve.cfg_val('PORT', 20000, lo=1, hi=65535, cfg={'PORT': 99999}, env={}) == 65535, '上界钳位'
+    assert serve.cfg_val('STORE_SAVE_INTERVAL', 5.0, cast=float, cfg={'STORE_SAVE_INTERVAL': '2.5'}, env={}) == 2.5, 'float 转换'
+
+
+def test_runtime_config_file_load():
+    """批37（先红后绿）：SNAKE_CONFIG 指向的 JSON 配置加载。
+合法 dict 正常读取；文件不存在/非法 JSON/根节点非对象 → 优雅返回 {} 不阻断启动。"""
+    import tempfile, os, json, shutil
+    d = tempfile.mkdtemp(prefix='snake-cfg-')
+    try:
+        p = os.path.join(d, 'cfg.json')
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump({'PORT': 9000, 'ROOM_MAX': 50}, f)
+        assert serve.load_runtime_config(p) == {'PORT': 9000, 'ROOM_MAX': 50}, '合法文件读取'
+        bad = os.path.join(d, 'bad.json')
+        with open(bad, 'w', encoding='utf-8') as f:
+            f.write('{not json')
+        assert serve.load_runtime_config(bad) == {}, '非法 JSON 回退 {}'
+        arr = os.path.join(d, 'arr.json')
+        with open(arr, 'w', encoding='utf-8') as f:
+            f.write('[1, 2]')
+        assert serve.load_runtime_config(arr) == {}, '根节点非对象回退 {}'
+        assert serve.load_runtime_config(os.path.join(d, 'none.json')) == {}, '缺文件回退 {}'
+        old = os.environ.get('SNAKE_CONFIG')
+        try:
+            os.environ['SNAKE_CONFIG'] = p
+            assert serve.load_runtime_config() == {'PORT': 9000, 'ROOM_MAX': 50}, '无参读 SNAKE_CONFIG'
+        finally:
+            if old is None:
+                os.environ.pop('SNAKE_CONFIG', None)
+            else:
+                os.environ['SNAKE_CONFIG'] = old
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_runtime_config_wired_defaults_unchanged():
+    """批37（先红后绿）：接线后的运行配置在无任何 SNAKE_* 覆盖时保持历史默认（默认行为不变）。"""
+    assert serve._RUNTIME_CFG == {}, '未设 SNAKE_CONFIG 时启动加载为空配置'
+    assert serve.CREATE_IP_MAX == 40
+    assert serve.CREATE_MAX == 8
+    assert serve.REG_MAX == 30
+    assert serve.ROOM_MAX == 100
+    assert serve.ROOM_KEEP_SECS == 86400
+    assert serve.STORE_SAVE_INTERVAL == 5.0
+    assert 1 <= serve.PORT <= 65535
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -4400,6 +4459,9 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
              test_password_policy_accepts_6plus_chars,
              test_room_passw_hashed_at_rest,
              test_roomcfg_pass_room_owner_only,
-             test_roomcfg_no_pass_anyone_edits]:
+             test_roomcfg_no_pass_anyone_edits,
+             test_runtime_config_precedence_and_fallback,
+             test_runtime_config_file_load,
+             test_runtime_config_wired_defaults_unchanged]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

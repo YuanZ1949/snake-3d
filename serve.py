@@ -212,6 +212,68 @@ def _hash_pw(pw, salt):
 # 窗内只标脏，窗过期才整份重写 store.json（同 Usage._maybe_save 范式）。
 STORE_SAVE_INTERVAL = 5.0
 
+# ================= 批37 项7：运行配置外置 =================
+# 优先级：SNAKE_CONFIG 指向的 JSON 文件 > SNAKE_<KEY> 环境变量 > 代码默认值。
+# 只暴露运维旋钮（端口/限流/房间上限/保留期/落盘节流）；玩法数值不在此列。
+# 未设任何覆盖时，下方接线赋值均为原值，默认行为与历史完全一致。
+
+
+def load_runtime_config(path=None):
+    """读 JSON 配置（dict）。路径缺省取环境变量 SNAKE_CONFIG；
+缺失/非法/根节点非对象 → 返回 {} 并告警，不阻断启动。"""
+    if path is None:
+        path = os.environ.get('SNAKE_CONFIG')
+    if not path:
+        return {}
+    if not os.path.exists(path):
+        print('[config] 配置文件不存在，使用默认值: %s' % path)
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError('配置根节点必须是 JSON 对象')
+        print('[config] 已加载运行配置: %s' % path)
+        return data
+    except Exception:
+        traceback.print_exc()
+        print('[config] 配置文件读取失败，使用默认值: %s' % path)
+        return {}
+
+
+def cfg_val(key, default, cast=int, lo=None, hi=None, cfg=None, env=None):
+    """单键取值：cfg 字典 > SNAKE_<KEY> 环境变量 > default。
+转换失败回退默认并告警；lo/hi 越界钳位到区间。"""
+    if cfg is None:
+        cfg = _RUNTIME_CFG
+    if env is None:
+        env = os.environ
+    raw = cfg[key] if key in cfg else env.get('SNAKE_' + key)
+    if raw is None:
+        return default
+    try:
+        v = cast(raw)
+    except (TypeError, ValueError):
+        print('[config] %s=%r 非法，使用默认值 %r' % (key, raw, default))
+        return default
+    if lo is not None and v < lo:
+        v = lo
+    if hi is not None and v > hi:
+        v = hi
+    return v
+
+
+_RUNTIME_CFG = load_runtime_config()
+
+# ---- 运维旋钮接线（定义均在本行之前；默认值即上文字面量）----
+CREATE_MAX = cfg_val('CREATE_MAX', CREATE_MAX, lo=1)
+CREATE_IP_MAX = cfg_val('CREATE_IP_MAX', CREATE_IP_MAX, lo=1)
+CREATE_WIN = cfg_val('CREATE_WIN', CREATE_WIN, lo=1)
+ROOM_MAX = cfg_val('ROOM_MAX', ROOM_MAX, lo=1)
+REG_MAX = cfg_val('REG_MAX', REG_MAX, lo=1)
+ROOM_KEEP_SECS = cfg_val('ROOM_KEEP_SECS', ROOM_KEEP_SECS, lo=0)
+STORE_SAVE_INTERVAL = cfg_val('STORE_SAVE_INTERVAL', STORE_SAVE_INTERVAL, cast=float, lo=0)
+
 
 class Store:
     """账户与战绩的 JSON 持久化。口令 6-64 位任意字符，加盐 PBKDF2 存储（批37 放开）。
@@ -3745,6 +3807,7 @@ async def process_request(path, headers):
 
 
 PORT = int(os.environ.get('PORT', '20000'))
+PORT = cfg_val('PORT', PORT, lo=1, hi=65535)   # 批37 项7：SNAKE_CONFIG/SNAKE_PORT 可覆盖
 
 
 # ---------------- 批26③：SIGTERM 优雅关闭（systemctl restart 默认信号） ----------------
