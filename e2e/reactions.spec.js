@@ -42,10 +42,23 @@ test('元素弹渲染链路：发射后服务端弹药 → projMeshes > 0', asyn
   await startScreenHidden(page);
   // proj 生命周期极短（fire 后 ~66ms 出现、<400ms 即消失），且 solo 蛇 1.3-3.5s 撞墙死后不可重开：
   // 必须等 playing&&alive 帧发射（否则 fireEb 被 state 拦），再 40ms 紧采（400ms 粗采样必错过瞬时弹药）
+  // 批36 修竞态：无输入 solo 蛇必死 → 本局终局后 state='win' 卡准备屏（原断言只认 playing → 永远等不到）。
+  // 恢复路径：落 win → 点 #btnRestart（winRound=true → sendReady 开新回合）；落 over → 本局尚在进行，
+  // 轮询等 AI 分出胜负出 win 再重开。发射前按 ebAge 探针等 EB_CD(2000) 就绪——客户端 CD 静默吞键会让
+  // 整个 toPass 周期白等（首发后 2s 内的重试按下无效）。
   await expect(async () => {
-    const st = await page.evaluate(() => window.__stateDbg());
-    expect(st.state).toBe('playing');   // 未进回合 → 断言失败触发 toPass 重试（到达耗时实测 0-323ms）
+    let st = await page.evaluate(() => window.__stateDbg());
+    if (st.state === 'win') {
+      // 用 DOM click 而非 page.click：overScreen 可能带 .hidden，evaluate 里的 .click() 不受可见性约束
+      await page.evaluate(() => document.getElementById('btnRestart').click());
+      await page.waitForFunction(() => window.__stateDbg().state === 'playing', null, { timeout: 8000 });
+      st = await page.evaluate(() => window.__stateDbg());
+    } else if (st.state !== 'playing') {
+      await page.waitForTimeout(300);   // over/joining：轮询而非热循环（over 等本局出胜负 → win）
+    }
+    expect(st.state, '回合未在 playing（over=本局尚在进行，等 win 后重开）').toBe('playing');
     expect(st.alive).toBe(true);
+    if (st.ebAge < 2100) await page.waitForTimeout(2100 - st.ebAge);   // EB_CD=2000 就绪后再按
     await page.keyboard.press('e');
     const ok = await page.evaluate(async () => {   // 40ms 紧采 800ms，任一帧 projMeshes>0 即成
       const t = performance.now();
@@ -56,7 +69,7 @@ test('元素弹渲染链路：发射后服务端弹药 → projMeshes > 0', asyn
       return false;
     });
     expect(ok).toBe(true);
-  }).toPass({ timeout: 15000 });
+  }).toPass({ timeout: 45000 });
 });
 
 test('附着光晕 + 反应浮字可见（注入 snap players[].aura + ev react）', async ({ page }) => {
