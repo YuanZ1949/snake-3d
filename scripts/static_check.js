@@ -4,14 +4,19 @@ const html = fs.readFileSync(process.argv[2], 'utf8');
 const { spawnSync } = require('child_process');
 const os = require('os');
 const path = require('path');
-const blocks = [...html.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+// 批37 项9：script 块分型检查——跳过 src= 与 importmap（JSON 非 JS），module 块按 .mjs 语法检查
+const blocks = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)]
+  .map(m => ({ attrs: m[1], body: m[2] }))
+  .filter(b => !/src\s*=/.test(b.attrs) && !/type\s*=\s*["']importmap["']/.test(b.attrs));
 let jsOk = 0;
-const tmp = path.join(os.tmpdir(), 'static_check.js');
+const tmpBase = path.join(os.tmpdir(), 'static_check');
 for (const b of blocks) {
-  fs.writeFileSync(tmp, b, 'utf8');
+  const isModule = /type\s*=\s*["']module["']/.test(b.attrs);
+  const tmp = tmpBase + (isModule ? '.mjs' : '.js');
+  fs.writeFileSync(tmp, b.body, 'utf8');
   const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
   if (r.status !== 0) { console.error('SYNTAX FAIL:', r.stderr.slice(0, 500)); process.exit(1); }
-  jsOk += (b.match(/\{/g) || []).length;
+  jsOk += (b.body.match(/\{/g) || []).length;
 }
 // 2) duplicate ids
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]);
@@ -19,7 +24,7 @@ const dup = ids.filter((v, i) => ids.indexOf(v) !== i);
 // 3) brace balance for css + js counts (rough structural check)
 const css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]).join('');
 const cOpen = (css.match(/\{/g) || []).length, cClose = (css.match(/\}/g) || []).length;
-const jClose = blocks.reduce((n, b) => n + (b.match(/\}/g) || []).length, 0);
+const jClose = blocks.reduce((n, b) => n + (b.body.match(/\}/g) || []).length, 0);
 const dOpen = (html.match(/<div/g) || []).length, dClose = (html.match(/<\/div>/g) || []).length;
 console.log(`ids=${ids.length} dup=${dup.length}${dup.length ? ' ' + dup.join(',') : ''} div=${dOpen}/${dClose} css=${cOpen}/${cClose} js=${jsOk}/${jClose}`);
 if (dup.length || cOpen !== cClose || jsOk !== jClose || dOpen !== dClose) { console.log('STATIC CHECK FAILED'); process.exit(1); }

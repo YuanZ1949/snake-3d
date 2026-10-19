@@ -12,7 +12,7 @@ test('SKINS 含 18 款且 16/17 为角色模型款', async ({ page }) => {
   expect(d.skins.slice(0, 16).every((m) => m === null)).toBe(true);  // 老款不受污染
 });
 
-test('GLTFLoader 就位（gltf-loader.js 已注入且挂在 THREE 上）', async ({ page }) => {
+test('GLTFLoader 就位（ESM 引入可用 · 批37 项9）', async ({ page }) => {
   await ensureLogin(page, 'yuan', '123456');
   const d = await page.evaluate(() => window.__modelDbg());
   expect(d.loader).toBe(true);

@@ -18,7 +18,7 @@ async def recv_until(ws, t, timeout=6):
 
 
 async def main():
-    for p in ("/", "/three.min.js", "/api/leaderboard"):
+    for p in ("/", "/three.module.min.js", "/api/leaderboard"):
         print("HTTP", p, "->", http_get(p))
 
     async with websockets.connect(WS) as ws:

@@ -1058,9 +1058,13 @@
     <div id="boardRows"></div>
   </div>
 
-<script src="three.min.js"></script>
-<script src="gltf-loader.js"></script>
-<script>
+<!-- 批37 项9：three r161 ESM —— importmap + 原生 module import（无打包器） -->
+<script type="importmap">
+{"imports": {"three": "./three.module.min.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from './loaders/GLTFLoader.js';
 (() => {
         // ================= 批36 P2-2：JS 分区编号索引 =================
         // 功能区按出现顺序编号（头注：// ================= NN 区名 ====）。
@@ -1680,7 +1684,7 @@
 
   // ================= 03 批35：角色迷你模型（GLB）=================
   // 模型由 scripts/gen_models.js 产出（零外部素材，版权干净）；
-  // gltf-loader.js 是 three r160 ESM GLTFLoader 的 UMD 化产物，挂在 THREE.GLTFLoader。
+  // 批37 项9：GLTFLoader 改由原生 ESM 引入（three r161 + importmap），模块作用域标识 GLTFLoader。
   // 蛇头仍保留 skull 球（有模型时 invisible），保证无模型/加载失败时零回归。
   const HEAD_MODEL_GLB = {nailong: 'models/nailong.glb', furina: 'models/furina.glb'};
   const MODEL_FIT = .3;        // 拟合到现有蛇头量级（SphereGeometry(.3)）
@@ -1690,10 +1694,10 @@
   function loadHeadModel(key) {
     if (MODEL_TPL[key]) return Promise.resolve(MODEL_TPL[key]);
     if (MODEL_PEND[key]) return MODEL_PEND[key];
-    if (!HEAD_MODEL_GLB[key] || typeof THREE.GLTFLoader !== 'function') return Promise.resolve(null);
+    if (!HEAD_MODEL_GLB[key] || typeof GLTFLoader !== 'function') return Promise.resolve(null);
     MODEL_PEND[key] = new Promise(res => {
       try {
-        new THREE.GLTFLoader().load(HEAD_MODEL_GLB[key], gltf => {
+        new GLTFLoader().load(HEAD_MODEL_GLB[key], gltf => {
           const root = gltf.scene || (gltf.scenes && gltf.scenes[0]);
           if (!root) { MODEL_PEND[key] = null; return res(null); }
           root.traverse(o => {
@@ -2017,7 +2021,7 @@
   };
   // 批35 探针：角色迷你模型挂载状态（e2e 断言用）
   window.__modelDbg = () => ({
-    loader: typeof THREE.GLTFLoader === 'function',   // gltf-loader.js 是否就位
+    loader: typeof GLTFLoader === 'function',   // ESM GLTFLoader 是否就位（批37 项9）
     skins: SKINS.map(s => s.model || null),           // 每款皮肤的 model 字段（null=无模型）
     loaded: Object.keys(MODEL_TPL),                   // 已加载并归一化的模板
     pending: Object.keys(MODEL_PEND).filter(k => MODEL_PEND[k]),

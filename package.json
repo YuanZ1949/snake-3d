@@ -2,7 +2,7 @@
   "name": "cloudserver",
   "version": "1.0.0",
   "description": "贪吃蛇 3D 冒烟测试（批9 C2）",
-  "main": "three.min.js",
+  "main": "three.module.min.js",
   "scripts": {
     "test": "playwright test",
     "test:e2e": "playwright test"

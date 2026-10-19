@@ -3756,9 +3756,10 @@ async def handler(ws):
 # ============================================================ 静态文件
 ALLOWED = {'/': ('index.html', 'text/html; charset=utf-8'),
            '/index.html': ('index.html', 'text/html; charset=utf-8'),
-           '/three.min.js': ('three.min.js', 'application/javascript; charset=utf-8'),
+           '/three.module.min.js': ('three.module.min.js', 'application/javascript; charset=utf-8'),
            # 批35：角色迷你模型（GLTFLoader + 生成器产出的低模 GLB）
-           '/gltf-loader.js': ('gltf-loader.js', 'application/javascript; charset=utf-8'),
+           '/loaders/GLTFLoader.js': ('loaders/GLTFLoader.js', 'application/javascript; charset=utf-8'),
+           '/utils/BufferGeometryUtils.js': ('utils/BufferGeometryUtils.js', 'application/javascript; charset=utf-8'),
            '/models/nailong.glb': ('models/nailong.glb', 'model/gltf+binary'),
            '/models/furina.glb': ('models/furina.glb', 'model/gltf+binary')}
 
@@ -3774,7 +3775,8 @@ async def process_request(path, headers):
     if key in ('/download', '/download.zip'):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
-            for fn in ('index.html', 'serve.py', 'three.min.js', 'gltf-loader.js',
+            for fn in ('index.html', 'serve.py', 'three.module.min.js',
+                       'loaders/GLTFLoader.js', 'utils/BufferGeometryUtils.js',
                        'models/nailong.glb', 'models/furina.glb'):
                 f = ROOT / fn
                 if f.is_file():

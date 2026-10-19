@@ -20,8 +20,8 @@ async def main():
     # HTTP
     st, n = http_get("/")
     print("HTTP / ->", st, n, "bytes")
-    st, n = http_get("/three.min.js")
-    print("HTTP three.min.js ->", st, n)
+    st, n = http_get("/three.module.min.js")
+    print("HTTP three.module.min.js ->", st, n)
     st, n = http_get("/api/leaderboard")
     print("HTTP /api/leaderboard ->", st, n)
 
