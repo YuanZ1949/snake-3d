@@ -19,7 +19,9 @@
 /home/ubuntu/snake-3d/
 ├── index.html      前端页面（CSS + HTML + JS 单文件）
 ├── serve.py        服务端（HTTP + WebSocket，端口由环境变量 PORT 控制）
-├── three.min.js    Three.js 渲染库（本地 vendor r160）
+├── three.module.min.js  Three.js r161 ESM 渲染库（批37 起原生 import + importmap）
+├── loaders/ + utils/    three jsm 源码（GLTFLoader + BufferGeometryUtils，GLB 加载）
+├── models/      nailong.glb / furina.glb 角色皮肤模型（批35）
 ├── data/           运行数据（账户 store.json、用量 usage.json/usage.log，永不入库）
 ├── README.txt      最简运行说明
 └── .venv/          独立虚拟环境（websockets==13.1）
@@ -43,12 +45,12 @@
 原神元素反应（批33）、地形真遮挡（批34）、角色皮肤 + 蛇头迷你 3D 模型 GLB（批35）、
 批36 工程修复（store 落盘节流/写盘原子与损坏备份/roomcfg 房主鉴权/门禁 11 套/
 handle_msg 注册表化/帧循环 DOM 缓存）、批37（账号口令 6-64 位、房口令哈希落盘、
-ci.yml 补至 11 套）。
+ci.yml 补至 11 套、运行配置外置 env/文件、state 写入收敛单一入口、three r161 ESM 无打包器改造、批28 转向手感量化脚本）。
 安全与账号：注册/建房/登录/口令错试分维度限速、登录失败原因入用量明细、
 匿名 resume 绑 IP、owner 凭据常数时间比对、弱口令黑名单（前后端同步）。
 
 协议与工程：快照增量协议（静态字段变化才下发，首帧全量）、本地一键回归
-`scripts/local_ci.ps1`（单测 191 + 11 套 python E2E + 静态检查 + Playwright 14 spec / 46 tests）、
+`scripts/local_ci.ps1`（单测 194 + 11 套 python E2E + 静态检查 + Playwright 14 spec / 46 tests）、
 后台用量报表（每小时在线曲线/房间热度，`python usage_report.py`）。
 GitHub Actions workflow（`.github/workflows/ci.yml`）已就绪，但仓库远端为
 ssh 自建（非 GitHub/Gitee），Actions 尚无 runner 可触发。详见 HANDOVER.md。

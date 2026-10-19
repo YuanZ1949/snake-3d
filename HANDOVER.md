@@ -31,15 +31,18 @@
 
 ```
 snake-3d/
-├── serve.py          3782 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录（批36：MSG_HANDLERS 注册表）
-├── index.html       5073 行  前端：CSS + HTML + JS 全在一个文件（批36：JS 分区编号 01-19）
-├── three.min.js      654 KB  Three.js r160 本地 vendor（批10 从 r128 升级；r160 是最后带 UMD three.min.js 的版本，r161+ 仅 ESM）
+├── serve.py          3824 行  服务端：HTTP + WS + 游戏逻辑 + 账户 + 房间 + 用量记录（批36：MSG_HANDLERS 注册表）
+├── index.html       5081 行  前端：CSS + HTML + JS 全在一个文件（批36：JS 分区编号 01-19）
+├── three.module.min.js 660 KB  Three.js r161 ESM 本地 vendor（批37 项9：原生 import + importmap，无打包器）
+├── loaders/GLTFLoader.js 106 KB  three r161 jsm GLTFLoader（原生 ESM，裸 import 'three' 走 importmap）
+├── utils/BufferGeometryUtils.js 31 KB  three r161 jsm（GLTFLoader 依赖）
+│                         （r160 UMD 管线 three.min.js / gltf-loader.js / scripts/build_gltf_loader.js 已退役删除，git 历史保留）
 ├── gltf-loader.js            three r160 GLTFLoader 的 UMD 产物（批35，机械 ESM→UMD 改写，供 <script> 引入）
 ├── models/                   nailong.glb / furina.glb（批35，由 scripts/gen_models.js 自产的低模，可复现）
-├── scripts/                  gen_models.js · test_gen_models.js · static_check.js · local_ci.ps1 …
+├── scripts/                  gen_models.js · test_gen_models.js · static_check.js · local_ci.ps1 · prod_verify35.js · quant_feel28.js …
 ├── e2e/                      Playwright 用例（_helpers.js · smoke · skin35（批35）…）
 ├── .tamako/                  契约 contract.json + 证据 evidence.md（每批的验收落点）
-├── test_game.py      24 项单元测试（纯逻辑，不起服务）
+├── test_game.py      194 项单元测试（纯逻辑，不起服务）
 ├── test_ws.py        E2E：入局/移动/攻击/排行榜/房间
 ├── test_ws2.py       E2E：HTTP 三接口 / 注册登录 / 入局快照 / 观战 / 排行榜 / 建房
 ├── test_ws3.py       E2E：房间列表 + 自定义地图 + 空房回收
@@ -216,7 +219,7 @@ main() ── websockets.serve(handler, '0.0.0.0', PORT) 启动 HTTP+WS 同端�
 | 路径 | 返回 |
 |---|---|
 | `/` `/index.html` | 前端页面（**每次请求读盘**，改 `index.html` 不需重启服务） |
-| `/three.min.js` | Three.js |
+| `/three.module.min.js` `/loaders/GLTFLoader.js` `/utils/BufferGeometryUtils.js` | three r161 ESM 三件（批37 项9；旧 `/three.min.js` `/gltf-loader.js` 已 404 退役） |
 | `/api/leaderboard` | JSON 排行榜 |
 | `/download` `/download.zip` | 源码打包 zip |
 
@@ -362,7 +365,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×191 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser）+ 批20/21 ×2（usage err 明细/登录防爆破限速）+ 批22 ×6（respawn 消息门禁/建房限速与房间 cap/注册限速/口令错试限速/匿名 resume 绑 IP/token TTL 过期与滑动续期）+ 批23 ×10（humans 字段/roomcfg 统一扩展/win_pending 超时强开/晚加入补准备屏 + owner 凭据 ×3：回执带 tok 与列表不泄露/匿名凭据恢复编辑/persist 三轨凭据；persist 往返含 ownerTok）+ 批33 ×21（反应表完整/同元素与缺元素返 None/aura 快照与 TTL/重生清 aura 断线保留/eterrain 约束与附着避让/full+DELTA/咬击六反应全覆盖/反应双消与感染/反应充能与死伤降级/碰撞碾压结果不变/元素弹附着与 CD/命中刷新/不碎岩与门禁/跨高度层/冻结不移动且恢复/冻结头静止障碍/冻结输入门禁/冻结可被咬/超导 slow×1.5/elements+elemAmt 三入口与旧存档默认） + 批36 ×6（store 节流批量落盘/record_best 关停 flush/load 损坏先备份再兜底/persist tmp+replace 原子写/有口令房仅房主 roomcfg/无口令房任何人可改）+ 批37 ×2（账号口令 6-64 位兼容旧 6 位数字/房口令哈希落盘无明文） |
+| `test_game.py` | 单元 ×194 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser）+ 批20/21 ×2（usage err 明细/登录防爆破限速）+ 批22 ×6（respawn 消息门禁/建房限速与房间 cap/注册限速/口令错试限速/匿名 resume 绑 IP/token TTL 过期与滑动续期）+ 批23 ×10（humans 字段/roomcfg 统一扩展/win_pending 超时强开/晚加入补准备屏 + owner 凭据 ×3：回执带 tok 与列表不泄露/匿名凭据恢复编辑/persist 三轨凭据；persist 往返含 ownerTok）+ 批33 ×21（反应表完整/同元素与缺元素返 None/aura 快照与 TTL/重生清 aura 断线保留/eterrain 约束与附着避让/full+DELTA/咬击六反应全覆盖/反应双消与感染/反应充能与死伤降级/碰撞碾压结果不变/元素弹附着与 CD/命中刷新/不碎岩与门禁/跨高度层/冻结不移动且恢复/冻结头静止障碍/冻结输入门禁/冻结可被咬/超导 slow×1.5/elements+elemAmt 三入口与旧存档默认） + 批36 ×6（store 节流批量落盘/record_best 关停 flush/load 损坏先备份再兜底/persist tmp+replace 原子写/有口令房仅房主 roomcfg/无口令房任何人可改）+ 批37 ×5（账号口令 6-64 位兼容旧 6 位数字/房口令哈希落盘无明文/运行配置 cfg>env>default 优先级与回退钳位/SNAKE_CONFIG 文件加载与坏档兜底/接线 7 键+PORT 默认值不变） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |
@@ -495,7 +498,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 1. 改 `serve.py` / `index.html`。
 2. 本机静态检查：`node --check`、id 引用比对、括号配对（见 §10）。
-3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；现 191 单测 + 11 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
+3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；现 194 单测 + 11 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
 4. 通过后按 §11.2 发布生产，跑 `verify_rooms.py`。
 5. `git add -A && git commit`（中文 feat/fix/style 提交说明）。
 6. 通知使用者**强刷页面**（Ctrl/Cmd+Shift+R）确认新前端。
@@ -510,11 +513,11 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 2 | ~~快照每 50ms **全量**广播~~ | **批11 已解**：增量协议——静态字段（walls/portals/rocks/food/bonus/items）签名对比变化才下发，首帧/新订阅者全量（`full:1`）；players/proj/标量每帧恒在 | 无（实测稳态增量帧 −31% 字节） |
 | 3 | 仓库远端只有服务器本身（与本机各一份），未托管 GitHub/Gitee | 两处同时损坏才会丢历史 | 加第三方远端，或定期 `git bundle create snake.bundle --all` 归档到别处 |
 | 4 | ~~无 CI、无浏览器自动化~~ | **批9 已解**：`.github/workflows/ci.yml`（单测+7 E2E+Playwright）+ `e2e/smoke.spec.js` 3 冒烟 | 已多次 push（origin/server ssh 远端，批23 末 `5deb37c`），但**远端非 GitHub/Gitee → Actions 从未触发**；首跑需先第三方托管（见 #3，用户决策） |
-| 5 | 密码强制 6 位数字 | 弱口令 | 定位为小游戏可接受；如需加强要同步改前端校验 |
+| 5 | ~~密码强制 6 位数字~~ **批37 项4 已放开 6-64 位任意字符**（前后端同步，旧 6 位数字账号兼容） | — | 账号口令 PBKDF2 哈希存储；房口令另见批37 项5 哈希落盘 |
 | 6 | `DEPLOY.md` 未随功能更新 | 部署章节仍准确，功能描述偏旧 | 以本文档为准 |
 | 7 | 用量数据积累时间短 | 趋势分析样本少（随时间自然积累） | ~~可加每小时在线曲线/房间热度~~ **批12 已实现** `usage_report.py`（仅余样本量问题） |
 | 8 | 本机（Termux）在运营商 CGNAT 后 | 无法从外网回调本机 | 需要对外暴露本机时走隧道/内网穿透 |
-| 9 | `three.min.js` 为本地 vendor r160 | **批10 已升级 r128→r160**（冒烟+同主题 A/B 截图验收，用户拍板采用 r160 新 sRGB 默认观感） | **批12 评估结论：维持 r160 不改**。升级 r161+ 需 ESM 改造（主脚本包 boot 函数 + module 脚本 `import * as THREE` 后触发，已核实 index.html 无 inline onclick、方案可行），但新版本特性（WebGPU 等）本项目全用不到，改造需 2130 行主脚本作用域包裹 + 全量视觉回归重做——收益低风险中。除非出现安全公告或需要新 API，否则不动 |
+| 9 | ~~`three.min.js` 为本地 vendor r160~~ **批37 项9 已实施 ESM 改造（`b6fdef2`）** | three.module.min.js r161 + importmap 原生 import（无打包器），GLTFLoader 走 `loaders/`+`utils/` jsm 源码，UMD 管线（three.min.js/gltf-loader.js/build_gltf_loader.js）退役删除 | 四道门禁全绿：static_check（js=917/917）、静态路由 200×3+旧路由 404×2、Playwright 46 passed（skin35 6 条 GLB E2E）、单测 194 全绿 |
 | 10 | **批33 元素反应的三处测试性约束**（非功能 bug） | ① 元素弹 `proj` 生命周期极短（fire 后 ~60–400ms 消失），粗采样采不到；② solo 无人房 1.3–3.5s 撞墙死 → `state='over'` 后 `fireEb` 永久拒绝且无重生；③ 生产注册限流 `REG_MAX=30/REG_WIN=300s` 会让"每轮新账号"的 E2E 撞限 | `e2e/reactions.spec.js` 已内置对策：`waitPlaying()` + `__stateDbg` 判 `playing&&alive` 后才按 e + `page.evaluate` 内 40ms 紧采 800ms + 固定账号 `p33elem`（ensureLogin 先 register「已存在」不计配额、失败兜底 login）。**新增元素弹类 E2E 请沿用同一范式**；批37 前一轮再修「win 态卡准备屏」全量偶发竞态（`5e59f6e`：toPass 内 state=win 点 `#btnRestart` 走 sendReady 重开新局 + 按 `ebAge` 等 EB_CD，全量 46 passed） |
 | 11 | ~~ci.yml 的 python E2E 仍是 7 套~~ **批37 项3 已修（`c882fcf`）** | ci.yml round2 现 **11 套**（reactions + ws3 + ws4 已补，与 `local_ci.ps1` 一致） | Actions 仍因远端非 GitHub/Gitee 无 runner 可触发（见 #4）——真实 CI 见批37 项10 |
 
@@ -522,7 +525,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 ## 14. 常见坑（务必阅读）
 
-1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 8 套 E2E 可直接本地跑（见 §10）。
+1. **Termux 的 python3 没有 `websockets`** —— Termux 上一切测试都要 `ssh tencent` 用 `/home/ubuntu/snake-3d/.venv/bin/python` 跑。**Windows 本机例外**：仓库自带 `.venv`（`websockets==13.1`），单测与 11 套 E2E 可直接本地跑（见 §10）。
 2. **`pkill -f <pattern>` 通过 SSH 执行会把自己杀掉**（pattern 匹配到 SSH 命令行本身，exit 255）。用 `fuser -k 28000/tcp`，或写成 `pkill -f 'serve[.]py'`。**Windows 本机没有 `fuser`**，本地停测试服用 `Get-NetTCPConnection -LocalPort 28000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`。
 3. **后台起测试服时 SSH 调用必然超时**，但进程其实已经起来了 —— 用 `ss -ltn | grep 28000` 确认，不要重复起（此坑仅限服务器端；Windows 本地后台起服无此问题）。
 4. **Termux 没有 `/tmp`** —— 临时文件放 `$PREFIX/tmp/opencode`（即 `/data/data/com.termux/files/usr/tmp/opencode`）。Windows 本机用 `$env:TEMP`。

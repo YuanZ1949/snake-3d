@@ -232,7 +232,7 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **已知问题披露**：reactions.spec「元素弹渲染链路」在全量跑中偶发落在已 win 的 solo 局而超时（spec 注释自述既有竞态），本轮复跑全绿，未归因于本批改动；未修（越界，改 spec 属新决策）。
 - **契约**：`.tamako/contract.json` acceptance 1-8 全 pass、`state=closed`；7 个本地 commit（db1f509/629620f/a0095e1/7dda151/0b03f4e/2e160fd + 收尾文档提交），未 push（契约 notDo）。
 
-## 批37（2026-10-19 · 「都做」全量清扫 · 进行中）
+## 批37（2026-10-19 · 「都做」全量清扫 · 已完成）
 
 来源：用户原话「都做」——完成上轮盘点的全部未做项。流程：直通（12 条验收契约 `.tamako/contract.json`）。
 
@@ -247,4 +247,9 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
   3. BACKLOG:17 批33 遗留「ci.yml 仍 7 套」——被项3 覆盖（reactions + ws3 + ws4 均已补）→ **已修**；
   4. 批33 元素弹 E2E 采样竞态——同第 1 条，spec 已固化对策并经批37 前一轮修复复验 → **已修**。
   四条全部「已修」，无遗留需记理由项；原文丢失事实披露于此，检索方法可复现（node 读 JSON 统计独立 NIT 出现）。
-- **项7-12 进行中**：serve.py 配置外置、state 写入收敛单一入口、three r161+ ESM、真实 CI、批28 §7.3 转向手感量化、收尾 push 双远端 + 生产再部署。
+- **项7 运行配置外置（40ed250）**：新增 `load_runtime_config()`（env `SNAKE_CONFIG` 指向 JSON 文件；缺文件/非法 JSON/根非对象告警兜底 `{}` 不阻断启动）与 `cfg_val(key, default, cast, lo, hi, cfg, env)`（优先级 **配置文件 > `SNAKE_<KEY>` env > 代码默认**；转换失败回默认；lo/hi 钳位）；接线 CREATE_MAX/CREATE_IP_MAX/CREATE_WIN/ROOM_MAX/REG_MAX/ROOM_KEEP_SECS/STORE_SAVE_INTERVAL 七键 + PORT。新单测 ×3（优先级与回退钳位 / 文件加载与坏档兜底 / 接线后默认值不变）先红（`AttributeError: no attribute 'cfg_val'`）后绿；test_game.py 194 全绿。
+- **项8 state 写入收敛单一入口（c180045）**：index.html 13 处 `state='…'` 赋值全改 `setState(...)`（声明 `:1108` 后新增，函数体仅 `state=v`，界面副作用留原地不动）；`advanceStep(state,…)` 同名只读形参不受影响。门禁：static_check PASS（js=916/916）+ Playwright 46 passed。教训：`str.count` 是子串匹配，缩进差异（4/6/8/10 空格）会误命中——锚点必须带行首 EOL 锚定。
+- **项9 three r161+ ESM（b6fdef2）**：three.min.js(r160 UMD 669KB) → `three.module.min.js`(r161 ESM 675320B) + `<script type="importmap">`（`"three": "./three.module.min.js"`）+ 主脚本改 `<script type="module">` + `import * as THREE from 'three'` / `import { GLTFLoader } from './loaders/GLTFLoader.js'`；jsm 源码入库 `loaders/GLTFLoader.js`(108522B) + `utils/BufferGeometryUtils.js`(31554B)（GLTFLoader 依赖，与 loaders/ 平级布局）；serve.py ALLOWED 静态白名单与 /download zip 清单同步、test_ws2.py/verify_rooms.py 冒烟 URL 同步、package.json main 同步、`scripts/static_check.js` 支持 importmap/module 块（module 写临时 .mjs 再 node --check）；**计划内删除** `three.min.js`、`gltf-loader.js`、`scripts/build_gltf_loader.js`（UMD→THREE 全局的机械改写管线退役，git 历史保留）。四道门禁全绿：static_check（ids=135 js=917/917）、静态路由探测（新 3 件 200 + 旧 2 路由 404）、全量 Playwright 46 passed（skin35 6 条 GLB E2E = ESM 链路真浏览器跑通）、单测 194 全绿。
+- **项10 真实 CI = BLOCKED（外部阻塞，验收原文自带 BLOCKED 出口）**：本 clone 无 GitHub/Gitee 远端（origin=ssh://vmsz 裸仓、server=tencent 裸仓，均不支持 Actions）；`gh` CLI 未安装；`git credential fill` 探测 github.com/gitee.com 均无凭据（本机只配了本地 Gitea yuannas.local:3000，与本项目无关）。解锁所需：GitHub 账号 + repo 权限 token（或装 gh CLI 后 `gh auth login`）→ 把 dev push 到 github.com 新远端 → ci.yml 首跑（workflow 无 secrets 依赖，python+node+npx playwright 自足）。
+- **项11 批28 §7.3 转向手感量化（a780caa）**：新增 `scripts/quant_feel28.js`（343 行）——headless chromium 进 solo，页内 16ms 采样器读 `__predState`/`__stateDbg` + keydown capture 时间戳，node 侧 evaluate 全程 10s 超时 + FATAL 截图取证，输出 `test-results/quant_feel28.json`。spec §7.3 五点自动化三组：Q1 转向跟手延迟、Q2 开放地无回弹、Q3 局末结算窗不抖（M1 speed 期间与对头回弹按 spec 原口径留人测）。实测（VERDICT=pass）：Q1 pv 最快 16.8ms≈1 帧即时（余 4 试次 pred 断链期 null；2 条 md 延迟受 headless 软渲染长帧污染属环境噪声）、**Q2 直行 2458ms/91 帧 mdChanges=0 / mdReversals=0 / headBounces=0**、**Q3 over+win 19933ms/1212 帧 headMoves=0 / headBounces=0**——数据无系统性缺陷，故**未做实现调整**（契约 notDo 不许盲调玩法参数；最终判定交用户实操）。四版迭代根因：页内无界 for(;;) 在 moveDir 零向量下死循环挂死 renderer（循环全改有界 + 零向量短路）；solo 房 respawn=False 死亡后只能 goto+btnSolo 开新命。
+- **项12 收尾**：文档回写（本段收口 + HANDOVER 行数/vendor/§10 ×194/§13 #5 #9/DEPLOY 对齐）→ 全量 `local_ci.ps1` ALL GREEN → push origin+server → 生产再部署（predeploy tar + scp + 重启 + 远端 sha 核验 + prod_verify35）→ 契约 12 条自评（项10 blocked 如实记）。
