@@ -1106,6 +1106,10 @@
   };
 
   let snake, lastCells, dir, foods = [], bonus, score, best, state, lastTick;
+  // 批37 项8：state 唯一写入口 —— 所有 state 赋值必须经 setState()（读取仍直接用 state）。
+  // 目的：把 13 处散落写点收敛到单一入口，杜绝「state 字符串与界面 hidden 双写」继续发散；
+  // 各调用点自身的界面副作用（开关屏/文案/计时器）保持在原地，本次行为零改动。
+  function setState(v) { state = v; }
   let particles = [], floaters = [], shake = 0, audio = null;
   let muted = localStorage.getItem(MUTE_KEY) === '1';
   let foodMeshes = new Map(), bonusMesh = null, bonusLight = null;   // 批25: 多果用 id→mesh
@@ -2464,7 +2468,7 @@
     // 尺寸由房间自身决定（默认房间固定，自定义房间创建时确定），不再由客户端覆盖
     send({t: 'join', room: curRoom, name: playerName, skin: skinIdx, pass: roomPasss[curRoom] || ''});
     send({t: 'speed', ms: SPEEDS[speedIdx].ms});
-    if (state === 'idle' || state === 'over') state = 'joining';
+    if (state === 'idle' || state === 'over') setState('joining');
   }
 
   function onDisconnect() {
@@ -2483,14 +2487,14 @@
     $('btnJoinIn').classList.add('hidden');
     btnPause.classList.remove('off');
     if (wantPlay) {
-      state = 'joining';
+      setState('joining');
       overScreen.classList.add('hidden');
       pauseScreen.classList.add('hidden');
       startScreen.classList.remove('hidden');
       $('connTip').textContent = '连接断开，重连中…';
       setTimeout(() => { if (!wsOpen) connect(); }, 2000);
     } else {
-      state = 'idle';
+      setState('idle');
       startScreen.classList.remove('hidden');
       $('connTip').textContent = '连接断开，点击重试';
     }
@@ -2571,7 +2575,7 @@
     pauseScreen.classList.add('hidden');
     $('lbScreen').classList.add('hidden');
     startScreen.classList.remove('hidden');
-    state = 'idle';
+    setState('idle');
     if (wsOpen) send({t: 'leave'});
     setConn(wsOpen ? '● 已连接' : '● 未连接', wsOpen ? 'ok' : 'bad');
     $('connTip').textContent = '已返回主页，随时可以重新开局';
@@ -2585,7 +2589,7 @@
     playerName = ($('userIn').value || '').trim().slice(0, 12);
     localStorage.setItem(NAME_KEY, playerName);
     wantPlay = true;
-    state = 'joining';
+    setState('joining');
     // 开始屏保留到第一帧快照确认入局，避免连接慢时黑屏
     overScreen.classList.add('hidden');
     pauseScreen.classList.add('hidden');
@@ -2631,7 +2635,7 @@
     joined = false;   // 批16 G：从局内死亡屏切入观战，与主页观战收敛到同一条已验证路径
     myId = null;
     myDust = 0; updateDustChip();   // 批25 T5：死亡/离场并账后 HUD 归零
-    state = 'joining';
+    setState('joining');
     overScreen.classList.add('hidden');
     pauseScreen.classList.add('hidden');
     startScreen.classList.add('hidden');
@@ -3313,7 +3317,7 @@
         }
         if (m.err && m.err.indexOf('口令') >= 0) delete roomPasss[curRoom];
         if (state === 'joining') {
-          state = 'idle';
+          setState('idle');
           wantPlay = false;
           startScreen.classList.remove('hidden');
           $('connTip').textContent = m.err || '入局失败，请重试';
@@ -3465,7 +3469,7 @@
       // 入局/复活/新一局 → 回到进行中
       if (joined && myEnt && myEnt.alive && !winRound &&
           (state === 'joining' || state === 'over' || state === 'win')) {
-        state = 'playing';
+        setState('playing');
         overScreen.classList.add('hidden');
         btnRestart.textContent = '重新入局';
         clearDirQ();
@@ -3486,14 +3490,14 @@
       overScreen.classList.add('hidden');
       btnRestart.textContent = '重新入局';
       btnRestart.disabled = false;
-      if (myEnt && myEnt.alive && state !== 'playing') state = 'playing';
+      if (myEnt && myEnt.alive && state !== 'playing') setState('playing');
       lastTick = performance.now();
     }
     if (meta.over) {
       winRound = true;
       // 批23 P5③：晚加入者/重连者只收到 over 快照、错过 win 事件（ev 只随当次快照下发）→ 补出准备屏
       if (joined && state === 'joining') {
-        state = 'win';
+        setState('win');
         if (meta.win === myId) {
           // resume 赢家本人（新加入的 pid 不可能是上一局赢家）
           $('overTitle').textContent = '🏆 你赢了！';
@@ -3663,7 +3667,7 @@
   };
 
   function onMyDeath(ev) {
-    state = 'over';
+    setState('over');
     shake = Math.max(shake, 1);
     sDie();
     const sc = myEnt ? myEnt.score : 0;
@@ -3712,7 +3716,7 @@
     }
     if (isMe) sStar();
     if (state !== 'playing' || isMe || draw) {
-      state = 'win';
+      setState('win');
       setTimeout(() => { if (state === 'win') showReadyScreen(); }, 400);
     } else {
       $('overTitle').textContent = '🏆 ' + (ev.name || '对手') + ' 获胜';
@@ -5056,7 +5060,7 @@
     if (document.hidden && !joined && state === 'idle' && !demoPaused) togglePause();
   });
 
-  state = 'idle';
+  setState('idle');
   applySkin();
   reset();
   updateAcctUI();
