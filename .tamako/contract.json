@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "goal": "批35 角色皮肤：新增「奶龙」「芙宁娜」两款迷你模型皮肤——用生成器产出低模 GLB，配 UMD 化的 GLTFLoader 挂到蛇头，纯外观改动",
+  "goal": "批35 交付可复现性补齐：生产补 predeploy 备份（先不推远端）、新增可复现的 prod_verify 脚本、把批35 存证图挪进仓库",
   "acceptance": [
     {
       "id": "1",
@@ -19,25 +19,42 @@
     },
     {
       "id": "4",
-      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证 test-results/，prod_verify 无新增 console 错误",
+      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证，prod_verify 无新增 console 错误",
+      "verdict": "pass"
+    },
+    {
+      "id": "5",
+      "text": "生产机生成 predeploy 备份 /home/ubuntu/snake-3d-predeploy-<今日>.tar.gz，且 tar tzf 能列出 index.html / serve.py / models/nailong.glb",
+      "verdict": "pass"
+    },
+    {
+      "id": "6",
+      "text": "新增 scripts/prod_verify35.js 并实跑通过：node scripts/prod_verify35.js 退出码 0，输出含 verdict=pass、皮肤16/17 均 mine.node=true、ERRS=[]（pageerror+console.error 全空）",
+      "verdict": "pass"
+    },
+    {
+      "id": "7",
+      "text": "批35 存证图移入 docs/evidence/batch35/ 并被 git 跟踪（10 张首轮 + 4 张脚本重跑 = 14 张）；.tamako/evidence.md 路径与之一致且无「项目没有 prod_verify」类过时陈述；node scripts/static_check.js 仍 ALL STATIC CHECKS PASSED",
       "verdict": "pass"
     }
   ],
   "notDo": [
+    "不 push 任何远端（用户拍板「只补备份，先不推」）",
+    "不改 index.html / serve.py / 任何游戏代码与玩法数值",
+    "不动批35 以外的存证（p33_attach_react.png、smoke-home.png、smoke-ingame.png 留在 test-results/）",
+    "不新增或修改 CI workflow",
     "不改相机高度与距离（CAM.h/camDist）",
-    "不改碰撞盒、判定、移动、玩法数值",
     "不引入 ESM 打包器（保持 <script> 无模块架构）",
     "不动 GACHA_POOL 抽卡概率",
-    "不加开关/设置项",
-    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）"
+    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）",
+    "不修 BACKLOG.md 里既存的 NUL 字节（offset 49571，批35 前就存在）——只报告"
   ],
   "assumptions": [
-    "serve.py 需改动并重启：ALLOWED 白名单加 gltf-loader.js 与两个 .glb、skin %16→%18、新增 FREE_SKINS 恒免费、/download zip 清单同步",
-    "PROTO_VER 29→30（服务端语义变化，需重启并强制老客户端 reload），部署方式由「scp 即生效」变回「scp + 重启」",
-    "模型为程序生成的低多边形风格化迷你模型，不是官方高精度还原",
-    "applyOffTint 断线灰化须逐实体克隆材质，避免一条蛇灰化污染全场蛇的贴图材质"
+    "playwright 已在 node_modules，新增脚本不引入新依赖（已验证 require('playwright') 与 require('@playwright/test') 均可解析）",
+    "生产 http://193.112.172.83:8090 从本机可直连 HTTP（本轮实跑验证成立）",
+    "docs/evidence/ 不在 .gitignore 忽略范围内（git check-ignore 退出码 1，确认未忽略）"
   ],
-  "flow": "vertical-slice",
+  "flow": "直通",
   "state": "closed",
-  "updatedAt": "2026-10-19T00:40:00.000Z"
+  "updatedAt": "2026-10-19T01:45:00.000Z"
 }
