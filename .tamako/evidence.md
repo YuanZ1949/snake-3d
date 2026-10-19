@@ -190,3 +190,66 @@ PID 1676685 / HTTP 200 249141B / PROTO_VER = 30
 | 正式存证 | `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10） |
 | 可复现验收脚本 | `scripts/prod_verify35.js`（第 2 轮新增，实跑 PASS） |
 | 交接 / 待办 | `HANDOVER.md`、`BACKLOG.md` |
+
+
+# 批36 证据（按整体评估建议逐个修复 · P0 落盘/写盘安全、P1 口径/备份/门禁、P2 拆分起步/热路径减负）
+
+契约：`.tamako/contract.json` —— acceptance 1-8 全部 `verdict=pass`，`state=closed`（顶层 8 字段，JSON 可解析）。
+全部改动均为本地 commit（db1f509 → 629620f → a0095e1 → 7dda151 → 0b03f4e → 2e160fd → bd270ee），**未 push**（契约 notDo）。
+
+## 验收 1 —— store.inc/record_best 脏标记批量落盘（commit db1f509）
+
+- 机制：`STORE_SAVE_INTERVAL=5.0` + `_mark_dirty()`（标脏，距上次真写 ≥5s 才落盘）；register/add_stardust/grant_skin 仍立即写；`shutdown_settle()` 无条件 `store.save()` 兜底 flush。
+- RED：哨兵断言失败——「节流窗内 inc 不得重写 store.json」（往盘写与内存不一致的 `"food": 999`/`"best": 999`，任何真写都会抹掉哨兵）。
+- GREEN：`test_store_inc_throttled_batched_save`、`test_store_record_best_and_shutdown_flush` 两条先红后绿。
+- 套件：`.venv\Scripts\python.exe test_game.py` → `ALL GAME UNIT TESTS PASSED`（189 个 test_）EXIT=0。
+
+## 验收 2 —— 写盘安全：persist 原子写 + store.json 损坏留证（commit 629620f）
+
+- RED ①：原实现先 `open(path,'w')` 截断；注入不可序列化对象时 `TypeError` 不在 `except OSError` 内向上抛（实证 traceback）。
+- RED ②：`Store.load` 损坏时静默 `users={}`，无任何留证。
+- GREEN：`save_persist_rooms` 改 tmp+`os.replace`（异常吞掉、删半截 tmp、返 False）；`Store.load` 损坏先备份 `store.json.corrupt-<%Y%m%d-%H%M%S>` 再兜底。新测 `test_store_load_corrupt_backs_up_before_reset`、`test_save_persist_rooms_atomic_on_failure` 先红后绿。
+- 顺带披露：修既存随机 flaky `test_eterrain_attach_and_spawn_avoid_batch33`（20×20 只撒 6 格 + 依赖全局 RNG 残留；套件内 3 红 2 绿、孤立 1/300）——测试改为钉死 `(5,5)/hydro` 构造性消除。
+- 套件：test_game.py 189 全绿 EXIT=0。
+
+## 验收 3 —— roomcfg 拍板口径（commit a0095e1）
+
+- 口径（用户拍板原文）：「设密码的只有房主能改 没密码的所有人都能改」。
+- 实现：`_msg_roomcfg`（原 handle_msg roomcfg 分支）内 `if room.passw and not can_edit_room(sess, room, m.get('otok'))` → error 回执并 return；三轨=账号 owner_user / 在线 sid / owner_tok 常数时间比对；无口令房维持放开（含首次设口令）。persist/delroom 未动（契约 notDo）。客户端已带 `otok`，前端零改动。
+- 新测 `test_roomcfg_pass_room_owner_only`（陌生人被拒且参数不变、房主三轨放行）、`test_roomcfg_no_pass_anyone_edits` 先红后绿；批23/批24 既有 roomcfg 用例全绿（都跑在无口令房）。
+
+## 验收 4 —— 生产 data/ 备份 tar
+
+- 命令：ssh ubuntu@193.112.172.83 `tar czf /home/ubuntu/snake-3d-data-20261019-153034.tar.gz ... -C /home/ubuntu snake-3d/data`（key `C:/Users/yuan/.ssh/1.pem`）。
+- 结果：`snake-3d-data-20261019-153034.tar.gz` 28834 B；`tar tzf` 输出含 `data/ 、data/store.json、data/usage.json、data/persist_rooms.json、data/usage.log` —— **store.json ✓**。
+
+## 验收 5 —— 门禁补套：local_ci 9→11 套 + ci.yml 补 reactions（commit 7dda151）
+
+- `scripts/local_ci.ps1`：suites 数组追加 `'test_ws3.py', 'test_ws4.py'`（放最后），头部注释与 Say 文案 9→11 套同步；文件保持 UTF-8 无 BOM（首字节 `23 20 6c`）。
+- `.github/workflows/ci.yml`：round2 在 `python test_delta_p1.py` 后补一行 `python test_reactions_p33.py`（该套自起进程内随机端口 websockets 服务，不依赖外部端口）。
+- 前置披露：ws3/ws4 两套断言停在批6 之前（期望创建者断开→自定义房立即回收），与现行 GC 口径（`DEFAULT_ROOM_IDS 常驻 / persist 永不回收 / 24h 内保留`）冲突，接入门禁前先改断言对齐设计（只改测试，两处加「批36 对齐口径」注释）。
+- 实跑：`pwsh -ExecutionPolicy Bypass -File scripts\local_ci.ps1` → `ALL GREEN — 本地 CI 全部通过`、LOCAL_CI_EXIT=0；11 套 E2E 全 [PASS]、`ALL GAME UNIT TESTS PASSED`（189）、`ALL STATIC CHECKS PASSED`、Playwright `46 passed (2.2m)`。
+
+## 验收 6 —— handle_msg 注册表化 + index.html 分区编号（commit 0b03f4e）
+
+- serve.py：脚本化平移（断言式：分支数/消息名全集不符即中止不写盘）——原 698 行/32 分支 if-elif 链逐支平移为 28 个 `async def _msg_*(sess, m)`（统一缩进 -4，函数体逐行未改），注册进 `MSG_HANDLERS`；局内 9 名共用 `_room_actor`（=原链尾共享 guard 下移）；`handle_msg` 只剩 msgs 计数 + 查表分发。脚本输出：`OK handlers=28 names=32`，32 名=register…respawn 全集。
+- index.html：18 个主分区头注按出现顺序编号 01..18（祈愿区升 19），IIFE 开头插入「批36 P2-2：JS 分区编号索引」注释块（19 头注实测行号 1198…4722）。
+- 验证：`node scripts/static_check.js index.html` → `ids=135 dup=0 div=69/69 css=350/350 js=917/917` + `ALL STATIC CHECKS PASSED` EXIT=0；`.venv\Scripts\python.exe test_game.py` → `ALL GAME UNIT TESTS PASSED`（189）EXIT=0。
+
+## 验收 7 —— 帧循环 DOM 缓存 + 榜单脏标记（commit 2e160fd）
+
+- 改动：启动期一次性缓存 `elAtkBtn/elElemBar/elEbBtns`（frame 内不再每帧 `$()`/querySelectorAll；`setElem` 复用同一缓存）；`placeEdge` 的 canvas 包围盒 `_canvasRect` 缓存、`resize()` 置 null 失效；`updateBoard` 加内容签名脏标记（名次/名字/分数/存活/皮肤未变跳过 DOM 重建，款式同 `effHudSig`）。grep 复核：热路径残留命中均为一次性初始化/CSS/vendor 探针。
+- 验证：`node scripts/static_check.js index.html` → `ALL STATIC CHECKS PASSED` EXIT=0；`npx playwright test`（BASE=127.0.0.1:8123 起服）→ `46 passed (2.1m)`、PW_EXIT=0。
+- 竞态披露（未归因本批、未修——改 spec 属越界）：reactions.spec「元素弹渲染链路」在全量跑中偶发落在已 win 的 solo 局而超时（spec 注释自述既有竞态：solo 蛇撞墙死后不可重开）。本轮 HEAD 全量 4 次 2 挂 2 过；切基线 7dda151 对照 1/1 过；隔离跑 4/4 过；最终验收跑 46/46 过。失败快照显示 state='win'（AI-3 215 分的完整局），与逐行平移/缓存改动无状态机关联。
+
+## 验收 8 —— 逐项独立 commit + 工作区干净
+
+- 提交链（dev，未 push）：db1f509 → 629620f → a0095e1 → 7dda151 → 0b03f4e → 2e160fd → bd270ee（收尾文档+契约结项）→ 本证据补录 commit，共 8 个（≥6 ✓）。
+- `git status --short` → 空（契约收尾提交后实测）。
+
+## 复盘与已知问题（披露，均未越界动手）
+
+- reactions.spec 竞态：建议后续让该 spec 落到 win 态时点「准备」重开一局再断言。
+- test_ws3 套内一次偶发失败（复跑与孤立跑均绿），时序类。
+- `.tamako/` 已被 git 跟踪（沿袭前批实践）；若不想入库：`git rm --cached -r .tamako` 并写入 `.gitignore`。
+- 未 push：dev ahead origin/dev 约 24；HANDOVER §10 旧数字（13 spec/39 passed）未动（越界）。
