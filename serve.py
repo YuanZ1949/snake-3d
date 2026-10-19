@@ -229,7 +229,19 @@ class Store:
         try:
             self.users = json.loads(self.path.read_text('utf-8'))
         except Exception:
+            # 批36 P0-2：损坏时先留证据再兜底——原实现静默 users={} 会清空全服账号。
+            # 文件不存在（全新启动）保持原样静默，不上报也不备份。
             self.users = {}
+            if self.path.exists():
+                traceback.print_exc()          # 仍在原异常上下文：打印解析失败原因
+                try:
+                    bak = self.path.with_name(
+                        self.path.name + '.corrupt-' + time.strftime('%Y%m%d-%H%M%S'))
+                    bak.write_bytes(self.path.read_bytes())
+                    print(f'[store] 损坏已备份为 {bak}（原内容保留），本进程从空表启动',
+                          flush=True)
+                except Exception:
+                    traceback.print_exc()      # 备份本身失败时也报出来
 
     def save(self):
         self._last = time.time()
@@ -2289,13 +2301,23 @@ def persist_rooms_dump():
 
 
 def save_persist_rooms(path=PERSIST_FILE):
-    """把全部 persist 房间写盘（标记变化时调用）；失败静默（不阻塞游戏）"""
+    """把全部 persist 房间写盘（标记变化时调用）；失败静默（不阻塞游戏）。
+    批36 P0-2：tmp+replace 原子写——序列化中途失败时既有文件保持原样，
+    不留半截文件，异常一律吞掉返回 False（不向上抛）。"""
+    path = os.fspath(path)
+    tmp = path + '.tmp'
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(persist_rooms_dump(), f, ensure_ascii=False)
+        os.replace(tmp, path)
         return True
-    except OSError:
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
         return False
 
 

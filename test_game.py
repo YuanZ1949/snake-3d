@@ -3560,7 +3560,13 @@ def test_eterrain_attach_and_spawn_avoid_batch33():
     assert all(c not in r.eterrain for c in p['cells']), p['cells']
     # 蛇头走到 eterrain 格 → 踩格替换：附着该元素（覆盖旧 aura、时长重置）
     tgt, el = next(((c, e) for c, e in r.eterrain.items() if c[0] >= 3), (None, None))
-    assert tgt, '需要一个 x>=1 的元素格做测试落点'
+    if tgt is None:
+        # 构造性消除随机（同 P7 做法）：20×20 只撒 6 格，偶发全落 x<3 列时本例会红；
+        # 且本例依赖前序测试残留的全局 RNG 状态（test_game.py:1931 有 random.seed(42)），
+        # 孤立运行失败率 1/300、进套件后被放大 → 落点条件改由测试自己钉死。
+        tgt, el = (5, 5), 'hydro'
+        r.eterrain[tgt] = el
+    assert tgt, '需要一个 x>=3 的元素格做测试落点'
     r.set_aura(p, 'pyro', serve.now_ms())
     p['cells'] = [(tgt[0] - 1, tgt[1]), (tgt[0] - 2, tgt[1]), (tgt[0] - 3, tgt[1])]
     p['dir'] = (1, 0)
@@ -4092,6 +4098,53 @@ shutdown_settle() 必须 flush 脏数据——否则节流窗内的战绩在优�
         serve.store = keep
 
 
+# ---- 批36 P0-2：写盘安全（原子写 + 损坏留证） ----
+
+def test_store_load_corrupt_backs_up_before_reset():
+    """批36 建议2（先红后绿）：store.json 损坏时先备份 .corrupt-<时间戳> 再兜底空表。
+原实现静默 users={} 等于清空全服账号且不留任何证据。"""
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-store-corrupt-'))
+    p = d / 'store.json'
+    p.write_text('{oops not json', 'utf-8')
+    st = serve.Store(p)
+    assert st.users == {}, '兜底仍是空表（服务必须能起来）'
+    bak = sorted(d.glob('store.json.corrupt-*'))
+    assert bak, '损坏文件必须先备份为 .corrupt-<时间戳> 再兜底'
+    assert bak[0].read_text('utf-8') == '{oops not json', '备份必须保留原始内容'
+
+
+def test_save_persist_rooms_atomic_on_failure():
+    """批36 建议2（先红后绿）：persist 房间写盘改 tmp+replace 原子写——
+序列化中途失败时不得截断/污染既有文件、不得向上抛异常、不得留半截 tmp。"""
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-persist-atomic-'))
+    p = d / 'persist_rooms.json'
+    keep_rooms, keep_dump = dict(serve.rooms), serve.persist_rooms_dump
+    try:
+        r = serve.Room('pa', 'pa', 20)
+        r.persist = True
+        serve.rooms['pa'] = r
+        assert serve.save_persist_rooms(str(p)) is True, '夹具：应先写出一份正常文件'
+        good = p.read_text('utf-8')
+        assert good.strip(), '夹具：正常文件非空'
+        serve.persist_rooms_dump = lambda: {'bad': object()}   # 注入序列化失败
+        raised = None
+        try:
+            ok = serve.save_persist_rooms(str(p))
+        except Exception as e:
+            raised, ok = e, None
+        assert raised is None, f'写盘失败必须吞掉并返回 False，不得向上抛：{raised!r}'
+        assert ok is False, '序列化失败必须返回 False'
+        assert p.read_text('utf-8') == good, '原子写：失败不得破坏既有文件'
+        assert not (d / 'persist_rooms.json.tmp').exists(), '失败不得留半截 tmp'
+    finally:
+        serve.persist_rooms_dump = keep_dump
+        serve.rooms.pop('pa', None)
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -4214,6 +4267,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_slow_tick_multiplier_batch33,
              test_elements_roomcfg_and_persist_batch33,
              test_store_inc_throttled_batched_save,
-             test_store_record_best_and_shutdown_flush]:
+             test_store_record_best_and_shutdown_flush,
+             test_store_load_corrupt_backs_up_before_reset,
+             test_save_persist_rooms_atomic_on_failure]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")
