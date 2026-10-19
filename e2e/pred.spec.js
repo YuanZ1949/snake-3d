@@ -22,6 +22,7 @@ async function waitPred(page, pred, timeoutMs = 4000) {
 const snapShell = st0 => ({
   t: 'snap', round: st0.round, cols: st0.cols, rows: st0.rows,
   walls: [], portals: [], rocks: [], foods: [], bonus: null,   // bonus 必须是 null（[] 为 truthy 会造出 garbage bonus）
+  hmap: [],                                                     // 批38：批32 高度通道同理（缺失=未变化 index.html:3128）——不带此字段会把真实地形崖泄漏进预测空间 → advanceStep 悬停冻结
 });
 
 // 基准 snap：蛇 [[10,12],[9,12],[8,12]] 头朝东；q = 声明的服务器在途队列长
@@ -47,6 +48,10 @@ test('T1 本地预测激活与预览不回退', async ({ page }) => {
   const st0 = await page.evaluate(() => window.__predState());
   expect(st0.id, '载具前置：已入局拿到自机 id').not.toBeNull();
   await page.evaluate(() => window.__predGate(true));
+  // 批38：在首步目标格 (10,11) 种 ≥2 高差崖，复现批32 高度通道泄漏——注入件不带 hmap 时
+  // applyWorld(index.html:3128「缺失=未变化」) 保留此高度场，advanceStep 悬停(:2886) 会把
+  // leadCells 冻在 0（历史偶发挂同签名：真实房间地形恰好在首步目标格成崖）
+  await page.evaluate(() => window.__mapDbgSet([[10, 11, 9], [10, 12, 0]]));
   await page.evaluate(s => window.__gachaDbg(s), baseSnap(st0, 0));
   // 基准 dir=E，↑ 非反向；须在首拍（注入 +150ms）前入 dirQ
   await page.keyboard.press('ArrowUp');
