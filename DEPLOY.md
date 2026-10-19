@@ -25,7 +25,7 @@
 └── .venv/          独立虚拟环境（websockets==13.1）
 ```
 
-## 当前功能版本（2026-10 · P2P5 批1-12 + 第二轮批13-19 + 批20-22 + 批23 已全部交付）
+## 当前功能版本（2026-10 · 批1-23 基线 + 批24-37 已交付）
 
 玩法与模式：死斗/积分两种胜利模式（限时/无限复活可配）、大招蓄力弹幕、
 偏转/护盾道具（共 7 种道具）、成对传送门、AI 蛇（0-7 条，单人练习快捷入口，
@@ -39,11 +39,16 @@
 白天场景 z-fighting 闪烁修复（地板 polygonOffset）、
 动态自适应画质（帧耗时 EMA 采样，掉帧自动降 pixelRatio/阴影/小地图频率，恢复升回）。
 
+批24-37 增量（详见 HANDOVER.md / BACKLOG.md）：高度地形与建筑（批32）、
+原神元素反应（批33）、地形真遮挡（批34）、角色皮肤 + 蛇头迷你 3D 模型 GLB（批35）、
+批36 工程修复（store 落盘节流/写盘原子与损坏备份/roomcfg 房主鉴权/门禁 11 套/
+handle_msg 注册表化/帧循环 DOM 缓存）、批37（账号口令 6-64 位、房口令哈希落盘、
+ci.yml 补至 11 套）。
 安全与账号：注册/建房/登录/口令错试分维度限速、登录失败原因入用量明细、
 匿名 resume 绑 IP、owner 凭据常数时间比对、弱口令黑名单（前后端同步）。
 
 协议与工程：快照增量协议（静态字段变化才下发，首帧全量）、本地一键回归
-`scripts/local_ci.ps1`（单测 106 + 8 套 python E2E + 静态检查 + Playwright 冒烟）、
+`scripts/local_ci.ps1`（单测 191 + 11 套 python E2E + 静态检查 + Playwright 14 spec / 46 tests）、
 后台用量报表（每小时在线曲线/房间热度，`python usage_report.py`）。
 GitHub Actions workflow（`.github/workflows/ci.yml`）已就绪，但仓库远端为
 ssh 自建（非 GitHub/Gitee），Actions 尚无 runner 可触发。详见 HANDOVER.md。

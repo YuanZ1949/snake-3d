@@ -362,7 +362,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
-| `test_game.py` | 单元 ×183 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser）+ 批20/21 ×2（usage err 明细/登录防爆破限速）+ 批22 ×6（respawn 消息门禁/建房限速与房间 cap/注册限速/口令错试限速/匿名 resume 绑 IP/token TTL 过期与滑动续期）+ 批23 ×10（humans 字段/roomcfg 统一扩展/win_pending 超时强开/晚加入补准备屏 + owner 凭据 ×3：回执带 tok 与列表不泄露/匿名凭据恢复编辑/persist 三轨凭据；persist 往返含 ownerTok）+ 批33 ×21（反应表完整/同元素与缺元素返 None/aura 快照与 TTL/重生清 aura 断线保留/eterrain 约束与附着避让/full+DELTA/咬击六反应全覆盖/反应双消与感染/反应充能与死伤降级/碰撞碾压结果不变/元素弹附着与 CD/命中刷新/不碎岩与门禁/跨高度层/冻结不移动且恢复/冻结头静止障碍/冻结输入门禁/冻结可被咬/超导 slow×1.5/elements+elemAmt 三入口与旧存档默认） |
+| `test_game.py` | 单元 ×191 | 幽灵穿墙/撞墙死亡/传送门/道具拾取/速度效果/护盾/咬蛇截断与**2格淘汰**与免疫/子弹截断/出生点/水果唯一 id/自定义房间/**apply_speed**/**free_cells 大地图**/usage 日志/**combo 链与超时重置**/**combo 档位倍率**/**双倍得分**/**磁铁吸附**/**狂暴 CD 与子弹加速** + 批1 ×7（战场自定义/限时/积分赛/死斗/复活×2）+ 批2 ×10（deflect/护盾折返/大招充能与释放）+ 批3 ×4（传送门对数随地图/多对互逆/出口朝开阔方向/资源有效期随地图）+ 批4 ×7（AI 配置/生成/追食转向/避墙/单人胜/AI ready/离房清 AI）+ 批5 ×10（聊天×2/挂起宽限与超时/挂起清AI/恢复匹配/状态保留/单人房立即清/多人房挂起/挂起蛇冻结）+ 批6 ×5（口令校验/口令不泄露/24h保留/persist不回收/持久化往返）+ 批7 ×1（白天主题进池/day 建房与地形）+ 批13 ×2（快照 q 字段 / send 失败挂起且 resume 命中）+ 批14 ×10（spawn 主路径与兜底避让/protected 拦截进入/单帧单右转/僵持 tie-break 判死/挂起不顶头/挂起不被咬/resume 冲突重生/portal 出口占位停走/portal 打平延续进入方向/bot 活性守卫）+ 批15 ×4（封死口袋不放水果/可达集 BFS 计时与缓存/bot 被挡按对齐度绕行/bot 就近选目标）+ 批17 ×4（墙折返房撞墙垂直折返/折返无路照死/正面撞岩石照死/2格被咬照常淘汰；persist 往返含 wd）+ 批18 ×5（陌生人拒改/创建者 live 改不重开局/账号归属跨会话/bots live 增减/兜底限时镜像；persist 往返含 ownerUser）+ 批20/21 ×2（usage err 明细/登录防爆破限速）+ 批22 ×6（respawn 消息门禁/建房限速与房间 cap/注册限速/口令错试限速/匿名 resume 绑 IP/token TTL 过期与滑动续期）+ 批23 ×10（humans 字段/roomcfg 统一扩展/win_pending 超时强开/晚加入补准备屏 + owner 凭据 ×3：回执带 tok 与列表不泄露/匿名凭据恢复编辑/persist 三轨凭据；persist 往返含 ownerTok）+ 批33 ×21（反应表完整/同元素与缺元素返 None/aura 快照与 TTL/重生清 aura 断线保留/eterrain 约束与附着避让/full+DELTA/咬击六反应全覆盖/反应双消与感染/反应充能与死伤降级/碰撞碾压结果不变/元素弹附着与 CD/命中刷新/不碎岩与门禁/跨高度层/冻结不移动且恢复/冻结头静止障碍/冻结输入门禁/冻结可被咬/超导 slow×1.5/elements+elemAmt 三入口与旧存档默认） + 批36 ×6（store 节流批量落盘/record_best 关停 flush/load 损坏先备份再兜底/persist tmp+replace 原子写/有口令房仅房主 roomcfg/无口令房任何人可改）+ 批37 ×2（账号口令 6-64 位兼容旧 6 位数字/房口令哈希落盘无明文） |
 | `test_ws.py` | E2E | 连接、入局、移动、攻击、排行榜、房间列表、创建房间 |
 | `test_ws2.py` | E2E | HTTP 三接口、注册登录（`user/pass` + token）、入局快照字段、第二连接观战、排行榜、创建房间 |
 | `test_ws3.py` | E2E | 房间列表属性、自定义地图（40×熔岩/岩石/传送门）、非法参数回退、人数广播、空房回收 |
@@ -377,8 +377,8 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `verify_prod.py` | 生产 | WS 冒烟：进房 `a`、快照字段、食物唯一 id、玩家 cells |
 | `e2e/smoke.spec.js` | Playwright ×5 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。批16 +2：建房面板下拉暗色（`color-scheme` computed 断言 + body 不外溢）、死亡结算屏→观战衔接（固定视角循环按左撞墙真实死亡 → `btnOverSpectate` 可见 → 点击后结算屏收起 + `btnJoinIn` 出现，无 JS 报错）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
 | `e2e/reactions.spec.js` | Playwright ×4 | 批33：元素 HUD 四按钮+键1切冰+键 e 进 CD（`waitPlaying` 后再按）、playing&alive 帧 40ms 紧采断言 `__projDbg()>0`（元素弹存活极短 ~60-400ms）、注入 `aura{cryo}`+`react{frozen}` 断言 `__auraDbg`/`__floatDbg` 并截图 `test-results/p33_attach_react.png`、`elements=false` 时 `#elemBar` hidden。固定账号 `p33elem`（免疫生产注册限流），**外部起服**，`BASE` 可指生产 |
-| `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 8 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
-| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量（**批33 起 9 套**）：停服清库→起 28000/8090→9 套 E2E（含 `test_reactions_p33.py`）→单测→停服清库→静态检查→起 8123→Playwright（13 spec / **39 passed**）→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
+| `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 11 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
+| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量（**批37 起 11 套**）：停服清库→起 28000/8090→11 套 E2E（含 reactions/ws3/ws4）→单测→停服清库→静态检查→起 8123→Playwright（14 spec / **46 passed**）→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
@@ -415,7 +415,7 @@ $env:BASE='http://127.0.0.1:8123'; npx playwright test # 另开终端（npm inst
 1. `node --check` 抽出的 JS；
 2. JS 里 `$('id')` 引用的 id 必须全部存在于 DOM（当前 135，`dup=0`）；
 3. `<div>` 开闭数量相等（当前 69/69）；
-4. CSS 花括号配对（当前 350/350）、JS 圆括号配对（878/878）。
+4. CSS 花括号配对（当前 350/350）、JS 圆括号配对（915/915）。
 
 ---
 
@@ -459,7 +459,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`816530d`（批35，已 commit；第 2 轮补批见本段末）** —— 批35「奶龙/芙宁娜 角色皮肤 + 迷你 3D 模型」于 2026-10-19 **直接 `scp` 5 文件 + 重启进程**投放（`index.html` + `gltf-loader.js` + `models/nailong.glb` + `models/furina.glb` + `serve.py`，**未走 git archive**，因改动仍在 dev 工作区未提交）。投放后核验：远端 `PROTO_VER = 30`、新 PID 1676685、资源白名单全 200、远端 `index.html` 249141 B 且 `grep -c myHeadSel` = 3；运行时 `loader=true`、`skins[16]=nailong` / `skins[17]=furina`、`MOUNT_* node=true skull=false`、`FALLBACK node=false skull=true`、取证三会话 `ERRS=[]`（`pageerror` + `console.error` 全空）。注意：**批35 `PROTO_VER` 29→30 双端 bump** —— 老标签页进房即 `location.reload()`，并会再触发批29④ 每账号 14,400 星尘更新回馈（`update_ver_claimed` 单调比较，属预期行为而非 bug）。回滚点：**`snake-3d-predeploy-20261019-134813.tar.gz`**（第 2 轮 2026-10-19 补建，546497 B / 55 条目，含 `index.html`、`serve.py`、`gltf-loader.js`、`models/*.glb`；较 §11.2 配方多排除 `node_modules`，`npm ci` 可重建，tar 从数百 MB 降到 546 KB，其余排除项一致）。上一已提交版本记录：**dev@`d86942c`**（批29 全部 6 项 + 批30 全部 4 项，2026-10-17 02:56 部署，origin/server 双远端均已推送）。
+当前生产版本：**dev@`a341db5`（批36 全量 + reactions spec 竞态修复 + `.tamako/` 退跟踪，2026-10-19 20:23 投放）** —— 批37 项1 以 `scp serve.py index.html` + 重启进程投放（`gltf-loader.js`/`models/*.glb` 与生产一致未重传；本地该时点与 `a341db5` 一致）。投放后核验：远端 serve.py/index.html sha256 与本地逐字节一致、新 PID 1812083、HTTP 200 251348 B、`PROTO_VER = 30`、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）。回滚点：**`snake-3d-predeploy-20261019-202345.tar.gz`**（546497 B，含 serve.py、index.html、gltf-loader.js、models/*.glb；较 §11.2 配方多排除 `node_modules`）。批37 项4/项5（账号口令 6-64 位、房口令哈希落盘）已 commit **未投放**，随批37 收尾（项12）再部署。历史回滚点：`snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一已提交版本记录：dev@`d86942c`（批29 全部 6 项 + 批30 全部 4 项，2026-10-17 02:56 部署，双远端已推送）。
 
 > 第 2 轮（2026-10-19，用户拍板「只补备份，先不推」）：① 生产补建 predeploy 备份 `snake-3d-predeploy-20261019-134813.tar.gz`；② 新增**可复现验收脚本** `scripts/prod_verify35.js`（从本机打生产 8090，实跑 `VERDICT=pass`、`ALL_ERRS=[]`、皮肤 16/17 `mine.node=true`，退出码 0；该脚本**只留在仓库，未投放生产**，它不需要跑在服务器上）；③ 批35 存证图入库 `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10；原先在被 `.gitignore` 忽略、且 Playwright 每次运行会清空的 `test-results/` 里；脚本重跑产出的 4 张 ON/OFF 落 `test-results/` 不入库，可由脚本重新生成）；④ `git push` **仍未执行**（`dev` ahead `origin/dev` 16 / ahead `server/dev` 27），须人工拍板。
 
@@ -495,7 +495,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 1. 改 `serve.py` / `index.html`。
 2. 本机静态检查：`node --check`、id 引用比对、括号配对（见 §10）。
-3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；批11 后为 67 单测 + 8 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
+3. 跑单测 + E2E —— **Windows 本机直接跑**（`.venv\Scripts\python.exe`，见 §10；现 191 单测 + 11 套 E2E 全绿）；Termux 本机仍上传 `snake-test` 跑。
 4. 通过后按 §11.2 发布生产，跑 `verify_rooms.py`。
 5. `git add -A && git commit`（中文 feat/fix/style 提交说明）。
 6. 通知使用者**强刷页面**（Ctrl/Cmd+Shift+R）确认新前端。
@@ -515,8 +515,8 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 7 | 用量数据积累时间短 | 趋势分析样本少（随时间自然积累） | ~~可加每小时在线曲线/房间热度~~ **批12 已实现** `usage_report.py`（仅余样本量问题） |
 | 8 | 本机（Termux）在运营商 CGNAT 后 | 无法从外网回调本机 | 需要对外暴露本机时走隧道/内网穿透 |
 | 9 | `three.min.js` 为本地 vendor r160 | **批10 已升级 r128→r160**（冒烟+同主题 A/B 截图验收，用户拍板采用 r160 新 sRGB 默认观感） | **批12 评估结论：维持 r160 不改**。升级 r161+ 需 ESM 改造（主脚本包 boot 函数 + module 脚本 `import * as THREE` 后触发，已核实 index.html 无 inline onclick、方案可行），但新版本特性（WebGPU 等）本项目全用不到，改造需 2130 行主脚本作用域包裹 + 全量视觉回归重做——收益低风险中。除非出现安全公告或需要新 API，否则不动 |
-| 10 | **批33 元素反应的三处测试性约束**（非功能 bug） | ① 元素弹 `proj` 生命周期极短（fire 后 ~60–400ms 消失），粗采样采不到；② solo 无人房 1.3–3.5s 撞墙死 → `state='over'` 后 `fireEb` 永久拒绝且无重生；③ 生产注册限流 `REG_MAX=30/REG_WIN=300s` 会让"每轮新账号"的 E2E 撞限 | `e2e/reactions.spec.js` 已内置对策：`waitPlaying()` + `__stateDbg` 判 `playing&&alive` 后才按 e + `page.evaluate` 内 40ms 紧采 800ms + 固定账号 `p33elem`（ensureLogin 先 register「已存在」不计配额、失败兜底 login）。**新增元素弹类 E2E 请沿用同一范式** |
-| 11 | `.github/workflows/ci.yml` 的 python E2E 仍是 7 套（未含 `test_reactions_p33.py`） | 本地门禁 `local_ci` 已含 9 套，CI 缺第 9 套；Actions 本身也因远端非 GitHub/Gitee 从未触发（见 #4） | 待 CI 真正可跑时补一行 `python test_reactions_p33.py`（本轮未改 CI，属未在契约范围） |
+| 10 | **批33 元素反应的三处测试性约束**（非功能 bug） | ① 元素弹 `proj` 生命周期极短（fire 后 ~60–400ms 消失），粗采样采不到；② solo 无人房 1.3–3.5s 撞墙死 → `state='over'` 后 `fireEb` 永久拒绝且无重生；③ 生产注册限流 `REG_MAX=30/REG_WIN=300s` 会让"每轮新账号"的 E2E 撞限 | `e2e/reactions.spec.js` 已内置对策：`waitPlaying()` + `__stateDbg` 判 `playing&&alive` 后才按 e + `page.evaluate` 内 40ms 紧采 800ms + 固定账号 `p33elem`（ensureLogin 先 register「已存在」不计配额、失败兜底 login）。**新增元素弹类 E2E 请沿用同一范式**；批37 前一轮再修「win 态卡准备屏」全量偶发竞态（`5e59f6e`：toPass 内 state=win 点 `#btnRestart` 走 sendReady 重开新局 + 按 `ebAge` 等 EB_CD，全量 46 passed） |
+| 11 | ~~ci.yml 的 python E2E 仍是 7 套~~ **批37 项3 已修（`c882fcf`）** | ci.yml round2 现 **11 套**（reactions + ws3 + ws4 已补，与 `local_ci.ps1` 一致） | Actions 仍因远端非 GitHub/Gitee 无 runner 可触发（见 #4）——真实 CI 见批37 项10 |
 
 ---
 
@@ -550,7 +550,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 
 ```bash
 # ── 本机（Windows）开发 ──
-.venv\Scripts\python.exe test_game.py                      # 单测 183 项（批33 含 21 项）
+.venv\Scripts\python.exe test_game.py                      # 单测 191 项（批33 含 21 项；批36 +6、批37 +2）
 $env:PORT='28000'; .venv\Scripts\python.exe serve.py        # 起本地测试服；另开终端跑 test_ws*.py
 node --check <抽出的js文件>                                 # 前端静态检查（Node 24 已装）
 git status && git push server --all                        # 同步到服务器裸仓库
