@@ -147,8 +147,8 @@ VERDICT=pass
 
 ### 验收 7 — 存证入仓 ✅
 
-- 10 张首轮存证从 `test-results/`（已被 `.gitignore` 忽略，且 Playwright 每次运行会清空）移入 `docs/evidence/batch35/`。
-- 同时入库脚本重跑产出的 4 张：`prod35_{nailong,furina}_{on,off}.png`（nailong 173072/122790 B、furina 115150/106502 B），目录合计 14 张。
+- 10 张首轮存证从 `test-results/`（已被 `.gitignore` 忽略，且 Playwright 每次运行会清空）移入 `docs/evidence/batch35/`，`git ls-files docs/evidence/batch35` 计数 = **10**（验收 7 原文判据）。
+- 脚本重跑产出的 4 张 `prod35_{nailong,furina}_{on,off}.png`（nailong 173072/122790 B、furina 115150/106502 B）**不入库**，落 `test-results/`（gitignored）—— 可由 `node scripts/prod_verify35.js` 随时重新生成；`git ls-files docs/evidence/batch35` = **10**。
 - `test-results/` 现只剩他批文件：`p33_attach_react.png`、`smoke-home.png`、`smoke-ingame.png`、`.last-run.json`（按契约不动）。
 
 ### 生产零漂移复核
@@ -187,6 +187,6 @@ PID 1676685 / HTTP 200 249141B / PROTO_VER = 30
 | 模型 | `models/nailong.glb`、`models/furina.glb` |
 | Loader | `gltf-loader.js` |
 | 皮肤表 / 白名单 / 版本 | `serve.py`（SKIN_N、FREE_SKINS、ALLOWED、PROTO_VER=30） |
-| 正式存证 | `docs/evidence/batch35/`（10 张首轮 + 4 张脚本重跑 ON/OFF，共 14 张） |
+| 正式存证 | `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10） |
 | 可复现验收脚本 | `scripts/prod_verify35.js`（第 2 轮新增，实跑 PASS） |
 | 交接 / 待办 | `HANDOVER.md`、`BACKLOG.md` |

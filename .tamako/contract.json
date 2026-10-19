@@ -19,7 +19,7 @@
     },
     {
       "id": "4",
-      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证，prod_verify 无新增 console 错误",
+      "text": "生产部署（scp index.html + gltf-loader.js + models/*.glb + serve.py 并重启进程，PROTO_VER=30）后：选中奶龙/芙宁娜进局可见迷你模型，截图存证 test-results/，prod_verify 无新增 console 错误",
       "verdict": "pass"
     },
     {
@@ -34,7 +34,7 @@
     },
     {
       "id": "7",
-      "text": "批35 存证图移入 docs/evidence/batch35/ 并被 git 跟踪（10 张首轮 + 4 张脚本重跑 = 14 张）；.tamako/evidence.md 路径与之一致且无「项目没有 prod_verify」类过时陈述；node scripts/static_check.js 仍 ALL STATIC CHECKS PASSED",
+      "text": "10 张 prod35_*.png 移入 docs/evidence/batch35/ 且 git ls-files 计数=10；.tamako/evidence.md 路径与之一致且无「项目没有 prod_verify」类过时陈述；node scripts/static_check.js 仍 ALL STATIC CHECKS PASSED",
       "verdict": "pass"
     }
   ],
@@ -46,15 +46,14 @@
     "不改相机高度与距离（CAM.h/camDist）",
     "不引入 ESM 打包器（保持 <script> 无模块架构）",
     "不动 GACHA_POOL 抽卡概率",
-    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）",
-    "不修 BACKLOG.md 里既存的 NUL 字节（offset 49571，批35 前就存在）——只报告"
+    "不使用有版权风险的第三方下载素材（模型由本仓库生成器产出）"
   ],
   "assumptions": [
-    "playwright 已在 node_modules，新增脚本不引入新依赖（已验证 require('playwright') 与 require('@playwright/test') 均可解析）",
-    "生产 http://193.112.172.83:8090 从本机可直连 HTTP（本轮实跑验证成立）",
-    "docs/evidence/ 不在 .gitignore 忽略范围内（git check-ignore 退出码 1，确认未忽略）"
+    "playwright 已在 node_modules，新增脚本不引入新依赖",
+    "生产 http://193.112.172.83:8090 从本机可直连 HTTP",
+    "docs/evidence/ 不在 .gitignore 忽略范围内"
   ],
   "flow": "直通",
   "state": "closed",
-  "updatedAt": "2026-10-19T01:45:00.000Z"
+  "updatedAt": "2026-10-19T02:05:00.000Z"
 }
