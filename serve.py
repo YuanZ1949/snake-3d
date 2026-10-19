@@ -2643,710 +2643,856 @@ def _update_gift_pending(user):
     return UPDATE_GIFT if u.get('update_ver_claimed', 0) < PROTO_VER else 0
 
 
-async def handle_msg(sess, m):
-    global next_pid
-    t = m.get('t')
-    sess.msgs += 1
+# ==== 批36 P2-1：handle_msg 注册表化（逻辑零改动）====
+# 原 handle_msg 是 698 行 if/elif 链（32 个消息分支）。批36把每个分支原样平移为
+# async def _msg_*(sess, m)（统一缩进 -4，函数体逐行未改），按消息名注册进 MSG_HANDLERS：
+#   · 账户/房间/聊天/管理 23 名各占一函数（admin 五名共用 _msg_admin，函数内自取 t）；
+#   · 局内 9 名（ready/dir/atk/eb/ult/speed/skin/pause/respawn）共用 _room_actor
+#     —— 即原链尾共享 guard（不在局中直接忽略），逐支下移，语义不变；
+#   · handle_msg 只剩 msgs 计数 + 查表分发；未注册消息名的行为与原先一致（静默忽略）。
+# 新增消息：写一个 _msg_xxx 并 @msg_handler('xxx') 即可，勿再往 if 链里塞。
+MSG_HANDLERS = {}
+
+
+def msg_handler(*names):
+    """把一个 handler 注册到若干消息名（admin 五合一复用同一函数）"""
+    def deco(fn):
+        for _n in names:
+            MSG_HANDLERS[_n] = fn
+        return fn
+    return deco
+
+
+def _room_actor(sess):
+    """局内消息公共前置（原 handle_msg 尾段共享 guard 原样下移）：
+    不在局中（无房 / 非玩家）返回 None，否则返回 (room, player, now_ms)"""
+    room = sess.room
+    if room is None or sess.pid is None or sess.pid not in room.players:
+        return None
+    return room, room.players[sess.pid], now_ms()
+
 
     # -------- 账户 --------
+@msg_handler('register')
+async def _msg_register(sess, m):
     uname = str(m.get('user') or '').strip()
-    if t == 'register':
-        # 批22 M2：同 IP 窗内成功注册限速（失败的格式校验不落盘不计数），防批量注册刷 store.json
+    # 批22 M2：同 IP 窗内成功注册限速（失败的格式校验不落盘不计数），防批量注册刷 store.json
+    nowr = time.time()
+    if not _win_ok(reg_ok, sess.ip or 'local', nowr, REG_MAX, REG_WIN):
+        await send(sess, {'t': 'auth', 'ok': False, 'err': '注册过于频繁，请稍后再试'})
+        usage.auth('register', False, uname, sess.ip, err='限速拒绝')
+        return
+    ok, err = store.register(m.get('user'), m.get('pass'))
+    if ok:
+        _win_bump(reg_ok, sess.ip or 'local', nowr, REG_WIN)
+        sess.user = uname
+        await send(sess, auth_payload(sess.user))
+    else:
+        await send(sess, {'t': 'auth', 'ok': False, 'err': err})
+    usage.auth('register', ok, uname, sess.ip, err=err)
+    return
+
+
+@msg_handler('login')
+async def _msg_login(sess, m):
+    uname = str(m.get('user') or '').strip()
+    # 批21：防爆破——同 (ip, 用户) 窗内连续失败超限直接拒绝（不查库），
+    # 明细记"限速拒绝"供报表排查；成功/窗口过期自动复位
+    if not auth_throttle_ok(sess.ip, uname, time.time()):
+        await send(sess, {'t': 'auth', 'ok': False, 'err': '尝试过于频繁，请稍后再试'})
+        usage.auth('login', False, uname, sess.ip, err='限速拒绝')
+        return
+    ok, err = store.login(m.get('user'), m.get('pass'))
+    if ok:
+        auth_fails.pop((sess.ip, uname), None)
+        sess.user = uname
+        await send(sess, auth_payload(sess.user))
+    else:
+        auth_fail_bump(sess.ip, uname, time.time())
+        await send(sess, {'t': 'auth', 'ok': False, 'err': err})
+    usage.auth('login', ok, uname, sess.ip, err=err)
+    return
+
+
+@msg_handler('authtoken')
+async def _msg_authtoken(sess, m):
+    tok = m.get('token')
+    name = tokens.get(tok)
+    # 批22 M3：过 TOKEN_TTL 直接作废（正常续期见 tokens_inv 滑动续期）
+    if name and time.time() - token_at.get(tok, 0) > TOKEN_TTL:
+        tokens.pop(tok, None)
+        token_at.pop(tok, None)
+        name = None
+    if name and name in store.users:
+        sess.user = name
+        await send(sess, auth_payload(name))
+    else:
+        name = None
+        await send(sess, {'t': 'auth', 'ok': False, 'err': '登录已过期'})
+    usage.auth('authtoken', name is not None, name, sess.ip,
+               err=None if name else '登录已过期')
+    return
+
+
+@msg_handler('logout')
+async def _msg_logout(sess, m):
+    usage.note('logout', user=sess.user, sid=sess.sid, ip=sess.ip)
+    if sess.user:
+        for tok, u in list(tokens.items()):
+            if u == sess.user:
+                tokens.pop(tok, None)
+                token_at.pop(tok, None)
+    sess.user = None
+    await send(sess, {'t': 'auth', 'ok': False, 'err': '已退出'})
+    return
+
+
+@msg_handler('gacha')
+async def _msg_gacha(sess, m):
+    # 批25：抽卡（大厅也可用——未入局 dust=0，见 handle_gacha）
+    await handle_gacha(sess, m)
+    return
+
+
+@msg_handler('gachainfo')
+async def _msg_gachainfo(sess, m):
+    await send(sess, gacha_state(sess))
+    return
+
+
+@msg_handler('claimgift')
+async def _msg_claimgift(sess, m):
+    # 批29④：领取版本更新庆祝回馈（90 抽 = 14,400 星尘），每账号每版本一次。
+    # 校验与写入之间无 await → 单事件循环内天然原子，重复点击不会双计。
+    u = store.users.get(sess.user) if sess.user else None
+    if u is None:
+        await send(sess, {'t': 'error', 'err': '请先登录再领取更新奖励'})
+        return
+    if u.get('update_ver_claimed', 0) >= PROTO_VER:
+        # 单调比较（F3）：降级期间不放行、不覆写，防回滚-重部署双领
+        await send(sess, {'t': 'error', 'err': '本版本更新奖励已领取'})
+        return
+    u['update_ver_claimed'] = PROTO_VER   # 先记版本（防重入）再入账
+    bal = store.add_stardust(sess.user, UPDATE_GIFT)   # 内部 save()，两写同一次落盘
+    await send(sess, {'t': 'giftres', 'ok': 1, 'amount': UPDATE_GIFT, 'balance': bal})
+    usage.note('claimgift', user=sess.user, ip=sess.ip, amount=UPDATE_GIFT)
+    return
+
+
+@msg_handler('leaderboard')
+async def _msg_leaderboard(sess, m):
+    await send(sess, {'t': 'leaderboard', 'list': store.leaderboard()})
+    return
+
+
+@msg_handler('rooms')
+async def _msg_rooms(sess, m):
+    await send(sess, {'t': 'rooms', 'list': room_list()})
+    return
+
+
+@msg_handler('create')
+async def _msg_create(sess, m):
+    # ---- 批22 H3：建房限速（单会话 + 同 IP 窗内成功配额），防刷房触发全服广播风暴 ----
+    nowc = time.time()
+    cts = getattr(sess, 'create_ts', None)
+    if cts is None:
+        cts = sess.create_ts = []
+    cts[:] = [x for x in cts if nowc - x < CREATE_WIN]
+    ckey = sess.ip or 'local'
+    if len(cts) >= CREATE_MAX or \
+            not _win_ok(create_ip, ckey, nowc, CREATE_IP_MAX, CREATE_WIN):
+        await send(sess, {'t': 'error', 'err': '建房太频繁，请稍后再试'})
+        return
+    try:
+        size = int(m.get('size', 24))
+    except (TypeError, ValueError):
+        size = 24
+    size = max(MAP_MIN, min(MAP_MAX, size))
+    rid = new_room_id()
+    name = str(m.get('name') or f'房间{rid}')[:16]
+    # ---- 地图组合配置：主题 / 岩石密度 / 传送门（非法值回退为"跟随主题"） ----
+    theme = m.get('theme')
+    if theme not in THEMES:
+        theme = None
+    rock = m.get('rock')
+    if isinstance(rock, bool) or not isinstance(rock, (int, float)):
+        rock = None
+    else:
+        rock = max(0.0, min(4.0, float(rock)))
+    portal = m.get('portal')
+    if not isinstance(portal, bool):
+        portal = None
+    # ---- 批32：高度地形三旋钮（非法/缺省=None=跟随主题；数字夹 0..4） ----
+    def _hclamp(v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        return max(0.0, min(4.0, float(v)))
+    height, water, bld = _hclamp(m.get('height')), _hclamp(m.get('water')), _hclamp(m.get('bld'))
+    # ---- 批33：元素反应两旋钮（elements=bool 非法回退默认 True；elemAmt 数字夹 0..2）----
+    el_on = m.get('elements')
+    if not isinstance(el_on, bool):
+        el_on = True
+    try:
+        el_amt = float(m.get('elemAmt'))
+    except (TypeError, ValueError):
+        el_amt = 0.6
+    el_amt = max(0.0, min(2.0, el_amt))
+    # ---- 战场配置：获胜模式 / 限时秒 / 无限复活（非法值回退默认） ----
+    win_mode = m.get('winMode')
+    if win_mode not in ('last', 'score'):
+        win_mode = 'last'
+    try:
+        limit = int(m.get('limit', 0))
+    except (TypeError, ValueError):
+        limit = 0
+    limit = max(0, min(LIMIT_MAX, limit))
+    respawn = m.get('respawn') is True
+    # ---- 批17 H：碰外墙偏转（布尔开关，非法回退 False=撞墙即死） ----
+    walldeflect = m.get('wd') is True
+    # ---- 单人/练习：AI 蛇数量（非法值回退 0） ----
+    try:
+        bots = int(m.get('bots', 0))
+    except (TypeError, ValueError):
+        bots = 0
+    bots = max(0, min(BOTS_MAX, bots))
+    # ---- 房间口令（C3）：可选；给了就必须合法（非法直接拒绝，不静默回退） ----
+    passw = m.get('pass')
+    if passw in (None, ''):
+        passw = None
+    elif not valid_room_pass(str(passw)):
+        await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
+        return
+    # ---- 批22 H3：全局房间数上限——达上限先淘汰最老空置非持久房（条件镜像
+    # gc_empty_rooms，只把 24h 放宽到 ROOM_EVICT_AGE），无可淘汰则拒 ----
+    if len(rooms) >= ROOM_MAX:
+        live = {x.sid for x in all_sessions}
         nowr = time.time()
-        if not _win_ok(reg_ok, sess.ip or 'local', nowr, REG_MAX, REG_WIN):
-            await send(sess, {'t': 'auth', 'ok': False, 'err': '注册过于频繁，请稍后再试'})
-            usage.auth('register', False, uname, sess.ip, err='限速拒绝')
-            return
-        ok, err = store.register(m.get('user'), m.get('pass'))
-        if ok:
-            _win_bump(reg_ok, sess.ip or 'local', nowr, REG_WIN)
-            sess.user = uname
-            await send(sess, auth_payload(sess.user))
+        victims = [k for k, r in rooms.items()
+                   if k not in DEFAULT_ROOM_IDS and not r.persist
+                   and not r.players and not r.subs
+                   and nowr - r.created > ROOM_EVICT_AGE
+                   and not (r.owner is not None and r.owner in live)]
+        if victims:
+            rooms.pop(min(victims, key=lambda k: rooms[k].created), None)
         else:
-            await send(sess, {'t': 'auth', 'ok': False, 'err': err})
-        usage.auth('register', ok, uname, sess.ip, err=err)
-        return
-    if t == 'login':
-        # 批21：防爆破——同 (ip, 用户) 窗内连续失败超限直接拒绝（不查库），
-        # 明细记"限速拒绝"供报表排查；成功/窗口过期自动复位
-        if not auth_throttle_ok(sess.ip, uname, time.time()):
-            await send(sess, {'t': 'auth', 'ok': False, 'err': '尝试过于频繁，请稍后再试'})
-            usage.auth('login', False, uname, sess.ip, err='限速拒绝')
+            await send(sess, {'t': 'error', 'err': '房间数已达上限，请稍后再试'})
             return
-        ok, err = store.login(m.get('user'), m.get('pass'))
-        if ok:
-            auth_fails.pop((sess.ip, uname), None)
-            sess.user = uname
-            await send(sess, auth_payload(sess.user))
-        else:
-            auth_fail_bump(sess.ip, uname, time.time())
-            await send(sess, {'t': 'auth', 'ok': False, 'err': err})
-        usage.auth('login', ok, uname, sess.ip, err=err)
-        return
-    if t == 'authtoken':
-        tok = m.get('token')
-        name = tokens.get(tok)
-        # 批22 M3：过 TOKEN_TTL 直接作废（正常续期见 tokens_inv 滑动续期）
-        if name and time.time() - token_at.get(tok, 0) > TOKEN_TTL:
-            tokens.pop(tok, None)
-            token_at.pop(tok, None)
-            name = None
-        if name and name in store.users:
-            sess.user = name
-            await send(sess, auth_payload(name))
-        else:
-            name = None
-            await send(sess, {'t': 'auth', 'ok': False, 'err': '登录已过期'})
-        usage.auth('authtoken', name is not None, name, sess.ip,
-                   err=None if name else '登录已过期')
-        return
-    if t == 'logout':
-        usage.note('logout', user=sess.user, sid=sess.sid, ip=sess.ip)
-        if sess.user:
-            for tok, u in list(tokens.items()):
-                if u == sess.user:
-                    tokens.pop(tok, None)
-                    token_at.pop(tok, None)
-        sess.user = None
-        await send(sess, {'t': 'auth', 'ok': False, 'err': '已退出'})
-        return
-    if t == 'gacha':
-        # 批25：抽卡（大厅也可用——未入局 dust=0，见 handle_gacha）
-        await handle_gacha(sess, m)
-        return
-    if t == 'gachainfo':
-        await send(sess, gacha_state(sess))
-        return
-    if t == 'claimgift':
-        # 批29④：领取版本更新庆祝回馈（90 抽 = 14,400 星尘），每账号每版本一次。
-        # 校验与写入之间无 await → 单事件循环内天然原子，重复点击不会双计。
-        u = store.users.get(sess.user) if sess.user else None
-        if u is None:
-            await send(sess, {'t': 'error', 'err': '请先登录再领取更新奖励'})
-            return
-        if u.get('update_ver_claimed', 0) >= PROTO_VER:
-            # 单调比较（F3）：降级期间不放行、不覆写，防回滚-重部署双领
-            await send(sess, {'t': 'error', 'err': '本版本更新奖励已领取'})
-            return
-        u['update_ver_claimed'] = PROTO_VER   # 先记版本（防重入）再入账
-        bal = store.add_stardust(sess.user, UPDATE_GIFT)   # 内部 save()，两写同一次落盘
-        await send(sess, {'t': 'giftres', 'ok': 1, 'amount': UPDATE_GIFT, 'balance': bal})
-        usage.note('claimgift', user=sess.user, ip=sess.ip, amount=UPDATE_GIFT)
-        return
-    if t == 'leaderboard':
-        await send(sess, {'t': 'leaderboard', 'list': store.leaderboard()})
-        return
-    if t == 'rooms':
-        await send(sess, {'t': 'rooms', 'list': room_list()})
-        return
-    if t == 'create':
-        # ---- 批22 H3：建房限速（单会话 + 同 IP 窗内成功配额），防刷房触发全服广播风暴 ----
-        nowc = time.time()
-        cts = getattr(sess, 'create_ts', None)
-        if cts is None:
-            cts = sess.create_ts = []
-        cts[:] = [x for x in cts if nowc - x < CREATE_WIN]
-        ckey = sess.ip or 'local'
-        if len(cts) >= CREATE_MAX or \
-                not _win_ok(create_ip, ckey, nowc, CREATE_IP_MAX, CREATE_WIN):
-            await send(sess, {'t': 'error', 'err': '建房太频繁，请稍后再试'})
-            return
-        try:
-            size = int(m.get('size', 24))
-        except (TypeError, ValueError):
-            size = 24
-        size = max(MAP_MIN, min(MAP_MAX, size))
-        rid = new_room_id()
-        name = str(m.get('name') or f'房间{rid}')[:16]
-        # ---- 地图组合配置：主题 / 岩石密度 / 传送门（非法值回退为"跟随主题"） ----
-        theme = m.get('theme')
-        if theme not in THEMES:
-            theme = None
-        rock = m.get('rock')
-        if isinstance(rock, bool) or not isinstance(rock, (int, float)):
-            rock = None
-        else:
-            rock = max(0.0, min(4.0, float(rock)))
-        portal = m.get('portal')
-        if not isinstance(portal, bool):
-            portal = None
-        # ---- 批32：高度地形三旋钮（非法/缺省=None=跟随主题；数字夹 0..4） ----
-        def _hclamp(v):
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
-                return None
-            return max(0.0, min(4.0, float(v)))
-        height, water, bld = _hclamp(m.get('height')), _hclamp(m.get('water')), _hclamp(m.get('bld'))
-        # ---- 批33：元素反应两旋钮（elements=bool 非法回退默认 True；elemAmt 数字夹 0..2）----
-        el_on = m.get('elements')
-        if not isinstance(el_on, bool):
-            el_on = True
-        try:
-            el_amt = float(m.get('elemAmt'))
-        except (TypeError, ValueError):
-            el_amt = 0.6
-        el_amt = max(0.0, min(2.0, el_amt))
-        # ---- 战场配置：获胜模式 / 限时秒 / 无限复活（非法值回退默认） ----
-        win_mode = m.get('winMode')
-        if win_mode not in ('last', 'score'):
-            win_mode = 'last'
-        try:
-            limit = int(m.get('limit', 0))
-        except (TypeError, ValueError):
-            limit = 0
-        limit = max(0, min(LIMIT_MAX, limit))
-        respawn = m.get('respawn') is True
-        # ---- 批17 H：碰外墙偏转（布尔开关，非法回退 False=撞墙即死） ----
-        walldeflect = m.get('wd') is True
-        # ---- 单人/练习：AI 蛇数量（非法值回退 0） ----
-        try:
-            bots = int(m.get('bots', 0))
-        except (TypeError, ValueError):
-            bots = 0
-        bots = max(0, min(BOTS_MAX, bots))
-        # ---- 房间口令（C3）：可选；给了就必须合法（非法直接拒绝，不静默回退） ----
-        passw = m.get('pass')
-        if passw in (None, ''):
-            passw = None
-        elif not valid_room_pass(str(passw)):
-            await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
-            return
-        # ---- 批22 H3：全局房间数上限——达上限先淘汰最老空置非持久房（条件镜像
-        # gc_empty_rooms，只把 24h 放宽到 ROOM_EVICT_AGE），无可淘汰则拒 ----
-        if len(rooms) >= ROOM_MAX:
-            live = {x.sid for x in all_sessions}
-            nowr = time.time()
-            victims = [k for k, r in rooms.items()
-                       if k not in DEFAULT_ROOM_IDS and not r.persist
-                       and not r.players and not r.subs
-                       and nowr - r.created > ROOM_EVICT_AGE
-                       and not (r.owner is not None and r.owner in live)]
-            if victims:
-                rooms.pop(min(victims, key=lambda k: rooms[k].created), None)
-            else:
-                await send(sess, {'t': 'error', 'err': '房间数已达上限，请稍后再试'})
-                return
-        rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
-                          win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
-                          walldeflect=walldeflect, height_mult=height, water_amt=water, bld_amt=bld,
-                          elements=el_on, elem_amt=el_amt)
-        rooms[rid].owner = sess.sid   # 创建者在时房间不回收
-        rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
-        rooms[rid].owner_tok = secrets.token_hex(16)   # 批23 P6：一次性 owner 凭据
-        cts.append(nowc)              # 批22 H3：只计成功建房
-        _win_bump(create_ip, ckey, nowc, CREATE_WIN)
-        await broadcast_rooms()
-        await send(sess, {'t': 'created', 'room': rid, 'name': name,
-                          'tok': rooms[rid].owner_tok})   # 批23 P6：仅创建者回执携带
-        return
+    rooms[rid] = Room(rid, name, size, theme_fixed=theme, rock_mult=rock, portal_on=portal,
+                      win_mode=win_mode, limit=limit, respawn=respawn, bots=bots, passw=passw,
+                      walldeflect=walldeflect, height_mult=height, water_amt=water, bld_amt=bld,
+                      elements=el_on, elem_amt=el_amt)
+    rooms[rid].owner = sess.sid   # 创建者在时房间不回收
+    rooms[rid].owner_user = sess.user   # 批18：账号归属（roomcfg 鉴权，跨重连有效）
+    rooms[rid].owner_tok = secrets.token_hex(16)   # 批23 P6：一次性 owner 凭据
+    cts.append(nowc)              # 批22 H3：只计成功建房
+    _win_bump(create_ip, ckey, nowc, CREATE_WIN)
+    await broadcast_rooms()
+    await send(sess, {'t': 'created', 'room': rid, 'name': name,
+                      'tok': rooms[rid].owner_tok})   # 批23 P6：仅创建者回执携带
+    return
+
+
 
     # -------- 房间参数编辑（批18 E；批23 N2 扩到与创建面同集）：live 生效，不重开局 --------
     # 语义（拍板）：winMode/limit/respawn/wd/bots 现读现发即时生效（快照/check_win 本就
     # 读房间字段，零协议改动）；limit 改小到已超时 → 下一 tick 按「时间到」结算；
     # size 走 pending_size 下局生效；theme/rock/portal 存字段、下局 new_round 重掷地形；
     # name 即时（广播卡片）；pass 可改可清（clearPass），非法口令整条消息原子拒绝。
-    if t == 'roomcfg':
-        rid = m.get('room') or (sess.room.id if sess.room else '')
-        room = rooms.get(rid)
-        if not room:
-            await send(sess, {'t': 'error', 'err': '房间不存在'})
-            return
-        # 批36 P1-3（用户拍板 2026-10-19）：「设密码的只有房主能改 没密码的所有人都能改」——
-        # 有口令的房只放三轨房主（账号所有者 / 在线 sid / owner_tok 凭据），口令房的
-        # 普通字段与口令本身都锁；无口令的房维持批24 的完全放开（含陌生人首次设口令）。
-        if room.passw and not can_edit_room(sess, room, m.get('otok')):
-            await send(sess, {'t': 'error', 'err': '该房间已设口令，仅房主可修改'})
-            return
-        # 批24：无口令房房间设置完全放开——身份门槛移除（任何人可改任何房间），
-        # 口令格式等业务校验保留在下方；can_edit_room 函数于批36 在口令房重新启用。
-        # （批23 P6 曾在此做 otok 三轨鉴权）
-        # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
-        new_pass = m.get('pass')
-        if 'pass' in m and new_pass not in (None, ''):
-            if not valid_room_pass(str(new_pass)):
-                await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
-                return
-        changed = False
-        deferred = []      # 批28 B：本次改动中「下局生效」的字段（客户端据此提示）
-        wm = m.get('winMode')
-        if wm in ('last', 'score') and wm != room.win_mode:
-            room.win_mode = wm
-            changed = True
-        if 'limit' in m:
-            try:
-                lim = int(m.get('limit', 0))
-            except (TypeError, ValueError):
-                lim = room.limit
-            lim = max(0, min(LIMIT_MAX, lim))
-            if lim != room.limit:
-                room.limit = lim
-                changed = True
-        if 'respawn' in m and (m.get('respawn') is True) != room.respawn:
-            room.respawn = m.get('respawn') is True
-            changed = True
-        if 'wd' in m and (m.get('wd') is True) != room.walldeflect:
-            room.walldeflect = m.get('wd') is True
-            changed = True
-        if 'bots' in m:
-            try:
-                nb = int(m.get('bots', 0))
-            except (TypeError, ValueError):
-                nb = room.bots
-            nb = max(0, min(BOTS_MAX, nb))
-            if nb != room.bots:
-                room.set_bots(nb)
-                changed = True
-        # ---- 批23 N2：与创建面同集——name / theme / rock / portal / size / pass ----
-        if 'name' in m:
-            nn = str(m.get('name') or '').strip()[:16]
-            if nn and nn != room.name:        # 空名 = 保持原名（与创建面兜底同向）
-                room.name = nn
-                changed = True
-        if 'theme' in m:
-            th = m.get('theme')
-            nv = th if th in THEMES else None  # 非法/空 = 随机（同创建面 ""=随机）
-            if nv != room.theme_fixed:
-                room.theme_fixed = nv
-                changed = True
-                deferred.append('theme')
-        if 'rock' in m:
-            rk = m.get('rock')
-            if rk in (None, ''):
-                nv = None
-            elif isinstance(rk, bool) or not isinstance(rk, (int, float)):
-                nv = room.rock_mult            # 非法类型忽略，不动原值
-            else:
-                nv = max(0.0, min(4.0, float(rk)))
-            if nv != room.rock_mult:
-                room.rock_mult = nv
-                changed = True
-                deferred.append('rock')
-        if 'portal' in m:
-            pv = m.get('portal')
-            if pv in (None, ''):
-                nv = None
-            elif isinstance(pv, bool):
-                nv = pv
-            else:
-                nv = room.portal_on            # 非法类型忽略
-            if nv != room.portal_on:
-                room.portal_on = nv
-                changed = True
-                deferred.append('portal')
-        # ---- 批32：height/water/bld 三旋钮（字段→属性镜像 rock 模式；下局生效）----
-        for _kf, _af in (('height', 'height_mult'), ('water', 'water_amt'), ('bld', 'bld_amt')):
-            if _kf in m:
-                _v = m.get(_kf)
-                if _v in (None, ''):
-                    _nv = None
-                elif isinstance(_v, bool) or not isinstance(_v, (int, float)):
-                    _nv = getattr(room, _af)        # 非法类型忽略，不动原值
-                else:
-                    _nv = max(0.0, min(4.0, float(_v)))
-                if _nv != getattr(room, _af):
-                    setattr(room, _af, _nv)
-                    changed = True
-                    deferred.append(_kf)
-        # ---- 批33：elements/elem_amt 两旋钮（字段→属性；下局 new_round 重建 eterrain 生效）----
-        if 'elements' in m and isinstance(m.get('elements'), bool) and m['elements'] != room.elements:
-            room.elements = m['elements']
-            changed = True
-            deferred.append('elements')
-        if 'elemAmt' in m:
-            _v = m.get('elemAmt')
-            if isinstance(_v, (int, float)) and not isinstance(_v, bool):
-                _nv = max(0.0, min(2.0, float(_v)))
-                if _nv != room.elem_amt:
-                    room.elem_amt = _nv
-                    changed = True
-                    deferred.append('elemAmt')
-        if 'size' in m:
-            try:
-                nsz = int(m.get('size'))
-            except (TypeError, ValueError):
-                nsz = room.size
-            nsz = max(MAP_MIN, min(MAP_MAX, nsz))
-            if nsz == room.size:
-                if room.pending_size is not None:
-                    room.pending_size = None   # 改回当前尺寸 → 撤销排队
-                    changed = True
-            elif room.pending_size != nsz:
-                room.pending_size = nsz        # 下局 new_round 统一重建坐标系
-                changed = True
-                deferred.append('size')
-        # 口令（批23 N2，上方先验已过）：clearPass 显式清除；给了新值才改；留空不动
-        if m.get('clearPass') is True:
-            if room.passw is not None:
-                room.passw = None
-                changed = True
-        elif new_pass not in (None, ''):
-            nv = str(new_pass)
-            if nv != room.passw:
-                room.passw = nv
-                changed = True
-        # 与 __init__ 同款兜底：score/respawn 房必须有限时（live 改动保持同一不变量）
-        if room.limit == 0:
-            if room.win_mode == 'score':
-                room.limit = 300
-                changed = True
-            elif room.respawn:
-                room.limit = 120
-                changed = True
-        if changed:
-            await broadcast_rooms()
-        await send(sess, {'t': 'cfgapplied', 'room': rid, 'changed': changed,
-                          'deferred': deferred})
+@msg_handler('roomcfg')
+async def _msg_roomcfg(sess, m):
+    rid = m.get('room') or (sess.room.id if sess.room else '')
+    room = rooms.get(rid)
+    if not room:
+        await send(sess, {'t': 'error', 'err': '房间不存在'})
         return
+    # 批36 P1-3（用户拍板 2026-10-19）：「设密码的只有房主能改 没密码的所有人都能改」——
+    # 有口令的房只放三轨房主（账号所有者 / 在线 sid / owner_tok 凭据），口令房的
+    # 普通字段与口令本身都锁；无口令的房维持批24 的完全放开（含陌生人首次设口令）。
+    if room.passw and not can_edit_room(sess, room, m.get('otok')):
+        await send(sess, {'t': 'error', 'err': '该房间已设口令，仅房主可修改'})
+        return
+    # 批24：无口令房房间设置完全放开——身份门槛移除（任何人可改任何房间），
+    # 口令格式等业务校验保留在下方；can_edit_room 函数于批36 在口令房重新启用。
+    # （批23 P6 曾在此做 otok 三轨鉴权）
+    # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
+    new_pass = m.get('pass')
+    if 'pass' in m and new_pass not in (None, ''):
+        if not valid_room_pass(str(new_pass)):
+            await send(sess, {'t': 'error', 'err': '口令需 6-20 位字母+数字混合，且不能是弱口令'})
+            return
+    changed = False
+    deferred = []      # 批28 B：本次改动中「下局生效」的字段（客户端据此提示）
+    wm = m.get('winMode')
+    if wm in ('last', 'score') and wm != room.win_mode:
+        room.win_mode = wm
+        changed = True
+    if 'limit' in m:
+        try:
+            lim = int(m.get('limit', 0))
+        except (TypeError, ValueError):
+            lim = room.limit
+        lim = max(0, min(LIMIT_MAX, lim))
+        if lim != room.limit:
+            room.limit = lim
+            changed = True
+    if 'respawn' in m and (m.get('respawn') is True) != room.respawn:
+        room.respawn = m.get('respawn') is True
+        changed = True
+    if 'wd' in m and (m.get('wd') is True) != room.walldeflect:
+        room.walldeflect = m.get('wd') is True
+        changed = True
+    if 'bots' in m:
+        try:
+            nb = int(m.get('bots', 0))
+        except (TypeError, ValueError):
+            nb = room.bots
+        nb = max(0, min(BOTS_MAX, nb))
+        if nb != room.bots:
+            room.set_bots(nb)
+            changed = True
+    # ---- 批23 N2：与创建面同集——name / theme / rock / portal / size / pass ----
+    if 'name' in m:
+        nn = str(m.get('name') or '').strip()[:16]
+        if nn and nn != room.name:        # 空名 = 保持原名（与创建面兜底同向）
+            room.name = nn
+            changed = True
+    if 'theme' in m:
+        th = m.get('theme')
+        nv = th if th in THEMES else None  # 非法/空 = 随机（同创建面 ""=随机）
+        if nv != room.theme_fixed:
+            room.theme_fixed = nv
+            changed = True
+            deferred.append('theme')
+    if 'rock' in m:
+        rk = m.get('rock')
+        if rk in (None, ''):
+            nv = None
+        elif isinstance(rk, bool) or not isinstance(rk, (int, float)):
+            nv = room.rock_mult            # 非法类型忽略，不动原值
+        else:
+            nv = max(0.0, min(4.0, float(rk)))
+        if nv != room.rock_mult:
+            room.rock_mult = nv
+            changed = True
+            deferred.append('rock')
+    if 'portal' in m:
+        pv = m.get('portal')
+        if pv in (None, ''):
+            nv = None
+        elif isinstance(pv, bool):
+            nv = pv
+        else:
+            nv = room.portal_on            # 非法类型忽略
+        if nv != room.portal_on:
+            room.portal_on = nv
+            changed = True
+            deferred.append('portal')
+    # ---- 批32：height/water/bld 三旋钮（字段→属性镜像 rock 模式；下局生效）----
+    for _kf, _af in (('height', 'height_mult'), ('water', 'water_amt'), ('bld', 'bld_amt')):
+        if _kf in m:
+            _v = m.get(_kf)
+            if _v in (None, ''):
+                _nv = None
+            elif isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                _nv = getattr(room, _af)        # 非法类型忽略，不动原值
+            else:
+                _nv = max(0.0, min(4.0, float(_v)))
+            if _nv != getattr(room, _af):
+                setattr(room, _af, _nv)
+                changed = True
+                deferred.append(_kf)
+    # ---- 批33：elements/elem_amt 两旋钮（字段→属性；下局 new_round 重建 eterrain 生效）----
+    if 'elements' in m and isinstance(m.get('elements'), bool) and m['elements'] != room.elements:
+        room.elements = m['elements']
+        changed = True
+        deferred.append('elements')
+    if 'elemAmt' in m:
+        _v = m.get('elemAmt')
+        if isinstance(_v, (int, float)) and not isinstance(_v, bool):
+            _nv = max(0.0, min(2.0, float(_v)))
+            if _nv != room.elem_amt:
+                room.elem_amt = _nv
+                changed = True
+                deferred.append('elemAmt')
+    if 'size' in m:
+        try:
+            nsz = int(m.get('size'))
+        except (TypeError, ValueError):
+            nsz = room.size
+        nsz = max(MAP_MIN, min(MAP_MAX, nsz))
+        if nsz == room.size:
+            if room.pending_size is not None:
+                room.pending_size = None   # 改回当前尺寸 → 撤销排队
+                changed = True
+        elif room.pending_size != nsz:
+            room.pending_size = nsz        # 下局 new_round 统一重建坐标系
+            changed = True
+            deferred.append('size')
+    # 口令（批23 N2，上方先验已过）：clearPass 显式清除；给了新值才改；留空不动
+    if m.get('clearPass') is True:
+        if room.passw is not None:
+            room.passw = None
+            changed = True
+    elif new_pass not in (None, ''):
+        nv = str(new_pass)
+        if nv != room.passw:
+            room.passw = nv
+            changed = True
+    # 与 __init__ 同款兜底：score/respawn 房必须有限时（live 改动保持同一不变量）
+    if room.limit == 0:
+        if room.win_mode == 'score':
+            room.limit = 300
+            changed = True
+        elif room.respawn:
+            room.limit = 120
+            changed = True
+    if changed:
+        await broadcast_rooms()
+    await send(sess, {'t': 'cfgapplied', 'room': rid, 'changed': changed,
+                      'deferred': deferred})
+    return
+
+
 
     # -------- 房间进出 --------
-    if t == 'watch':
-        rid = m.get('room') or 'a'
-        room = rooms.get(rid)
-        if not room:
-            await send(sess, {'t': 'rooms', 'list': room_list()})
-            return
-        if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
-                       PASS_FAIL_MAX, PASS_FAIL_WIN):
-            # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
-            await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
-            return
-        if room.passw and str(m.get('pass') or '') != room.passw:
-            _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
-            await send(sess, {'t': 'error', 'err': '房间口令错误'})
-            return
-        leave_room(sess)
-        sess.room = room
-        room.subs.add(sess)
-        sess.full_sent = False     # 观战订阅 → 首帧补全量
-        gc_empty_rooms()   # 换房后旧房间若已空则回收
-        await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True,
-                          'user': sess.user, 'ver': PROTO_VER})
+@msg_handler('watch')
+async def _msg_watch(sess, m):
+    rid = m.get('room') or 'a'
+    room = rooms.get(rid)
+    if not room:
+        await send(sess, {'t': 'rooms', 'list': room_list()})
         return
+    if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
+                   PASS_FAIL_MAX, PASS_FAIL_WIN):
+        # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
+        await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
+        return
+    if room.passw and str(m.get('pass') or '') != room.passw:
+        _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
+        await send(sess, {'t': 'error', 'err': '房间口令错误'})
+        return
+    leave_room(sess)
+    sess.room = room
+    room.subs.add(sess)
+    sess.full_sent = False     # 观战订阅 → 首帧补全量
+    gc_empty_rooms()   # 换房后旧房间若已空则回收
+    await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': True,
+                      'user': sess.user, 'ver': PROTO_VER})
+    return
 
-    if t == 'join':
-        rid = m.get('room') or 'a'
-        room = rooms.get(rid)
-        if not room:
-            await send(sess, {'t': 'rooms', 'list': room_list()})
-            return
-        # 口令房：先校验再动状态（客户端重连也带记忆的口令，含断线恢复路径）
-        if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
-                       PASS_FAIL_MAX, PASS_FAIL_WIN):
-            # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
-            await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
-            return
-        if room.passw and str(m.get('pass') or '') != room.passw:
-            _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
-            await send(sess, {'t': 'error', 'err': '房间口令错误'})
-            return
-        leave_room(sess)
-        # ---- 断线恢复：宽限期内找回原蛇（原分数/身体/位置） ----
-        prev = room.resumable(sess.user, sess.ip)
-        if prev is not None:
-            room.resume(sess, prev)
-            sess.room = room
-            sess.want_play = True
-            sess.pid = prev['id']
-            sess.joins += 1
-            sess.play_from = time.time()
-            sess.last_room = room.id
-            sess.last_name = prev['name']
-            usage.note('resume', sid=sess.sid, room=room.id, name=prev['name'],
-                       user=sess.user, ip=sess.ip)
-            await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
-                              'user': sess.user, 'id': prev['id'], 'resumed': True,
-                              'gift': _update_gift_pending(sess.user),
-                              'ver': PROTO_VER})
-            await broadcast_rooms()
-            return
+
+
+@msg_handler('join')
+async def _msg_join(sess, m):
+    global next_pid
+    rid = m.get('room') or 'a'
+    room = rooms.get(rid)
+    if not room:
+        await send(sess, {'t': 'rooms', 'list': room_list()})
+        return
+    # 口令房：先校验再动状态（客户端重连也带记忆的口令，含断线恢复路径）
+    if not _win_ok(pass_fails, (sess.ip or 'local', rid), time.time(),
+                   PASS_FAIL_MAX, PASS_FAIL_WIN):
+        # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
+        await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
+        return
+    if room.passw and str(m.get('pass') or '') != room.passw:
+        _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
+        await send(sess, {'t': 'error', 'err': '房间口令错误'})
+        return
+    leave_room(sess)
+    # ---- 断线恢复：宽限期内找回原蛇（原分数/身体/位置） ----
+    prev = room.resumable(sess.user, sess.ip)
+    if prev is not None:
+        room.resume(sess, prev)
         sess.room = room
         sess.want_play = True
-        if m.get('name'):
-            pname = str(m.get('name'))[:12]
-        elif sess.user:
-            pname = sess.user
-        else:
-            pname = None
-        # 批25：join 皮肤先归一化；批35：16 款 -> SKIN_N(18) 款，角色款 16/17 恒免费
-        # 越界/未拥有静默回退 0（可降级展示，不拒入局）
-        try:
-            skin = int(m.get('skin', 0) or 0) % SKIN_N
-        except (TypeError, ValueError):
-            skin = 0
-        if skin not in FREE_SKINS and skin not in store.skins_of(sess.user or ''):
-            skin = 0
-        # 第一个入局者决定房间尺寸（空房间时生效）
-        if not room.round_ids and m.get('size'):
-            sz = max(MAP_MIN, min(MAP_MAX, int(m.get('size', 24))))
-            if sz != room.cols:
-                room.cols = room.rows = sz
-                room.players = {}
-                room.build_terrain()
-                room.place_food()
-        pid = next_pid
-        next_pid += 1
-        p = make_player(pid, sess, pname, skin)
-        sess.pid = pid
-        room.players[pid] = p
-        room.subs.add(sess)
-        sess.full_sent = False     # 入局订阅 → 首帧补全量
-        room.spawn_player(p, fresh_cells=True)
-        room.round_ids.add(pid)
-        room.ev('join', id=pid, name=p['name'])
-        if room.win_pending:
-            room.ready.add(pid)
-            room.maybe_start_round()    # 批23 P5①：全员就绪（含挂起视为 ready）时 join 立即开新局
-        if p.get('user'):
-            store.inc(p['user'], 'games')
-        room.check_win(now_ms())
-        # ---- 使用情况（仅后台记录） ----
+        sess.pid = prev['id']
         sess.joins += 1
         sess.play_from = time.time()
         sess.last_room = room.id
-        sess.last_name = p['name']
-        usage.note('join', sid=sess.sid, room=room.id, name=p['name'],
+        sess.last_name = prev['name']
+        usage.note('resume', sid=sess.sid, room=room.id, name=prev['name'],
                    user=sess.user, ip=sess.ip)
-        gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
         await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
-                          'user': sess.user, 'id': pid,
+                          'user': sess.user, 'id': prev['id'], 'resumed': True,
                           'gift': _update_gift_pending(sess.user),
                           'ver': PROTO_VER})
-        await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
-        return
-
-    # -------- 房间保存（新#11）：创建者标记 persist → 常驻不回收、重启后重建 --------
-    if t == 'persist':
-        room = rooms.get(m.get('room') or '')
-        if not room:
-            return
-        # 批24：保存房间同步放开——身份门槛移除（任何人可保存常驻）。
-        # （批23 P6 曾在此做 can_edit_room 三轨鉴权）
-        if not room.persist:
-            room.persist = True
-            save_persist_rooms()
         await broadcast_rooms()
         return
+    sess.room = room
+    sess.want_play = True
+    if m.get('name'):
+        pname = str(m.get('name'))[:12]
+    elif sess.user:
+        pname = sess.user
+    else:
+        pname = None
+    # 批25：join 皮肤先归一化；批35：16 款 -> SKIN_N(18) 款，角色款 16/17 恒免费
+    # 越界/未拥有静默回退 0（可降级展示，不拒入局）
+    try:
+        skin = int(m.get('skin', 0) or 0) % SKIN_N
+    except (TypeError, ValueError):
+        skin = 0
+    if skin not in FREE_SKINS and skin not in store.skins_of(sess.user or ''):
+        skin = 0
+    # 第一个入局者决定房间尺寸（空房间时生效）
+    if not room.round_ids and m.get('size'):
+        sz = max(MAP_MIN, min(MAP_MAX, int(m.get('size', 24))))
+        if sz != room.cols:
+            room.cols = room.rows = sz
+            room.players = {}
+            room.build_terrain()
+            room.place_food()
+    pid = next_pid
+    next_pid += 1
+    p = make_player(pid, sess, pname, skin)
+    sess.pid = pid
+    room.players[pid] = p
+    room.subs.add(sess)
+    sess.full_sent = False     # 入局订阅 → 首帧补全量
+    room.spawn_player(p, fresh_cells=True)
+    room.round_ids.add(pid)
+    room.ev('join', id=pid, name=p['name'])
+    if room.win_pending:
+        room.ready.add(pid)
+        room.maybe_start_round()    # 批23 P5①：全员就绪（含挂起视为 ready）时 join 立即开新局
+    if p.get('user'):
+        store.inc(p['user'], 'games')
+    room.check_win(now_ms())
+    # ---- 使用情况（仅后台记录） ----
+    sess.joins += 1
+    sess.play_from = time.time()
+    sess.last_room = room.id
+    sess.last_name = p['name']
+    usage.note('join', sid=sess.sid, room=room.id, name=p['name'],
+               user=sess.user, ip=sess.ip)
+    gc_empty_rooms()   # 换房后旧房间若已空则回收（目标房间已有人，不会被回收）
+    await send(sess, {'t': 'room-ok', 'room': room.id, 'spectate': False,
+                      'user': sess.user, 'id': pid,
+                      'gift': _update_gift_pending(sess.user),
+                      'ver': PROTO_VER})
+    await broadcast_rooms()   # 房间人数变化，刷新所有人看到的房间列表
+    return
+
+
+
+    # -------- 房间保存（新#11）：创建者标记 persist → 常驻不回收、重启后重建 --------
+@msg_handler('persist')
+async def _msg_persist(sess, m):
+    room = rooms.get(m.get('room') or '')
+    if not room:
+        return
+    # 批24：保存房间同步放开——身份门槛移除（任何人可保存常驻）。
+    # （批23 P6 曾在此做 can_edit_room 三轨鉴权）
+    if not room.persist:
+        room.persist = True
+        save_persist_rooms()
+    await broadcast_rooms()
+    return
+
+
 
     # -------- 删除房间（批24 O2）：完全放开——任何人可删空闲房（含常驻⭐）--------
     # 默认房拒、有人/观战拒；persist 房重写盘（重启不再复活）；删后全体 rooms 广播
-    if t == 'delroom':
-        rid = m.get('room') or ''
-        room = rooms.get(rid)
-        if not room:
-            return                     # 已不存在：静默（幂等）
-        if rid in DEFAULT_ROOM_IDS:
-            await send(sess, {'t': 'error', 'err': '默认房间不能删除'})
-            return
-        # 批24 O4：「有人」只算真人——纯 AI 占位（bot）不算，可直接删；
-        # subs 是人类观战 session 集合（bot 不会观战），非空仍拒
-        if any(not q.get('bot') for q in room.players.values()) or room.subs:
-            await send(sess, {'t': 'error', 'err': '房间里还有人，先清空再删除'})
-            return
-        del rooms[rid]
-        if room.persist:
-            save_persist_rooms()       # 常驻房落盘同步移除
-        await send(sess, {'t': 'delok', 'room': rid})
-        await broadcast_rooms()
+@msg_handler('delroom')
+async def _msg_delroom(sess, m):
+    rid = m.get('room') or ''
+    room = rooms.get(rid)
+    if not room:
+        return                     # 已不存在：静默（幂等）
+    if rid in DEFAULT_ROOM_IDS:
+        await send(sess, {'t': 'error', 'err': '默认房间不能删除'})
         return
+    # 批24 O4：「有人」只算真人——纯 AI 占位（bot）不算，可直接删；
+    # subs 是人类观战 session 集合（bot 不会观战），非空仍拒
+    if any(not q.get('bot') for q in room.players.values()) or room.subs:
+        await send(sess, {'t': 'error', 'err': '房间里还有人，先清空再删除'})
+        return
+    del rooms[rid]
+    if room.persist:
+        save_persist_rooms()       # 常驻房落盘同步移除
+    await send(sess, {'t': 'delok', 'room': rid})
+    await broadcast_rooms()
+    return
 
-    if t == 'leave':
-        # 返回主页：把自己移出房间（旧客户端不发此消息，行为不变）
-        left = sess.room.id if sess.room else None
-        sess.want_play = False
-        leave_room(sess)
-        gc_empty_rooms()
-        await broadcast_rooms()
-        await send(sess, {'t': 'left', 'room': left})
-        return
+
+
+@msg_handler('leave')
+async def _msg_leave(sess, m):
+    # 返回主页：把自己移出房间（旧客户端不发此消息，行为不变）
+    left = sess.room.id if sess.room else None
+    sess.want_play = False
+    leave_room(sess)
+    gc_empty_rooms()
+    await broadcast_rooms()
+    await send(sess, {'t': 'left', 'room': left})
+    return
+
+
 
     # -------- 公屏聊天（批30③：大厅全局，登录/匿名都可发，复用 1s 限速） --------
-    if t == 'gchatin':
-        now = now_ms()
-        if not chat_throttle(sess, now):
-            return
-        if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（匿名无账号不可禁）
-            await send(sess, {'t': 'error', 'err': '你已被禁言'})
-            return
-        text = str(m.get('text') or '')[:CHAT_MAX].strip()
-        if not text:
-            return
-        msg = {'name': gchat_name(sess), 'text': text}
-        gchat_log.append(msg)
-        await broadcast_gchat(msg)
+@msg_handler('gchatin')
+async def _msg_gchatin(sess, m):
+    now = now_ms()
+    if not chat_throttle(sess, now):
         return
+    if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（匿名无账号不可禁）
+        await send(sess, {'t': 'error', 'err': '你已被禁言'})
+        return
+    text = str(m.get('text') or '')[:CHAT_MAX].strip()
+    if not text:
+        return
+    msg = {'name': gchat_name(sess), 'text': text}
+    gchat_log.append(msg)
+    await broadcast_gchat(msg)
+    return
+
+
 
     # -------- 房间聊天（观战者/玩家都可发） --------
-    if t == 'chat':
-        room = sess.room
-        if room is None:
-            return
-        now = now_ms()
-        if not chat_throttle(sess, now):
-            return
-        if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（公屏/本房同禁）
-            await send(sess, {'t': 'error', 'err': '你已被禁言'})
-            return
-        if sess.pid is not None and sess.pid in room.players:
-            who = room.players[sess.pid]['name']
-        else:
-            who = sess.user or '观众'
-        room.chat(who, m.get('text'))
+@msg_handler('chat')
+async def _msg_chat(sess, m):
+    room = sess.room
+    if room is None:
         return
+    now = now_ms()
+    if not chat_throttle(sess, now):
+        return
+    if sess.user and is_muted(sess.user):     # 批30④：禁言拒发（公屏/本房同禁）
+        await send(sess, {'t': 'error', 'err': '你已被禁言'})
+        return
+    if sess.pid is not None and sess.pid in room.players:
+        who = room.players[sess.pid]['name']
+    else:
+        who = sess.user or '观众'
+    room.chat(who, m.get('text'))
+    return
+
+
 
     # -------- 管理员指令（批30④：白名单五权限——踢人/禁言/公告/发奖/报告） --------
-    if t in ('adkick', 'admute', 'adnotice', 'adgrant', 'adreport'):
-        if not is_admin(sess):
-            usage.note('adm_denied', t=t, sid=sess.sid, user=sess.user,
-                       ip=getattr(sess, 'ip', None))
-            return                      # 非管理员静默拒（只记明细，不回执不报错）
-        if t == 'adkick':
-            name = str(m.get('name') or '')[:20]
-            n = 0
-            for s in list(all_sessions):
-                if s.user == name:
-                    await send(s, {'t': 'kicked', 'msg': '你已被管理员移出'})
-                    try:
-                        await s.ws.close()       # 断连 → handler finally 正常清理（leave_room 等）
-                    except Exception:
-                        pass
-                    n += 1
-            await send(sess, {'t': 'adminres', 'act': 'adkick', 'ok': n > 0,
-                              'msg': f'已踢出 {name}（{n} 个会话）' if n else f'{name} 不在线'})
-        elif t == 'admute':
-            name = str(m.get('name') or '')[:20]
-            try:
-                mins = int(m.get('mins', 10) or 10)
-            except (TypeError, ValueError):
-                mins = 10
-            mins = max(1, min(1440, mins))        # 钳 1 分钟~24 小时
-            mutes[name] = time.time() + mins * 60
-            usage.note('adm_mute', by=sess.user, name=name, mins=mins)
-            await send(sess, {'t': 'adminres', 'act': 'admute', 'ok': True,
-                              'msg': f'已禁言 {name} {mins} 分钟'})
-        elif t == 'adnotice':
-            text = str(m.get('text') or '')[:200].strip()
-            if not text:
-                await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': False, 'msg': '公告不能为空'})
-                return
-            msg2 = {'name': '📢 公告', 'text': text}
-            gchat_log.append(msg2)
-            await broadcast_gchat(msg2)
-            usage.note('adm_notice', by=sess.user, len=len(text))
-            await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': True, 'msg': '公告已发布'})
-        elif t == 'adgrant':
-            name = str(m.get('name') or '')[:20]
-            try:
-                amt = int(m.get('amt', 0) or 0)
-            except (TypeError, ValueError):
-                amt = 0
-            if not (1 <= amt <= 100000):
-                await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': '数额需 1~100000'})
-                return
-            if name not in store.users:
-                await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': f'用户 {name} 不存在'})
-                return
-            new = store.add_stardust(name, amt)
-            usage.note('adm_grant', by=sess.user, name=name, amt=amt)
-            for s in list(all_sessions):          # 在线受奖者收提醒
-                if s.user == name:
-                    await send(s, {'t': 'toast', 'msg': f'管理员发放 {amt} ✨星尘'})
-            await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': True,
-                              'msg': f'已发 {amt} 给 {name}，余额 {new}'})
-        elif t == 'adreport':
-            await send(sess, {'t': 'adreportres', 'lines': admin_report()})
-        return
-
-    # 其余消息需要已在房间中
-    room = sess.room
-    if room is None or sess.pid is None or sess.pid not in room.players:
-        return
-    p = room.players[sess.pid]
-    now = now_ms()
-
-    if t == 'ready':
-        room.ready.add(sess.pid)
-        room.maybe_start_round()
-    elif t == 'dir':
-        if not p['alive'] or room.win_pending or p.get('pause') \
-                or room.effect_active(p, 'frozen', now):   # 批33 决策17：冻结拒收转向
-            return
-        x, y = int(m.get('x', 0)), int(m.get('y', 0))
-        if x not in (-1, 0, 1) or y not in (-1, 0, 1) or (x == 0 and y == 0):
-            return
-        if len(p['queue']) < 4:
-            p['queue'].append((x, y))
-    elif t == 'atk':
-        if not p['alive'] or room.win_pending or room.effect_active(p, 'frozen', now) \
-                or p.get('pause'):   # 批33 决策17：冻结拒收开火
-            return
-        if now - p['last_atk'] < room.atk_cd(p, now) or not p['cells']:
-            return
-        p['last_atk'] = now
-        hx, hy = p['cells'][0]
-        room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
-                                 'dx': p['dir'][0], 'dy': p['dir'][1],
-                                 'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0,
-                                 'h': room.hmap.get((hx, hy), 0)})   # 批32：弹高=发射者头格高
-        room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
-    elif t == 'eb':
-        # 批33：元素弹——独立 CD（EB_CD），白名单四元素，门禁对标 atk + elements 总开关 + 冻结
-        if not room.elements or not p['alive'] or room.win_pending or p.get('pause'):
-            return
-        if room.effect_active(p, 'frozen', now):
-            return
-        el = m.get('elem')
-        if el not in ELEMS or not p['cells']:
-            return
-        if now - p.get('eb_at', 0) < EB_CD:
-            return
-        p['eb_at'] = now
-        hx, hy = p['cells'][0]
-        room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
-                                 'dx': p['dir'][0], 'dy': p['dir'][1],
-                                 'spd': EB_SPD, 'h': room.hmap.get((hx, hy), 0),
-                                 'elem': el})
-        room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1], elem=el)
-    elif t == 'ult':
-        # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）；批33 决策17：冻结同拒
-        if not p.get('pause') and not room.effect_active(p, 'frozen', now):
-            room.try_ult(p, now)
-    elif t == 'speed':
-        apply_speed(p, m.get('ms', 150))
-    elif t == 'skin':
-        # 批25：皮肤归一化再鉴权（负数/越界不绕过拥有检查）；批35：16 -> SKIN_N(18)，角色款免费
+@msg_handler('adkick', 'admute', 'adnotice', 'adgrant', 'adreport')
+async def _msg_admin(sess, m):
+    t = m.get('t')
+    if not is_admin(sess):
+        usage.note('adm_denied', t=t, sid=sess.sid, user=sess.user,
+                   ip=getattr(sess, 'ip', None))
+        return                      # 非管理员静默拒（只记明细，不回执不报错）
+    if t == 'adkick':
+        name = str(m.get('name') or '')[:20]
+        n = 0
+        for s in list(all_sessions):
+            if s.user == name:
+                await send(s, {'t': 'kicked', 'msg': '你已被管理员移出'})
+                try:
+                    await s.ws.close()       # 断连 → handler finally 正常清理（leave_room 等）
+                except Exception:
+                    pass
+                n += 1
+        await send(sess, {'t': 'adminres', 'act': 'adkick', 'ok': n > 0,
+                          'msg': f'已踢出 {name}（{n} 个会话）' if n else f'{name} 不在线'})
+    elif t == 'admute':
+        name = str(m.get('name') or '')[:20]
         try:
-            i = int(m.get('i', 0) or 0)
+            mins = int(m.get('mins', 10) or 10)
         except (TypeError, ValueError):
-            i = 0
-        i %= SKIN_N
-        if sess.user and p.get('user') != sess.user:
-            # 批25 终审 MINOR-2：换号后不许改写他家玩家外观（匿名换免费皮肤不受影响）
-            await send(sess, {'t': 'error', 'err': '身份不一致，请重新登录'})
-        elif i not in FREE_SKINS and i not in store.skins_of(sess.user or ''):
-            await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
-        else:
-            p['skin'] = i
-    elif t == 'pause':
-        # 批30③b：暂停=挂机——复用 off_at 挂起语义（原地冻结+批14/21/22 保护不被咬/不顶头），
-        # 但 session 保持连接：step_wrapper 不按 RESUME_MS 回收（挂机≠断线），再点恢复即续走
-        if p.get('pause'):
-            p.pop('pause', None)
-            p.pop('off_at', None)
-            on = False
-        else:
-            p['off_at'] = now
-            p['pause'] = True
-            on = True
-        await send(sess, {'t': 'pauseres', 'on': on})
-    elif t == 'respawn':
-        # 批22 H4：手动复活仅限复活房且须过 RESPAWN_MS 延迟（与自动复活同门禁）——
-        # 否则死斗/积分房可裸发本消息无限自我复活（已复现：respawn=False 房死亡后立即复活）
-        if not p['alive'] and not room.win_pending and room.respawn and \
-                (not p.get('died_at') or now - p['died_at'] >= RESPAWN_MS):
-            room.spawn_player(p)
-            room.round_ids.add(sess.pid)
-            if p.get('user'):
-                store.inc(p['user'], 'games')
-            room.ev('join', id=sess.pid, name=p['name'])
+            mins = 10
+        mins = max(1, min(1440, mins))        # 钳 1 分钟~24 小时
+        mutes[name] = time.time() + mins * 60
+        usage.note('adm_mute', by=sess.user, name=name, mins=mins)
+        await send(sess, {'t': 'adminres', 'act': 'admute', 'ok': True,
+                          'msg': f'已禁言 {name} {mins} 分钟'})
+    elif t == 'adnotice':
+        text = str(m.get('text') or '')[:200].strip()
+        if not text:
+            await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': False, 'msg': '公告不能为空'})
+            return
+        msg2 = {'name': '📢 公告', 'text': text}
+        gchat_log.append(msg2)
+        await broadcast_gchat(msg2)
+        usage.note('adm_notice', by=sess.user, len=len(text))
+        await send(sess, {'t': 'adminres', 'act': 'adnotice', 'ok': True, 'msg': '公告已发布'})
+    elif t == 'adgrant':
+        name = str(m.get('name') or '')[:20]
+        try:
+            amt = int(m.get('amt', 0) or 0)
+        except (TypeError, ValueError):
+            amt = 0
+        if not (1 <= amt <= 100000):
+            await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': '数额需 1~100000'})
+            return
+        if name not in store.users:
+            await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': False, 'msg': f'用户 {name} 不存在'})
+            return
+        new = store.add_stardust(name, amt)
+        usage.note('adm_grant', by=sess.user, name=name, amt=amt)
+        for s in list(all_sessions):          # 在线受奖者收提醒
+            if s.user == name:
+                await send(s, {'t': 'toast', 'msg': f'管理员发放 {amt} ✨星尘'})
+        await send(sess, {'t': 'adminres', 'act': 'adgrant', 'ok': True,
+                          'msg': f'已发 {amt} 给 {name}，余额 {new}'})
+    elif t == 'adreport':
+        await send(sess, {'t': 'adreportres', 'lines': admin_report()})
+    return
+
+
+@msg_handler('ready')
+async def _msg_ready(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    room.ready.add(sess.pid)
+    room.maybe_start_round()
+
+
+@msg_handler('dir')
+async def _msg_dir(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    if not p['alive'] or room.win_pending or p.get('pause') \
+            or room.effect_active(p, 'frozen', now):   # 批33 决策17：冻结拒收转向
+        return
+    x, y = int(m.get('x', 0)), int(m.get('y', 0))
+    if x not in (-1, 0, 1) or y not in (-1, 0, 1) or (x == 0 and y == 0):
+        return
+    if len(p['queue']) < 4:
+        p['queue'].append((x, y))
+
+
+@msg_handler('atk')
+async def _msg_atk(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    if not p['alive'] or room.win_pending or room.effect_active(p, 'frozen', now) \
+            or p.get('pause'):   # 批33 决策17：冻结拒收开火
+        return
+    if now - p['last_atk'] < room.atk_cd(p, now) or not p['cells']:
+        return
+    p['last_atk'] = now
+    hx, hy = p['cells'][0]
+    room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
+                             'dx': p['dir'][0], 'dy': p['dir'][1],
+                             'spd': 1.5 if room.effect_active(p, 'rage', now) else 1.0,
+                             'h': room.hmap.get((hx, hy), 0)})   # 批32：弹高=发射者头格高
+    room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1])
+
+
+@msg_handler('eb')
+async def _msg_eb(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    # 批33：元素弹——独立 CD（EB_CD），白名单四元素，门禁对标 atk + elements 总开关 + 冻结
+    if not room.elements or not p['alive'] or room.win_pending or p.get('pause'):
+        return
+    if room.effect_active(p, 'frozen', now):
+        return
+    el = m.get('elem')
+    if el not in ELEMS or not p['cells']:
+        return
+    if now - p.get('eb_at', 0) < EB_CD:
+        return
+    p['eb_at'] = now
+    hx, hy = p['cells'][0]
+    room.projectiles.append({'owner': sess.pid, 'x': hx, 'y': hy,
+                             'dx': p['dir'][0], 'dy': p['dir'][1],
+                             'spd': EB_SPD, 'h': room.hmap.get((hx, hy), 0),
+                             'elem': el})
+    room.ev('fire', id=sess.pid, x=hx, y=hy, dx=p['dir'][0], dy=p['dir'][1], elem=el)
+
+
+@msg_handler('ult')
+async def _msg_ult(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    # 批30③b：挂机中不放大招（原地冻结+开火=无敌炮台）；批33 决策17：冻结同拒
+    if not p.get('pause') and not room.effect_active(p, 'frozen', now):
+        room.try_ult(p, now)
+
+
+@msg_handler('speed')
+async def _msg_speed(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    apply_speed(p, m.get('ms', 150))
+
+
+@msg_handler('skin')
+async def _msg_skin(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    # 批25：皮肤归一化再鉴权（负数/越界不绕过拥有检查）；批35：16 -> SKIN_N(18)，角色款免费
+    try:
+        i = int(m.get('i', 0) or 0)
+    except (TypeError, ValueError):
+        i = 0
+    i %= SKIN_N
+    if sess.user and p.get('user') != sess.user:
+        # 批25 终审 MINOR-2：换号后不许改写他家玩家外观（匿名换免费皮肤不受影响）
+        await send(sess, {'t': 'error', 'err': '身份不一致，请重新登录'})
+    elif i not in FREE_SKINS and i not in store.skins_of(sess.user or ''):
+        await send(sess, {'t': 'error', 'err': '未拥有该皮肤'})
+    else:
+        p['skin'] = i
+
+
+@msg_handler('pause')
+async def _msg_pause(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    # 批30③b：暂停=挂机——复用 off_at 挂起语义（原地冻结+批14/21/22 保护不被咬/不顶头），
+    # 但 session 保持连接：step_wrapper 不按 RESUME_MS 回收（挂机≠断线），再点恢复即续走
+    if p.get('pause'):
+        p.pop('pause', None)
+        p.pop('off_at', None)
+        on = False
+    else:
+        p['off_at'] = now
+        p['pause'] = True
+        on = True
+    await send(sess, {'t': 'pauseres', 'on': on})
+
+
+@msg_handler('respawn')
+async def _msg_respawn(sess, m):
+    a = _room_actor(sess)
+    if a is None:
+        return
+    room, p, now = a
+    # 批22 H4：手动复活仅限复活房且须过 RESPAWN_MS 延迟（与自动复活同门禁）——
+    # 否则死斗/积分房可裸发本消息无限自我复活（已复现：respawn=False 房死亡后立即复活）
+    if not p['alive'] and not room.win_pending and room.respawn and \
+            (not p.get('died_at') or now - p['died_at'] >= RESPAWN_MS):
+        room.spawn_player(p)
+        room.round_ids.add(sess.pid)
+        if p.get('user'):
+            store.inc(p['user'], 'games')
+        room.ev('join', id=sess.pid, name=p['name'])
+
+
+async def handle_msg(sess, m):
+    """批36 注册表化后的分发器：msgs 计数 + MSG_HANDLERS 查表。
+    原 698 行 / 32 分支 if-链已逐支平移为上方 _msg_*（逻辑零改动）。"""
+    sess.msgs += 1
+    fn = MSG_HANDLERS.get(m.get('t'))
+    if fn is not None:
+        await fn(sess, m)
 
 
 def leave_room(sess, hard=True):

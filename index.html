@@ -1062,6 +1062,18 @@
 <script src="gltf-loader.js"></script>
 <script>
 (() => {
+        // ================= 批36 P2-2：JS 分区编号索引 =================
+        // 功能区按出现顺序编号（头注：// ================= NN 区名 ====）。
+        // 行号会漂移、编号不变——找功能先看这里，再跳对应 NN 区：
+        //   01 3D 场景        02 蛇（管状身体+皮肤）   03 角色迷你模型 GLB（批35）
+        //   04 粒子与飘字      05 音效                 06 坐标与模型
+        //   07 流程            08 网络层               09 攻击
+        //   10 实体与快照      11 消息与事件           12 渲染
+        //   13 屏外方位指示    14 小地图               15 账户 / 房间 / 排行榜
+        //   16 房间参数编辑    17 聊天面板             18 输入
+        //   19 祈愿（抽卡）
+        // （10 与 11 之间还有 predictor 纯函数集：批28 C 头注，纯逻辑零 DOM）
+        // ======================================================
   const canvas = document.getElementById('game');
   const $ = id => document.getElementById(id);
   const scoreEl = $('score'), bestEl = $('best'), speedEl = $('speed'), btnMute = $('btnMute');
@@ -1183,7 +1195,7 @@
   bestEl.textContent = best;
   btnMute.textContent = muted ? '🔇' : '🔊';
 
-  // ================= 3D 场景 =================
+  // ================= 01 3D 场景 =================
   const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -1386,7 +1398,7 @@
   }
   buildBoard();
 
-  // ================= 蛇（连续管状身体 + 皮肤） =================
+  // ================= 02 蛇（连续管状身体 + 皮肤） =================
   const SEG_H = .52;
   const SKINS = [
     // 免费 5 款（批25 T4：补 star 字段，循环集合恒含）
@@ -1656,7 +1668,7 @@
     return g;
   }
 
-  // ================= 批35：角色迷你模型（GLB）=================
+  // ================= 03 批35：角色迷你模型（GLB）=================
   // 模型由 scripts/gen_models.js 产出（零外部素材，版权干净）；
   // gltf-loader.js 是 three r160 ESM GLTFLoader 的 UMD 化产物，挂在 THREE.GLTFLoader。
   // 蛇头仍保留 skull 球（有模型时 invisible），保证无模型/加载失败时零回归。
@@ -1729,7 +1741,7 @@
   const tongueMesh = head.getObjectByName('tongue');
   const skullMesh = head.children[0];
 
-  // ================= 粒子与飘字 =================
+  // ================= 04 粒子与飘字 =================
   const partGeo = new THREE.BoxGeometry(.14, .14, .14);
   const partMats = {};
   function partMat(color) {
@@ -1767,7 +1779,7 @@
     floaters.push({sp, life: 1});
   }
 
-  // ================= 音效（加大音量） =================
+  // ================= 05 音效（加大音量） =================
   function ac() {
     if (!audio) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -1827,7 +1839,7 @@
     bgmTimer = setInterval(bgmNote, 320);
   }
 
-  // ================= 坐标与模型 =================
+  // ================= 06 坐标与模型 =================
   const cellW = (x, y) => new THREE.Vector3(x - COLS/2 + .5, SEG_H/2 + .02, y - ROWS/2 + .5);
   const clearMesh = m => { if (m) scene.remove(m); };
 
@@ -1875,7 +1887,7 @@
     return mesh;
   }
 
-  // ================= 流程 =================
+  // ================= 07 流程 =================
   function reset() {
     snake = [{x:8,y:12},{x:7,y:12},{x:6,y:12}];
     lastCells = snake.map(s => ({...s}));
@@ -2413,7 +2425,7 @@
     }
   }
 
-  // ================= 网络层 =================
+  // ================= 08 网络层 =================
   function send(o) {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
   }
@@ -2478,7 +2490,7 @@
     }
   }
 
-  // ================= 攻击 =================
+  // ================= 09 攻击 =================
   const projGeo = new THREE.SphereGeometry(.13, 8, 8);
   const projMat = new THREE.MeshStandardMaterial({color: 0xffe08a, emissive: 0xffb84d, emissiveIntensity: .9});
   // 批33：元素弹材质（发光色区分元素；未命中/命中逻辑全在服务端）
@@ -2748,7 +2760,7 @@
     if (dirQ.length < 4) { dirQ.push({x, y}); send({t: 'dir', x, y}); sTurn(); }
   }
 
-  // ================= 实体与快照 =================
+  // ================= 10 实体与快照 =================
   function makeEnt(id) {
     const e = {
       id, name: '', skin: 0, alive: true, score: 0,
@@ -3213,7 +3225,7 @@
     });
   }
 
-  // ================= 消息与事件 =================
+  // ================= 11 消息与事件 =================
   function setOnline(n) {                    // 批30②：首页在线人数（去重口径）
     const el = $('onlineBox');
     if (el) el.textContent = '🌐 当前在线 ' + n + ' 人';
@@ -3708,7 +3720,7 @@
     btnRestart.disabled = true;
   }
 
-  // ================= 渲染 =================
+  // ================= 12 渲染 =================
   // 通用：把一格一格的 cells 平滑插值成连续管状身体
   function syncBody(cells, spine, dir, rotT, bodyMesh, bodyMat, head, tongue, skull, opts, dt) {
     const now = opts.now;
@@ -3931,7 +3943,7 @@
     if (shake > 0) shake -= .04;
   }
 
-  // ================= 屏外方位指示（替代小地图） =================
+  // ================= 13 屏外方位指示（替代小地图） =================
   // 把世界坐标投影到屏幕，若在视野外则沿"中心→目标"方向与画面边缘求交，贴边显示
   function placeEdge(el, wx, wy, opts) {
     if (wx == null || wy == null) { el.classList.add('hidden'); return; }
@@ -4072,7 +4084,7 @@
     }
   }
 
-  // ================= 小地图（批8 B1） =================
+  // ================= 14 小地图（批8 B1） =================
   function updateMinimap() {
     const cv = $('miniMap');
     const show = joined || spectating;
@@ -4121,7 +4133,7 @@
     }
   }
 
-  // ================= 账户 / 房间 / 排行榜 =================
+  // ================= 15 账户 / 房间 / 排行榜 =================
   function acctTip(text, cls) {
     const el = $('acctTip');
     el.textContent = text || '';
@@ -4390,7 +4402,7 @@
     send({t: 'create', name: '单人练习', size: 24, bots: 3});
   }
 
-  // ================= 房间参数编辑（批18 E；批23 N2：复用创建面板，字段与创建完全同集） =================
+  // ================= 16 房间参数编辑（批18 E；批23 N2：复用创建面板，字段与创建完全同集） =================
   let cfgRoomId = null;   // 非空 = 编辑模式（同一面板发 roomcfg 而非 create）
   function hideCreatePanel() {
     $('createPanel').classList.add('hidden');
@@ -4468,7 +4480,7 @@
   }
   $('btnCfgCancel').onclick = hideCreatePanel;
 
-  // ================= 聊天面板（批30③：公屏 + 本房双 Tab，首页/对局通用） =================
+  // ================= 17 聊天面板（批30③：公屏 + 本房双 Tab，首页/对局通用） =================
   let gMsgs = [], rMsgs = [], chatTab = 'g', chatOpen = false, isAdmin = false;
   function chatRender() {
     const arr = chatTab === 'g' ? gMsgs : rMsgs;
@@ -4560,7 +4572,7 @@
     setTimeout(() => { d.classList.add('fade'); setTimeout(() => d.remove(), 700); }, 7000);
   }
 
-  // ================= 输入 =================
+  // ================= 18 输入 =================
   const KEYS = {arrowup:[0,-1], w:[0,-1], arrowdown:[0,1], s:[0,1], arrowleft:[-1,0], a:[-1,0], arrowright:[1,0], d:[1,0]};
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
@@ -4707,7 +4719,7 @@
   }
   $('btnSkin').onclick = cycleSkin;
 
-  // ===== 批25 T5：祈愿（抽卡）界面 =====
+  // ================= 19 祈愿（抽卡）界面（批25 T5） =================
   let wishBalVal = 0;                       // 展示余额 = 账号总账 + 局内当场
   let wishTab = 'gacha';
   let wishPrevStart = false;                // 批25 T5：打开前 startScreen 是否可见（关闭时恢复，lbScreen 同款策略）
