@@ -214,7 +214,7 @@ STORE_SAVE_INTERVAL = 5.0
 
 
 class Store:
-    """账户与战绩的 JSON 持久化。密码要求 6 位数字，加盐 PBKDF2 存储。
+    """账户与战绩的 JSON 持久化。口令 6-64 位任意字符，加盐 PBKDF2 存储（批37 放开）。
 批36：inc/record_best 走脏标记 + 节流批量落盘；注册/星尘/皮肤等低频写仍立即落盘；
       优雅关停 shutdown_settle() 无条件 save() 兜底 flush。"""
 
@@ -265,8 +265,8 @@ class Store:
         name = (name or '').strip()
         if not (2 <= len(name) <= 12):
             return False, '用户名需 2-12 个字符'
-        if not (isinstance(pw, str) and len(pw) == 6 and pw.isdigit()):
-            return False, '密码必须是 6 位数字'
+        if not (isinstance(pw, str) and 6 <= len(pw) <= 64):
+            return False, '密码需 6-64 个字符'
         if name in self.users:
             return False, '用户名已存在'
         salt = secrets.token_hex(8)
@@ -283,8 +283,8 @@ class Store:
         u = self.users.get((name or '').strip())
         if not u:
             return False, '用户不存在'
-        if not (isinstance(pw, str) and len(pw) == 6 and pw.isdigit()):
-            return False, '密码必须是 6 位数字'
+        if not (isinstance(pw, str) and 6 <= len(pw) <= 64):
+            return False, '密码需 6-64 个字符'
         if _hash_pw(pw, u['salt']) != u['hash']:
             return False, '密码错误'
         return True, None

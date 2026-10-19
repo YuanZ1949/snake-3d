@@ -4145,6 +4145,37 @@ def test_save_persist_rooms_atomic_on_failure():
         serve.rooms.pop('pa', None)
 
 
+# ---- 批37：口令强度放开（用户拍板「都做」）----
+
+def test_password_policy_accepts_6plus_chars():
+    """批37（先红后绿）：账号口令放开为 6-64 位任意字符（旧式 6 位数字仍合法）。
+非数字长口令可注册也可登录；短于 6 位或超过 64 位仍拒绝。"""
+    import tempfile
+    import shutil
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-pw-'))
+    keep = serve.store
+    try:
+        serve.store = serve.Store(d / 'store.json')
+        ok, err = serve.store.register('pwuser', 'abc123')
+        assert ok, err
+        ok, err = serve.store.register('pwuser2', '12345678')
+        assert ok, err
+        ok, err = serve.store.register('pwuser3', '12345')
+        assert not ok, '5 位仍应拒绝'
+        ok, err = serve.store.register('pwuser4', 'x' * 65)
+        assert not ok, '超长仍应拒绝'
+        ok, err = serve.store.register('pwuser5', '123456')
+        assert ok, err
+        assert serve.store.login('pwuser', 'abc123') == (True, None)
+        assert serve.store.login('pwuser5', '123456') == (True, None)
+        ok, err = serve.store.login('pwuser', 'abc124')
+        assert not ok, '错口令仍应拒绝'
+    finally:
+        serve.store = keep
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ---- 批36 P1-3：roomcfg 口径（用户拍板 2026-10-19）----
 
 def test_roomcfg_pass_room_owner_only():
@@ -4331,6 +4362,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
              test_store_record_best_and_shutdown_flush,
              test_store_load_corrupt_backs_up_before_reset,
              test_save_persist_rooms_atomic_on_failure,
+             test_password_policy_accepts_6plus_chars,
              test_roomcfg_pass_room_owner_only,
              test_roomcfg_no_pass_anyone_edits]:
     fn()

@@ -780,7 +780,7 @@
         <div class="acct" id="acctBox">
           <div class="actRow">
             <input class="nameIn sm" id="userIn" maxlength="12" placeholder="昵称或账号（可选）" autocomplete="username">
-            <input class="nameIn sm" id="passIn" maxlength="6" inputmode="numeric" placeholder="6位数字密码" autocomplete="current-password">
+            <input class="nameIn sm" id="passIn" maxlength="64" placeholder="密码（6-64位）" autocomplete="current-password">
           </div>
           <div class="actRow">
             <button class="chip" id="btnLogin">登录</button>
@@ -4190,7 +4190,7 @@
   function doLogin() {
     const u = $('userIn').value.trim(), p = $('passIn').value.trim();
     if (!u) { acctTip('请输入账号', 'err'); return; }
-    if (!/^\d{6}$/.test(p)) { acctTip('密码必须是 6 位数字', 'err'); return; }
+    if (p.length < 6 || p.length > 64) { acctTip('密码需 6-64 个字符', 'err'); return; }
     authReq = 'login';
     send({t: 'login', user: u, pass: p});
   }
@@ -4198,7 +4198,7 @@
   function doRegister() {
     const u = $('userIn').value.trim(), p = $('passIn').value.trim();
     if (u.length < 2 || u.length > 12) { acctTip('账号需 2-12 个字符', 'err'); return; }
-    if (!/^\d{6}$/.test(p)) { acctTip('密码必须是 6 位数字', 'err'); return; }
+    if (p.length < 6 || p.length > 64) { acctTip('密码需 6-64 个字符', 'err'); return; }
     authReq = 'register';
     send({t: 'register', user: u, pass: p});
   }
@@ -4693,7 +4693,7 @@
     if (state === 'idle' || state === 'joining') startScreen.classList.remove('hidden');
   };
   $('passIn').addEventListener('input', () => {
-    $('passIn').value = $('passIn').value.replace(/\D/g, '').slice(0, 6);
+    $('passIn').value = $('passIn').value.slice(0, 64);
   });
   $('btnRestart').onclick = () => { if (winRound) sendReady(); else respawn(); };
   $('btnResume').onclick = togglePause;
