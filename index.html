@@ -1079,6 +1079,11 @@
   const scoreEl = $('score'), bestEl = $('best'), speedEl = $('speed'), btnMute = $('btnMute');
   const startScreen = $('startScreen'), pauseScreen = $('pauseScreen'), overScreen = $('overScreen');
   const finalScore = $('finalScore'), recordTip = $('recordTip'), btnPause = $('btnPause'), btnRestart = $('btnRestart');
+  // 批36 P2-3：帧循环 DOM 缓存——静态节点只取一次（攻击键/元素栏/四个元素按钮）；
+  // canvas 包围盒随 resize() 失效重取（placeEdge 每帧投影换算像素要用）
+  const elAtkBtn = $('btnAtk'), elElemBar = $('elemBar');
+  const elEbBtns = document.querySelectorAll('#elemBar .ebtn');
+  let _canvasRect = null;
 
   let COLS = 24, ROWS = 24;
   const THEME_LABEL = {default: '常规', lava: '熔岩', ice: '冰原', space: '星空', day: '白天'};
@@ -1234,6 +1239,7 @@
     canvas.style.height = s + 'px';
     camera.aspect = 1;
     camera.updateProjectionMatrix();
+    _canvasRect = null;   // 批36 P2-3：canvas CSS 尺寸已变，包围盒缓存失效（placeEdge 重取）
   }
   window.addEventListener('resize', resize);
   resize();
@@ -2535,7 +2541,7 @@
   function setElem(el) {
     if (!ELEM_EMOJI[el]) return;
     curElem = el;
-    document.querySelectorAll('#elemBar .ebtn').forEach(b =>
+    elEbBtns.forEach(b =>            // 批36 P2-3：复用帧循环的静态按钮缓存
       b.classList.toggle('on', b.dataset.elem === el));
   }
   document.addEventListener('click', (e) => {   // 批33：HUD 元素按钮点击
@@ -3157,12 +3163,20 @@
     }
   }
 
+  let boardSig = '';
   function updateBoard() {
     const rows = $('boardRows');
     const list = [...ents.values()].filter(e => e.cells.length);
     list.sort((a, b) => b.score - a.score);
-    if (!list.length) { $('board').classList.add('hidden'); return; }
+    if (!list.length) { boardSig = ''; $('board').classList.add('hidden'); return; }
     $('board').classList.remove('hidden');
+    // 批36 P2-3：脏标记——内容签名（名次/名字/分数/存活/皮肤）没变就跳过 DOM 重建。
+    // updateBoard 每次 snap 都会调用，但多数帧名次并不变化；签名款式与
+    // updateEffectsHud 的 effHudSig 一致（我=myId 恒定，换 id 必然换签名）
+    const sig = list.map(e => e.id + ':' + e.name + ':' + e.score + ':' +
+      (e.alive ? 1 : 0) + ':' + e.skin).join('|');
+    if (sig === boardSig) return;
+    boardSig = sig;
     rows.textContent = '';
     for (const e of list) {
       const div = document.createElement('div');
@@ -3951,7 +3965,7 @@
     const nx = _edgeV.x, ny = _edgeV.y, nz = _edgeV.z;
     const onScreen = nz < 1 && nx >= -0.9 && nx <= 0.9 && ny >= -0.9 && ny <= 0.9;
     if (onScreen) { el.classList.add('hidden'); return; }
-    const rect = canvas.getBoundingClientRect();
+    const rect = _canvasRect || (_canvasRect = canvas.getBoundingClientRect());   // 批36 P2-3：缓存包围盒（resize 失效）
     const w = rect.width, h = rect.height, pad = 22;
     const ux = nx, uy = -ny;                 // 像素空间方向（y 向下）
     if (!ux && !uy) { el.classList.add('hidden'); return; }
@@ -4023,15 +4037,15 @@
 
     updateFx();
 
-    const atkBtn = $('btnAtk');
+    const atkBtn = elAtkBtn;   // 批36 P2-3：帧循环用缓存节点，不再每帧 $()
     const cooling = now - lastAtk < atkCoolMs();
     atkBtn.classList.toggle('cool', cooling);
     atkBtn.classList.toggle('ready', !cooling && joined && state === 'playing');
 
     // 批33：元素弹按钮 CD 置灰
-    if (joined && !$('elemBar').classList.contains('hidden')) {
+    if (joined && !elElemBar.classList.contains('hidden')) {
       const ebCool = now - lastEb < EB_CD;
-      document.querySelectorAll('#elemBar .ebtn').forEach(b =>
+      elEbBtns.forEach(b =>
         b.classList.toggle('cool', ebCool));
     }
 
