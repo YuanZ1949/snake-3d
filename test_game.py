@@ -234,7 +234,8 @@ def test_persist_roundtrip(tmpdir=None):
         assert (r.name, r.cols, r.theme_fixed, r.rock_mult, r.portal_on) == (
             "回环", 32, "ice", 0.5, True)
         assert (r.win_mode, r.limit, r.respawn, r.passw) == (
-            "score", 120, True, "ab12cd")
+            "score", 120, True, None)               # 批37 项5：加载后不留明文
+        assert r.has_pass and r.check_pass("ab12cd") and not r.check_pass("xx")   # 哈希校验仍有效
         assert r.walldeflect is True
         del serve.rooms["rp1"]
     finally:
@@ -4145,6 +4146,40 @@ def test_save_persist_rooms_atomic_on_failure():
         serve.rooms.pop('pa', None)
 
 
+def test_room_passw_hashed_at_rest():
+    """批37 项5（先红后绿）：房口令哈希存储——persist 落盘无明文口令；
+加载后的房间内存不留明文，仍可凭原口令进入、错口令被拒。"""
+    import tempfile
+    import shutil
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix='snake-roompw-'))
+    p = d / 'persist_rooms.json'
+    keep_rooms = dict(serve.rooms)
+    try:
+        r = serve.Room('hp', 'hp', 12, passw='S3cret!')
+        r.persist = True
+        serve.rooms['hp'] = r
+        assert r.has_pass, '夹具：设了口令应 has_pass'
+        assert r.check_pass('S3cret!'), '夹具：原口令应通过'
+        assert not r.check_pass('nope'), '夹具：错口令应拒绝'
+        assert serve.save_persist_rooms(str(p)) is True
+        raw = p.read_text('utf-8')
+        assert 'S3cret!' not in raw, 'persist 不得落明文口令'
+        assert 'pass_h' in raw, '应落哈希字段 pass_h'
+        serve.rooms.pop('hp')
+        n = serve.load_persist_rooms(str(p))
+        assert n >= 1 and 'hp' in serve.rooms, '夹具：加载失败'
+        r2 = serve.rooms['hp']
+        assert r2.passw is None, '加载后内存不应保留明文'
+        assert r2.has_pass, '加载后仍应视为口令房'
+        assert r2.check_pass('S3cret!'), '加载后原口令应通过'
+        assert not r2.check_pass('bad'), '加载后错口令应拒绝'
+    finally:
+        serve.rooms.clear()
+        serve.rooms.update(keep_rooms)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ---- 批37：口令强度放开（用户拍板「都做」）----
 
 def test_password_policy_accepts_6plus_chars():
@@ -4363,6 +4398,7 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
              test_store_load_corrupt_backs_up_before_reset,
              test_save_persist_rooms_atomic_on_failure,
              test_password_policy_accepts_6plus_chars,
+             test_room_passw_hashed_at_rest,
              test_roomcfg_pass_room_owner_only,
              test_roomcfg_no_pass_anyone_edits]:
     fn()

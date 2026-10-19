@@ -561,6 +561,38 @@ usage = Usage()
 
 # ============================================================ 房间
 class Room:
+
+    @property
+    def passw(self):
+        """进房口令明文（None=无口令）。持久化恢复的房间只剩哈希，明文为 None。"""
+        return self._pw_plain
+
+    @passw.setter
+    def passw(self, v):
+        if isinstance(v, str) and v:
+            self._pw_plain = v
+            salt = secrets.token_hex(8)
+            self._pw_hash = salt + '$' + _hash_pw(v, salt)
+        else:
+            self._pw_plain = None
+            self._pw_hash = None
+
+    @property
+    def has_pass(self):
+        """是否口令房（明文在内存或仅有哈希都算）。"""
+        return self._pw_plain is not None or self._pw_hash is not None
+
+    def check_pass(self, pw):
+        """进房口令校验：无口令房恒 True；明文在内存直接比对；仅哈希（持久化恢复）验哈希。"""
+        if not self.has_pass:
+            return True
+        pw = str(pw or '')
+        if self._pw_plain is not None:
+            return pw == self._pw_plain
+        if not self._pw_hash or '$' not in self._pw_hash:
+            return False
+        salt, _h = self._pw_hash.split('$', 1)
+        return _hash_pw(pw, salt) == _h
     def __init__(self, rid, name, size=24, theme_fixed=None, rock_mult=None, portal_on=None,
                  win_mode='last', limit=0, respawn=False, bots=0, passw=None,
                  walldeflect=False, height_mult=None, water_amt=None, bld_amt=None,
@@ -620,7 +652,9 @@ class Room:
         self.owner_user = None              # 批18：创建者账号（跨重连仍可编辑设置；None=无主）
         self.owner_tok = None               # 批23 P6：一次性 owner 凭据（匿名断线恢复用，不下发列表）
         # ---- 房间口令（C3）与持久化（新#11）----
-        self.passw = passw if (isinstance(passw, str) and passw) else None   # 进房口令（None=无口令）
+        self._pw_plain = None                # 进房口令明文（None=无口令；持久化加载后恒 None）
+        self._pw_hash = None                 # 加盐哈希 'salt$hash'（批37 项5：persist 只写这个）
+        self.passw = passw if (isinstance(passw, str) and passw) else None   # 经 setter 同步哈希
         self.persist = False                # 「保存」标记：常驻不回收、重启后重建
         self.cols = self.rows = max(MAP_MIN, min(MAP_MAX, int(size)))
         self.size = self.cols                 # 批23 N2：名义尺寸（与 cols 同步，编辑面回填用）
@@ -983,7 +1017,7 @@ class Room:
             'respawn': self.respawn,                   # 是否无限复活
             'wd': self.walldeflect,                    # 批17：碰外墙折返（仅边界墙）
             'bots': self.bots,                         # AI 蛇数量（0=无）
-            'hasPass': self.passw is not None,         # 是否口令房（口令本身不下发）
+            'hasPass': self.has_pass,                 # 是否口令房（口令本身不下发）
             'persist': self.persist,                   # 「保存」常驻标记（新#11）
         }
 
@@ -2293,7 +2327,7 @@ def persist_rooms_dump():
         out.append({'id': rid, 'name': r.name, 'size': r.cols,
                     'theme': r.theme_fixed, 'rock': r.rock_mult, 'portal': r.portal_on,
                     'winMode': r.win_mode, 'limit': r.limit, 'respawn': r.respawn,
-                    'bots': r.bots, 'pass': r.passw, 'wd': r.walldeflect,
+                    'bots': r.bots, 'pass_h': r._pw_hash, 'wd': r.walldeflect,   # 批37 项5：哈希存储
                     'height': r.height_mult, 'water': r.water_amt, 'bld': r.bld_amt,   # 批32
                     'elements': r.elements, 'elemAmt': r.elem_amt,   # 批33（旧档缺字段→默认）
                     'ownerUser': r.owner_user, 'ownerTok': r.owner_tok})  # 批23 P6
@@ -2355,10 +2389,15 @@ def load_persist_rooms(path=PERSIST_FILE):
                  portal_on=portal if isinstance(portal, bool) else None,
                  win_mode=d.get('winMode'), limit=d.get('limit') or 0,
                  respawn=d.get('respawn') is True, bots=d.get('bots') or 0,
-                 passw=d.get('pass'), walldeflect=d.get('wd') is True,
+                 walldeflect=d.get('wd') is True,
                  height_mult=_hclamp(d.get('height')), water_amt=_hclamp(d.get('water')),
                  bld_amt=_hclamp(d.get('bld')),
                  elements=d.get('elements'), elem_amt=d.get('elemAmt'))   # 批33：旧档缺字段→__init__ 默认 True/0.6
+        ph = d.get('pass_h')                 # 批37 项5：哈希口令（新档）
+        if isinstance(ph, str) and ph:
+            r._pw_hash = ph
+        elif d.get('pass'):                  # 旧档明文：经 setter 立即转哈希
+            r.passw = d.get('pass')
         ou = d.get('ownerUser')
         r.owner_user = ou if isinstance(ou, str) and ou else None   # 批18
         ot = d.get('ownerTok')
@@ -2909,7 +2948,7 @@ async def _msg_roomcfg(sess, m):
     # 批36 P1-3（用户拍板 2026-10-19）：「设密码的只有房主能改 没密码的所有人都能改」——
     # 有口令的房只放三轨房主（账号所有者 / 在线 sid / owner_tok 凭据），口令房的
     # 普通字段与口令本身都锁；无口令的房维持批24 的完全放开（含陌生人首次设口令）。
-    if room.passw and not can_edit_room(sess, room, m.get('otok')):
+    if room.has_pass and not can_edit_room(sess, room, m.get('otok')):
         await send(sess, {'t': 'error', 'err': '该房间已设口令，仅房主可修改'})
         return
     # 批24：无口令房房间设置完全放开——身份门槛移除（任何人可改任何房间），
@@ -3031,7 +3070,7 @@ async def _msg_roomcfg(sess, m):
             deferred.append('size')
     # 口令（批23 N2，上方先验已过）：clearPass 显式清除；给了新值才改；留空不动
     if m.get('clearPass') is True:
-        if room.passw is not None:
+        if room.has_pass:
             room.passw = None
             changed = True
     elif new_pass not in (None, ''):
@@ -3068,7 +3107,7 @@ async def _msg_watch(sess, m):
         # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
         await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
         return
-    if room.passw and str(m.get('pass') or '') != room.passw:
+    if room.has_pass and not room.check_pass(m.get('pass')):
         _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
         await send(sess, {'t': 'error', 'err': '房间口令错误'})
         return
@@ -3097,7 +3136,7 @@ async def _msg_join(sess, m):
         # 批22 M5：口令错试限速——同 (ip, 房) 窗内超限后含正确口令一并拒，防在线爆破
         await send(sess, {'t': 'error', 'err': '口令尝试过于频繁，请稍后再试'})
         return
-    if room.passw and str(m.get('pass') or '') != room.passw:
+    if room.has_pass and not room.check_pass(m.get('pass')):
         _win_bump(pass_fails, (sess.ip or 'local', rid), time.time(), PASS_FAIL_WIN)
         await send(sess, {'t': 'error', 'err': '房间口令错误'})
         return
