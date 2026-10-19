@@ -4145,6 +4145,67 @@ def test_save_persist_rooms_atomic_on_failure():
         serve.rooms.pop('pa', None)
 
 
+# ---- 批36 P1-3：roomcfg 口径（用户拍板 2026-10-19）----
+
+def test_roomcfg_pass_room_owner_only():
+    """拍板原话：「设密码的只有房主能改 没密码的所有人都能改」。
+有口令的房间：陌生人改任何字段 → error 且参数不变；房主(sid) 与持 otok 凭据者放行。"""
+    import asyncio
+    r = serve.Room('rc', 'rc', 10, bots=0)
+    r.owner = 'ownersid'
+    r.owner_user = None
+    r.owner_tok = 'o' * 32
+    serve.rooms['rc'] = r
+    owner = _cfg_sess(sid='ownersid', user=None, room=r)
+    try:
+        asyncio.run(serve.handle_msg(owner, {'t': 'roomcfg', 'room': 'rc',
+                                             'pass': 'Kx9m2Q'}))
+        assert r.passw is not None, '夹具：房主应能给自己的房设口令'
+        # 1) 陌生人 → 拒绝且参数不变
+        st = _cfg_sess(sid='stranger', user=None, room=r)
+        asyncio.run(serve.handle_msg(st, {'t': 'roomcfg', 'room': 'rc',
+                                          'bots': 5, 'name': 'hijack'}))
+        assert any(x.get('t') == 'error' for x in st.ws.sent), '口令房必须拒绝陌生人'
+        assert not any(x.get('t') == 'cfgapplied' for x in st.ws.sent), '拒绝不得回成功'
+        assert (r.bots, r.name) == (0, 'rc'), f'拒绝后参数必须不变: bots={r.bots} name={r.name}'
+        # 2) 房主（同 sid）→ 放行
+        asyncio.run(serve.handle_msg(owner, {'t': 'roomcfg', 'room': 'rc', 'bots': 3}))
+        assert r.bots == 3, '房主必须能改自己的口令房'
+        assert any(x.get('t') == 'cfgapplied' for x in owner.ws.sent)
+        # 3) 持 owner_tok 凭据的新会话 → 放行（跨会话房主）
+        tok = _cfg_sess(sid='newsid', user=None, room=r)
+        asyncio.run(serve.handle_msg(tok, {'t': 'roomcfg', 'room': 'rc',
+                                           'otok': 'o' * 32, 'bots': 4}))
+        assert r.bots == 4, '持 owner_tok 凭据者必须能改'
+    finally:
+        del serve.rooms['rc']
+
+
+def test_roomcfg_no_pass_anyone_edits():
+    """拍板后半句：没口令的房间所有人都能改——含陌生人首次设置口令。"""
+    import asyncio
+    r = serve.Room('rc', 'rc', 10, bots=0)
+    r.owner = 'oldsid'
+    r.owner_user = None
+    r.owner_tok = 'p' * 32
+    serve.rooms['rc'] = r
+    try:
+        assert r.passw is None, '夹具：无口令房'
+        st = _cfg_sess(sid='x', user=None, room=r)
+        asyncio.run(serve.handle_msg(st, {'t': 'roomcfg', 'room': 'rc', 'bots': 5}))
+        assert r.bots == 5, '无口令房陌生人改设置必须放行'
+        # 陌生人首次设口令也算「没密码的所有人都能改」
+        asyncio.run(serve.handle_msg(st, {'t': 'roomcfg', 'room': 'rc', 'pass': 'Kx9m2Q'}))
+        assert r.passw == 'Kx9m2Q', '无口令房陌生人可设口令'
+        # 一旦上了口令，另一个陌生人立刻失去修改权
+        st2 = _cfg_sess(sid='y', user=None, room=r)
+        asyncio.run(serve.handle_msg(st2, {'t': 'roomcfg', 'room': 'rc', 'bots': 7}))
+        assert r.bots == 5, '上口令后第二个陌生人必须被拒'
+        assert any(x.get('t') == 'error' for x in st2.ws.sent)
+    finally:
+        del serve.rooms['rc']
+
+
 for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
@@ -4269,6 +4330,8 @@ for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
              test_store_inc_throttled_batched_save,
              test_store_record_best_and_shutdown_flush,
              test_store_load_corrupt_backs_up_before_reset,
-             test_save_persist_rooms_atomic_on_failure]:
+             test_save_persist_rooms_atomic_on_failure,
+             test_roomcfg_pass_room_owner_only,
+             test_roomcfg_no_pass_anyone_edits]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

@@ -2850,8 +2850,14 @@ async def handle_msg(sess, m):
         if not room:
             await send(sess, {'t': 'error', 'err': '房间不存在'})
             return
-        # 批24：房间设置完全放开——身份门槛移除（任何人可改任何房间），
-        # 口令格式等业务校验保留在下方；can_edit_room 函数保留以备日后收紧。
+        # 批36 P1-3（用户拍板 2026-10-19）：「设密码的只有房主能改 没密码的所有人都能改」——
+        # 有口令的房只放三轨房主（账号所有者 / 在线 sid / owner_tok 凭据），口令房的
+        # 普通字段与口令本身都锁；无口令的房维持批24 的完全放开（含陌生人首次设口令）。
+        if room.passw and not can_edit_room(sess, room, m.get('otok')):
+            await send(sess, {'t': 'error', 'err': '该房间已设口令，仅房主可修改'})
+            return
+        # 批24：无口令房房间设置完全放开——身份门槛移除（任何人可改任何房间），
+        # 口令格式等业务校验保留在下方；can_edit_room 函数于批36 在口令房重新启用。
         # （批23 P6 曾在此做 otok 三轨鉴权）
         # ---- 批23 N2：口令先验——非法则整条拒绝，name 等其它字段一并不落地（原子）----
         new_pass = m.get('pass')
