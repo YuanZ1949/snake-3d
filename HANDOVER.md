@@ -524,6 +524,7 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 | 9 | ~~`three.min.js` 为本地 vendor r160~~ **批37 项9 已实施 ESM 改造（`b6fdef2`）** | three.module.min.js r161 + importmap 原生 import（无打包器），GLTFLoader 走 `loaders/`+`utils/` jsm 源码，UMD 管线（three.min.js/gltf-loader.js/build_gltf_loader.js）退役删除 | 四道门禁全绿：static_check（js=917/917）、静态路由 200×3+旧路由 404×2、Playwright 46 passed（skin35 6 条 GLB E2E）、单测 194 全绿 |
 | 10 | **批33 元素反应的三处测试性约束**（非功能 bug） | ① 元素弹 `proj` 生命周期极短（fire 后 ~60–400ms 消失），粗采样采不到；② solo 无人房 1.3–3.5s 撞墙死 → `state='over'` 后 `fireEb` 永久拒绝且无重生；③ 生产注册限流 `REG_MAX=30/REG_WIN=300s` 会让"每轮新账号"的 E2E 撞限 | `e2e/reactions.spec.js` 已内置对策：`waitPlaying()` + `__stateDbg` 判 `playing&&alive` 后才按 e + `page.evaluate` 内 40ms 紧采 800ms + 固定账号 `p33elem`（ensureLogin 先 register「已存在」不计配额、失败兜底 login）。**新增元素弹类 E2E 请沿用同一范式**；批37 前一轮再修「win 态卡准备屏」全量偶发竞态（`5e59f6e`：toPass 内 state=win 点 `#btnRestart` 走 sendReady 重开新局 + 按 `ebAge` 等 EB_CD，全量 46 passed） |
 | 11 | ~~ci.yml 的 python E2E 仍是 7 套~~ **批37 项3 已修（`c882fcf`）** | ci.yml round2 现 **11 套**（reactions + ws3 + ws4 已补，与 `local_ci.ps1` 一致） | Actions 仍因远端非 GitHub/Gitee 无 runner 可触发（见 #4）——真实 CI 见批37 项10 |
+| 12 | **批38：客户端默认 `camFollow=true`（跟随视角）时键盘是相对旋转**（`index.html:1122`/`:2764`——↑/↓ 被忽略、←/→ 只左右转），绝对方向键全废 | 一切用「按方向键导航」的自动化（quant_feel28 的页内控制器/KA 保命已中招：60 次死亡全 cliff/wall 螺旋，修前 M1 吃不到道具、M4 crossings=0） | **导航类自动化先点 `#btnCam` 切固定视角**（quant_feel28 `__qfCamFix()` 幂等范式：`body.follow` 存在才点）。该脚本已修并实测 VERDICT=pass（M1 spdFrames=124/M4 crossings=2） |
 
 ---
 
@@ -542,6 +543,10 @@ f583ce3 baseline: 贪吃蛇 3D 多人对战（部署版本）
 10. **`data/` 永不入库** —— 里面是账户 `store.json` 与用量 `usage.json`/`usage.log`，`.gitignore` 已加 `data/`。本地跑 E2E 会生成测试账号属正常，`git status` 不再显示 `?? data/`。
 
 11. **Windows 上 `git archive` 输出 CRLF** —— 本机 `core.autocrlf=true`（仓库无 `.gitattributes`）会把 blob 的 LF 转成 CRLF，导致部署到 Linux 后 sha256 与 `git show <commit>:` 不一致（曾被误判为"生产被手改"，实为纯换行差异 2231 行）。**部署命令必须写 `git -c core.autocrlf=false archive ...`**（见 §11.2）。
+
+12. **PowerShell 后台 shell（含 opencode 后台命令）有硬 120s 上限，会连子进程一起杀** —— 长跑脚本（如 `quant_feel28.js` 全量 ~5-8 分钟）必须 `Start-Process cmd -ArgumentList '/c','node ... > log 2>&1' -PassThru -WindowStyle Hidden` 落盘跑，主会话前台 wait-loop（`Get-Process -Id` + `Start-Sleep`）盯完成。另：**headless 自动化按方向键导航前先确认 camFollow 状态**——默认跟随视角下按键是相对旋转（见 §13 #12）。
+
+13. **建房接口有 IP 限流（`CREATE_IP_MAX=40/300s`）** —— 长跑/多轮实跑前重启 serve.py 清计数，否则建房全 429。
 
 ---
 

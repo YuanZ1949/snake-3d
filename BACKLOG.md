@@ -253,3 +253,17 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **项10 真实 CI = BLOCKED（外部阻塞，验收原文自带 BLOCKED 出口）**：本 clone 无 GitHub/Gitee 远端（origin=ssh://vmsz 裸仓、server=tencent 裸仓，均不支持 Actions）；`gh` CLI 未安装；`git credential fill` 探测 github.com/gitee.com 均无凭据（本机只配了本地 Gitea yuannas.local:3000，与本项目无关）。解锁所需：GitHub 账号 + repo 权限 token（或装 gh CLI 后 `gh auth login`）→ 把 dev push 到 github.com 新远端 → ci.yml 首跑（workflow 无 secrets 依赖，python+node+npx playwright 自足）。
 - **项11 批28 §7.3 转向手感量化（a780caa）**：新增 `scripts/quant_feel28.js`（343 行）——headless chromium 进 solo，页内 16ms 采样器读 `__predState`/`__stateDbg` + keydown capture 时间戳，node 侧 evaluate 全程 10s 超时 + FATAL 截图取证，输出 `test-results/quant_feel28.json`。spec §7.3 五点自动化三组：Q1 转向跟手延迟、Q2 开放地无回弹、Q3 局末结算窗不抖（M1 speed 期间与对头回弹按 spec 原口径留人测）。实测（VERDICT=pass）：Q1 pv 最快 16.8ms≈1 帧即时（余 4 试次 pred 断链期 null；2 条 md 延迟受 headless 软渲染长帧污染属环境噪声）、**Q2 直行 2458ms/91 帧 mdChanges=0 / mdReversals=0 / headBounces=0**、**Q3 over+win 19933ms/1212 帧 headMoves=0 / headBounces=0**——数据无系统性缺陷，故**未做实现调整**（契约 notDo 不许盲调玩法参数；最终判定交用户实操）。四版迭代根因：页内无界 for(;;) 在 moveDir 零向量下死循环挂死 renderer（循环全改有界 + 零向量短路）；solo 房 respawn=False 死亡后只能 goto+btnSolo 开新命。
 - **项12 收尾**：文档回写（本段收口 + HANDOVER 行数/vendor/§10 ×194/§13 #5 #9/DEPLOY 对齐）→ 全量 `local_ci.ps1` ALL GREEN → push origin+server → 生产再部署（predeploy tar + scp + 重启 + 远端 sha 核验 + prod_verify35）→ 契约 12 条自评（项10 blocked 如实记）。
+
+## 批38（2026-10-20 · quant_feel28 M1/M4 落地修复 · 已完成）
+
+来源：批37 项11 交付的 quant_feel28.js 把 M1 speed 期间与 M4 踏门回弹按 spec 原口径留了人测——本批目标是把这两项做成自动化并实测出数据。流程：直通（契约 `.tamako/contract.json`）。
+
+- **项1 pred-T1 竞态修复（84adcde）**：snapShell 补 hmap 空场，堵批32 高度通道泄漏（详见 commit）。
+- **项2 quant_feel28 落地修复（a8ec20c）**：M1「吃到 speed 道具后 3.2s 窗」与 M4「踏门后回弹窗」从人测改为自动化，四轮实跑迭代，**最终 VERDICT=pass**（M1 spdFrames=124/hr=20/aliveEnd=true；M4 crossings=2，a0/a1 各 1 次 nav ok）。
+  - **主根因（实证确证）**：index.html:1122 默认 `camFollow=true` 时 setDir(:2764) 把按键当**相对旋转**——↑/↓(x=0) 直接忽略、←/→ 只左右转 → 我方绝对方向键全废，蛇无输入直行撞崖/出界（__qfDeaths 60 次死亡全 cliff/wall，~6.5s 一死螺旋）。修复 = WS_PATCH 注入 `__qfCamFix()`（body.follow 存在才点 #btnCam，幂等），初始注入/ensurePlaying 新局/navToward 启动前三处调用，实测 follow-after=false 生效。
+  - **次根因链**：①控制延迟——旧 navToward 每键一个完整 Node→page evaluate RTT（~1.1s/press）追不上 150ms/步；改页内 `__qfCtrl` 控制器（100ms interval）+ `__qfPlan` BFS 多目标寻路（静态障碍+上行≥2+自身 body+首步禁反向）。②保命 v2 拐向<4 原地等死 → v3（直行≥3 不管/拐向≥2 拐/拐向≥1 且直行≤1 拐一格）。③M1 取缓存第一个 speed 道具（常是远处/12s 快过期）→ 改距头最近。④M1 记录窗污染（死亡残帧+无 headroom 门）→ 吃到后 headroom 门转向 + `s.spd>0 && s.alive` 过滤。⑤M4 观察窗污染（踏门后 KA 保命键仍按）→ 控制器 done 即停输入（~100ms 内）+ KA 让位条件。⑥权威头 `__qfHeadDir`（服务端快照新鲜优先/投影兜底）+ body 障碍优先服务端 cells。
+  - **排除的假设**：WS 地形缓存失效（serve.py :2290-2331 增量帧每字段是**全量值非 patch**，客户端正确合并即可，读码排除）。
+  - 基础设施教训：后台 shell 硬 120s 上限连后台命令也杀 → 长跑用 `Start-Process cmd`（重定向日志）+ 前台 wait-loop。
+- **项3 文档回写 + 全量门禁**：本段 + HANDOVER；`local_ci.ps1` ALL GREEN 复核后收口。
+- **项4 契约自评**：见 `.tamako/contract.json` + 报告。
+- 临时探针产物已清（scripts/_probe_ws.js、test-results/_extract_create.py、_create_body.txt、_srv_create.txt、_probe_ws.log）。
