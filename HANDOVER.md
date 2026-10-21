@@ -462,11 +462,11 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`a9e1a7a`（批37 全量，2026-10-19 23:32 投放）** —— 批37 项12 以 scp 5 文件投放（serve.py / index.html / three.module.min.js / loaders/GLTFLoader.js / utils/BufferGeometryUtils.js；models/*.glb 与生产一致未重传），systemd `snake-3d.service` 崩溃自启拉起新进程（Main PID 1854948）。
-投放后核验：远端 5 文件 sha256 与本地逐字节一致（serve.py 1333ed1d… / index.html 6db31688… / three.module.min.js 8da856fd… / GLTFLoader.js d073b438… / BufferGeometryUtils.js b0c64fe6…）、HTTP 200 251987 B、新路由 `/three.module.min.js` `/loaders/GLTFLoader.js` `/utils/BufferGeometryUtils.js` 200 且旧路由 `/three.min.js` `/gltf-loader.js` 404（= 新 ALLOWED 生效）、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）。双远端已推至 `a9e1a7a`（`git ls-remote` 网络实证 origin/server dev 均同步）。
-回滚点：**`snake-3d-predeploy-20261019-232953.tar.gz`**（549052 B，含旧版 serve.py/index.html/three.min.js/gltf-loader.js/models/*.glb）。
-批37 增量：账号口令 6-64 位、房口令哈希落盘、运行配置外置（SNAKE_CONFIG/SNAKE_<KEY>）、state 写入收敛 setState、three r161 ESM（importmap 原生 import，UMD 管线退役）、批28 §7.3 手感量化脚本 scripts/quant_feel28.js。
- 历史回滚点：`snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一已提交版本记录：dev@`d86942c`（批29 全部 6 项 + 批30 全部 4 项，2026-10-17 02:56 部署，双远端已推送）。
+当前生产版本：**dev@`878780b`（批38+批39，2026-10-21 10:30 投放）** —— `git -c core.autocrlf=false archive dev` 全量 tar 投放（顺带把批37 scp 遗留的 CRLF serve.py 归一为 LF，内容零差异），systemctl restart 后 active。
+投放后核验：生产 serve.py sha256 `b3e316f0…` 与 index.html `cd2f96a3…` 均与 `878780b` blob 逐字节一致（LF 口径）、HTTP 200 248014 B、`/` 含批39 符号 `hDeadEdgeMat`（2 处）、journal 3 分钟零 error、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）、生产隔离单测（/tmp/b39test）ALL PASSED。PROTO_VER=30 不变。**git push 未执行**（用户只拍板部署）。
+回滚点：**`snake-3d-predeploy-20261021-103018.tar.gz`**（752216 B）。
+批38+39 增量：pred-T1 snapShell hmap 空场竞态修复（e2e/pred.spec.js）、quant_feel28 M1/M4 自动化落地、批39 悬崖可见性（致死上行格 h≥2 3D 橙红描边 + 小地图 hmap 地形层）。
+ 历史回滚点：`snake-3d-predeploy-20261019-232953.tar.gz`（批37，549052 B）/ `snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一生产版本记录：dev@`a9e1a7a`（批37 全量，2026-10-19 23:32 scp 投放，双远端已推至 a9e1a7a）。
 
 > 第 2 轮（2026-10-19，用户拍板「只补备份，先不推」）：① 生产补建 predeploy 备份 `snake-3d-predeploy-20261019-134813.tar.gz`；② 新增**可复现验收脚本** `scripts/prod_verify35.js`（从本机打生产 8090，实跑 `VERDICT=pass`、`ALL_ERRS=[]`、皮肤 16/17 `mine.node=true`，退出码 0；该脚本**只留在仓库，未投放生产**，它不需要跑在服务器上）；③ 批35 存证图入库 `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10；原先在被 `.gitignore` 忽略、且 Playwright 每次运行会清空的 `test-results/` 里；脚本重跑产出的 4 张 ON/OFF 落 `test-results/` 不入库，可由脚本重新生成）；④ `git push` **仍未执行**（`dev` ahead `origin/dev` 16 / ahead `server/dev` 27），须人工拍板。
 
