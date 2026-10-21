@@ -279,9 +279,9 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **遗留**：`test_room_pass_bruteforce_throttle` 时序 flake（建议 `_win_ok` 窗过期判定改 `>=` 或测试 WIN=0 前 sleep(0.01)，未批不改）；批#2 test_ws3 偶发排查暂停归档（修复方向已定：先 recv `created` 拿 rid 再按 id==rid 查 rooms，测试侧）。
 - **部署（2026-10-21 10:30，用户拍板）**：批38+批39 一并上生产（生产此前停在批37 `a9e1a7a`）。漂移检查=纯换行差异（生产 CRLF serve.py `1333ed1d`==本地工作区，LF 化==blob `b3e316f0`，内容零漂移；批37 scp 投放遗留，坑 #10 复发）→ predeploy `20261021-103018.tar.gz` → `core.autocrlf=false archive` 投放（换行归一 LF）→ active/200/journal 零 error/双 sha 与 `878780b` blob 逐字节一致/`hDeadEdgeMat` 2 处/prod_verify35 VERDICT=pass/生产隔离单测 ALL PASSED。HANDOVER §11.3 已回写。**push 未执行**。
 
-## 批40（2026-10-21 · 已完成）
+## 批40（2026-10-21 · 死亡遥测 · 已完成）
 
-- 见 HANDOVER（批40 段）；本批无 BACKLOG 独立条目。
+- die 事件落 usage.log（cause/头格/致死格/h0h1/ring/dir/theme），3 处死亡点挂载 + 单测（commit `3d2162f`）。无 BACKLOG 独立条目。
 
 ## 批41（2026-10-21 · 警戒面对焦 + 大世界 第1步 · 已完成）
 

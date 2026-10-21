@@ -381,7 +381,7 @@ ssh tencent "cd /home/ubuntu/snake-3d && .venv/bin/python usage_report.py 7 --lo
 | `e2e/smoke.spec.js` | Playwright ×5 | 批9 冒烟：首页渲染（标题/canvas/布局无溢出）、单人 guest 登录入局（HUD 显示）、观战切换（按钮态/截图落 test-results/）。批16 +2：建房面板下拉暗色（`color-scheme` computed 断言 + body 不外溢）、死亡结算屏→观战衔接（固定视角循环按左撞墙真实死亡 → `btnOverSpectate` 可见 → 点击后结算屏收起 + `btnJoinIn` 出现，无 JS 报错）。**外部起服**（无 webServer 配置），需 `BASE=http://127.0.0.1:8123` |
 | `e2e/reactions.spec.js` | Playwright ×4 | 批33：元素 HUD 四按钮+键1切冰+键 e 进 CD（`waitPlaying` 后再按）、playing&alive 帧 40ms 紧采断言 `__projDbg()>0`（元素弹存活极短 ~60-400ms）、注入 `aura{cryo}`+`react{frozen}` 断言 `__auraDbg`/`__floatDbg` 并截图 `test-results/p33_attach_react.png`、`elements=false` 时 `#elemBar` hidden。固定账号 `p33elem`（免疫生产注册限流），**外部起服**，`BASE` 可指生产 |
 | `.github/workflows/ci.yml` | CI | push dev/main + PR：单测 → 起 28000/8090 → 11 套 python E2E → 起 8123 → Playwright → upload-artifact（test-results/playwright-report，失败另传 serve 日志） |
-| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量（**批37 起 11 套**）：停服清库→起 28000/8090→11 套 E2E（含 reactions/ws3/ws4）→单测→停服清库→静态检查→起 8123→Playwright（14 spec / **46 passed**）→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
+| `scripts/local_ci.ps1` | 回归 | 批12.5 一键全量（**批37 起 11 套**）：停服清库→起 28000/8090→11 套 E2E（含 reactions/ws3/ws4）→单测→停服清库→静态检查→起 8123→Playwright（15 spec / **49 passed**，批41 起 +fatal41）→汇总 `ALL GREEN`/Exit 1。**必须 pwsh 运行**（powershell 会因 UTF-8 无 BOM 报 ParserError）；可 `-SkipE2E`/`-SkipPlaywright` |
 
 **运行方式**（Windows 本机 / Termux 本机 / 服务器三种都能跑，注释已标平台；下列命令均已实测）：
 
@@ -462,10 +462,11 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`878780b`（批38+批39，2026-10-21 10:30 投放）** —— `git -c core.autocrlf=false archive dev` 全量 tar 投放（顺带把批37 scp 遗留的 CRLF serve.py 归一为 LF，内容零差异），systemctl restart 后 active。
-投放后核验：生产 serve.py sha256 `b3e316f0…` 与 index.html `cd2f96a3…` 均与 `878780b` blob 逐字节一致（LF 口径）、HTTP 200 248014 B、`/` 含批39 符号 `hDeadEdgeMat`（2 处）、journal 3 分钟零 error、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）、生产隔离单测（/tmp/b39test）ALL PASSED。PROTO_VER=30 不变。**git push 未执行**（用户只拍板部署）。
-回滚点：**`snake-3d-predeploy-20261021-103018.tar.gz`**（752216 B）。
-批38+39 增量：pred-T1 snapShell hmap 空场竞态修复（e2e/pred.spec.js）、quant_feel28 M1/M4 自动化落地、批39 悬崖可见性（致死上行格 h≥2 3D 橙红描边 + 小地图 hmap 地形层）。
+当前生产版本：**dev@`edf5e28`（批41，2026-10-21 17:13 投放）** —— `git -c core.autocrlf=false archive dev` 全量 tar 投放，systemctl restart 后 active。
+投放后核验：生产 serve.py sha256 `dde81370…` 与 index.html `81169e25…` 均与 `edf5e28` blob 逐字节一致（LF 口径）、HTTP 200、journal 启动零 error 且 spawn 日志出现 `grid=48x48`（新默认尺寸生效直接证据，24x24=新手村预设房）、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）、生产隔离单测（/tmp/b41test，拷 serve.py+test_game.py+index.html 后跑）ALL PASSED。PROTO_VER=30 不变（默认尺寸仅缺省值语义，双端均显式传 size 的既有路径不受影响）。**git push 未执行**（契约 notDo）。
+回滚点：**`snake-3d-predeploy-20261021-171158.tar.gz`**（8231406 B）。
+批40 增量（`3d2162f`）：死亡遥测——die 事件落 usage.log（cause/头格/致死格/h0h1/ring/dir/theme），3 处死亡点挂载 + 单测。
+批41 增量（`edf5e28`）：警戒面对焦（`rebuildFatalEdge()` 致命面橙红警示：|Δh|≥2 真实致死交界画警示条/立面/轮廓线，替代批39 整格描边；小地图致死交界线；e2e/fatal41.spec.js 3 例）+ 大世界面积第 1 步（新建房默认 24→48：serve.py create handler / cSize 选中档 / soloCreate / createRoom·saveRoomCfg fallback / test_ws3 断言同步；**DEFAULT_ROOMS 新手村 24×24 维持批30① 用户拍板不动**）；「宏大起伏」挪候选池单独开轮。
  历史回滚点：`snake-3d-predeploy-20261019-232953.tar.gz`（批37，549052 B）/ `snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一生产版本记录：dev@`a9e1a7a`（批37 全量，2026-10-19 23:32 scp 投放，双远端已推至 a9e1a7a）。
 
 > 第 2 轮（2026-10-19，用户拍板「只补备份，先不推」）：① 生产补建 predeploy 备份 `snake-3d-predeploy-20261019-134813.tar.gz`；② 新增**可复现验收脚本** `scripts/prod_verify35.js`（从本机打生产 8090，实跑 `VERDICT=pass`、`ALL_ERRS=[]`、皮肤 16/17 `mine.node=true`，退出码 0；该脚本**只留在仓库，未投放生产**，它不需要跑在服务器上）；③ 批35 存证图入库 `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10；原先在被 `.gitignore` 忽略、且 Playwright 每次运行会清空的 `test-results/` 里；脚本重跑产出的 4 张 ON/OFF 落 `test-results/` 不入库，可由脚本重新生成）；④ `git push` **仍未执行**（`dev` ahead `origin/dev` 16 / ahead `server/dev` 27），须人工拍板。
