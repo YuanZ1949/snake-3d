@@ -267,3 +267,13 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **项3 文档回写 + 全量门禁**：本段 + HANDOVER；`local_ci.ps1` ALL GREEN 复核后收口。
 - **项4 契约自评**：见 `.tamako/contract.json` + 报告。
 - 临时探针产物已清（scripts/_probe_ws.js、test-results/_extract_create.py、_create_body.txt、_srv_create.txt、_probe_ws.log）。
+
+## 批39（2026-10-21 · 悬崖可见性加固 · 已完成）
+
+来源：用户原话「极其容易摔下悬崖 根本看不到需要躲开的那个地形」。流程：直通（契约 `.tamako/contract.json`；systematic-debugging 取证 4 条确诊：h=2 致死峰与 h=1 安全丘在 21° 俯角下难区分（visH=0.35）、c1/c2 与棋盘地板低对比、小地图零地形预警、致死格无描边仅 ab 有青描边先例）。方案 A+B 组合，只改 index.html 渲染层：
+
+- **B 3D 致死格描边**：`hDeadEdgeMat`(0xff5a2e 橙红) + `takeHEdge()` 辅助，c2/c3（上行≥2 即死）在 `takeHeightMesh` 池化建网格时挂 EdgesGeometry 全框描边（scale 1.001 防 z-fight，child 随父缩放）；ab 深渊青描边、c1 丘不描边均不变。
+- **A 小地图地形层**：`updateMinimap` 静态地形段后遍历 `hmapD`——h≥2 橙红 #ff5a2e / h=1 中性橄榄 #7c8465 / 深渊黑底青缘 / 水草平地不画。
+- **门禁**：`scripts/_shot_cliff.js` 注入头前 h=2 峰墙出同机位 before/after 截图（observer 复核：跟随视角橙红描边方块群与地板/矮丘清晰区分，小地图橙红地形块可见，无错位/穿帮）；`local_ci.ps1` 三轮：R1 ALL GREEN、R2 触发既有偶发 `test_room_pass_bruteforce_throttle`（`_win_ok` 用 `now-rec[0]>win`，WIN=0 时同一时钟 tick 内 `0>0` 为 False → 误拒；服务端单测不加载前端，与本批改动无关，未顺手改）、R3 ALL GREEN（Playwright 46 passed ×2 轮）。
+- 不做已守约：serve.py cliff 判定/碰撞、相机、玩法数值、H_UNIT 均未动；临时产物（scripts/_shot_cliff.js、_cliff_*.png、_ci_round*.log）已删。
+- **遗留**：`test_room_pass_bruteforce_throttle` 时序 flake（建议 `_win_ok` 窗过期判定改 `>=` 或测试 WIN=0 前 sleep(0.01)，未批不改）；批#2 test_ws3 偶发排查暂停归档（修复方向已定：先 recv `created` 拿 rid 再按 id==rid 查 rooms，测试侧）。

@@ -2173,6 +2173,13 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2})
   };
   const hEdgeMat = new THREE.LineBasicMaterial({color: 0x7fd8ff});
+  // 批39（悬崖可见性）：致死上行（h≥2 峰/楼，cliff 即死）的橙红警戒描边，复用 ab 的 Edges 先例
+  const hDeadEdgeMat = new THREE.LineBasicMaterial({color: 0xff5a2e});
+  const takeHEdge = mat => {
+    const eg = new THREE.LineSegments(new THREE.EdgesGeometry(heightColGeo), mat);
+    eg.scale.setScalar(1.001);   // 略放大避免与盒面 z-fight；作为 child 随父 mesh 缩放
+    return eg;
+  };
 
   function takeHeightMesh(kind) {
     const pool = heightPool[kind] || (heightPool[kind] = []);
@@ -2180,9 +2187,9 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     if (!m) {
       m = new THREE.Mesh(heightGeo[kind], heightMat[kind]);
       if (kind === 'ab') {   // 深渊：黑柱 + 顶缘描边（Edges 为 child，不计入 meshes 计数）
-        const eg = new THREE.LineSegments(new THREE.EdgesGeometry(heightColGeo), hEdgeMat);
-        eg.scale.setScalar(1.001);
-        m.add(eg);
+        m.add(takeHEdge(hEdgeMat));
+      } else if (kind === 'c2' || kind === 'c3') {   // 批39：致死上行格全框橙红描边
+        m.add(takeHEdge(hDeadEdgeMat));
       }
       m.visible = false;
       scene.add(m);
@@ -4130,6 +4137,18 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     for (const r of wallCells) g.fillRect(ox + r[0] * s, oy + r[1] * s, sq, sq);
     g.fillStyle = '#59637c';
     for (const r of rocks) g.fillRect(ox + r.x * s + .5, oy + r.y * s + .5, Math.max(2, sq - 1), Math.max(2, sq - 1));
+    // 批39（悬崖可见性）：高度地形层——深渊黑底青缘 / 致死上行 h≥2 橙红 / 丘 h=1 中性橄榄
+    for (const [k, hv] of hmapD) {
+      if (hv !== 9 && hv < 1) continue;                 // 水(-1)/草(-2)/平地(0) 不画
+      const a = k.split(','), rx = ox + (+a[0]) * s, ry = oy + (+a[1]) * s;
+      if (hv === 9) {
+        g.fillStyle = '#000'; g.fillRect(rx, ry, sq, sq);
+        g.strokeStyle = 'rgba(127,216,255,.6)'; g.lineWidth = 1; g.strokeRect(rx + .5, ry + .5, sq - 1, sq - 1);
+      } else {
+        g.fillStyle = hv >= 2 ? '#ff5a2e' : '#7c8465';
+        g.fillRect(rx, ry, sq, sq);
+      }
+    }
     portalCells.forEach((r, i) => dot(r[0], r[1], Math.max(2, s * .4), i % 2 ? '#61d0ff' : '#b197fc'));
     // 资源
     for (const f of foods) dot(f.x, f.y, Math.max(2, s * .45), '#' + ((f.color || 0xff5f5f) >>> 0).toString(16).padStart(6, '0'));
