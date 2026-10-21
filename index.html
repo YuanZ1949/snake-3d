@@ -851,6 +851,7 @@
                 <option value="0.5">少</option>
                 <option value="1">标准</option>
                 <option value="1.8">多</option>
+                <option value="2.6">宏伟</option>
               </select>
             </label>
             <label><span>水域</span>
@@ -2007,6 +2008,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     }
     return {meshes: heightMeshes.length, headY, blocked};
   };
+  window.__hmapDump = () => [...hmapD].map(([k, v]) => { const [x, y] = k.split(',').map(Number); return [x, y, v]; }); // 批43 探针：服务端下发 hmap 快照（e2e 断言脊线形态用）
   // 批32 探针：头格起沿 dir 6 格注入 h（走廊抬升，蛇移动也保持高台）
   window.__mapSelfCorridorSet = h => {
     if (!myEnt || !myEnt.cells.length) return;

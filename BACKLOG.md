@@ -293,7 +293,7 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **门禁**：前端 node --check + python py_compile 绿；local_ci ALL GREEN（见报告）。
 - **部署**：见报告（生产隔离单测 + 200）。
 
-## 批42（2026-10-21 · push + 修全部已知问题 + 大世界论证 · 进行中）
+## 批42（2026-10-21 · push + 修全部已知问题 + 大世界论证 · 已完成）
 
 来源：用户原话「push 然后开始论证大世界  其他发现的问题都进行修复」。流程：backlog-sprint（契约 `.tamako/contract.json`）。
 
@@ -304,4 +304,16 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **修复#7 local_ci 第5步 8123 bind 失败（本轮 CI 发现）**：根因=本机 micont_service.exe 出站连接占用源端口 8123（bind 0.0.0.0→10048、127.0.0.1→Errno13）；serve.py 绑定地址改 `HOST` 环境变量可配（默认 0.0.0.0 生产不变），local_ci Start-Serve 绑 127.0.0.1 + 新增 `-WebPort` 参数（默认 8123 与文档一致，本机冲突时 `-WebPort 8125`）。
 - **修复#8 test_magnet_pulls_food 偶发（本轮 CI 发现）**：根因=构造性——`fresh()` 不清 eterrain（批33 元素地形测试依赖构造生成），随机簇可能占 (8,5) 使磁吸换轴到 (9,4)（cands 顺序构造性确凿：到达 (9,4) 的充要条件是 (8,5)∈occ）；用例内清 `r.eterrain = {}`（照 3678 先例）构造性消除。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测全过 + 静态 + Playwright 49 passed）。
-- **大世界论证**：brainstorming（architectural 路径 approaches 步）——方案对比报告交用户拍板，拍板前不动相机/生成算法（契约 notDo）。
+- **大世界论证**：brainstorming（architectural 路径 approaches 步）——方案对比报告交用户拍板，拍板前不动相机/生成算法（契约 notDo）。用户拍板「方案一」（gen_heights 脊线山脉 + cHeight「宏伟」档，相机不动）→ 批43 实现。
+
+## 批43（2026-10-22 · 大世界 第2步：宏大起伏（方案一 脊线山脉 + 宏伟档） · 已完成）
+
+来源：批42 论证拍板「方案一」。流程：vertical-slice（契约 `.tamako/contract.json`）。
+
+- **服务端脊线山脉**（serve.py gen_heights ~948）：`eff_height>=2.0` 走新分支——随机游走主脊（8方向、L=6~14、中段 t<0.6 冲 peak、peak∈{2,3} 40%取3、两侧 h=1 缓坡、30% 缺一侧=0→2/0→3 巨峭壁），脊条数 `max(2, int(area/160*eff))`，预算仍 0.35*area；`<2.0` 走原单种子山包逐字节不变（既有 4 档语义零影响）。
+- **单测**：`test_height_majestic_ridge_batch43`（test_game.py，seed 4301、water/build 隔离，断言 h3 存在 + h3邻h2邻h1邻0 逐级链 + h≥2 连通块≥6）先红后绿（h3=51 big=11）。
+- **前端**：cHeight 加「宏伟」档（value 2.6，走 height_custom 既有协议，服务端 clamp 0..4 零改动）；新探针 `window.__hmapDump()`（hmapD 全量解析，e2e 断言用）。
+- **e2e**：e2e/height43.spec.js（建 2.6 房→选中→btnStart 进局→断言脊线形态）绿。踩坑记录：进房=roomItem 选中（selectRoom）+ `#btnStart`（`#btnJoinIn` 是观战切入按钮）；每次 shell 全新进程 env 不保留，`$env:BASE` 必须与 npx 同命令内联。
+- **截图取证**：宏伟房实景 3 张（%TEMP%\\majestic43_a/b/c.png）——连绵山脉脊线 + 巨峭壁橙红警戒立面可见。
+- **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 + Playwright **51 passed**，含 fatal41/height43 回归；期间 reactions/ws4/pred-T7 各 flake 一轮，复跑均绿，非回归）。
+- **未部署生产**：生产仍在批42 `edf5e28`；批42+43 改动已推双远端，待拍板部署。

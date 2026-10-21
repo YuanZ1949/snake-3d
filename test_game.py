@@ -3300,6 +3300,43 @@ def test_height_gen_invariants():
     assert r0.hmap == {}                                     # 三旋钮全 0（预算=0 早退）= 纯平地
 
 
+def test_height_majestic_ridge_batch43():
+    """批43「宏伟」档（2.6）→ 脊线山脉：连绵 h≥2 脊 + h=3 峰 + 逐级爬升链（h3→h2→h1→0 相邻存在）"""
+    def nb(c):
+        x, y = c
+        return [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    r = fresh(48, theme_fixed='default', height_mult=2.6, water_amt=0.0, bld_amt=0.0)
+    serve.random.seed(4301)
+    r.build_terrain()
+    vals = set(r.hmap.values())
+    assert 3 in vals, vals                          # 宏伟档必出 h=3 脊峰
+    assert 2 in vals and 1 in vals
+    assert len(r.hmap) <= int(0.35 * 48 * 48), len(r.hmap)   # 预算不变
+    # 逐级爬升链存在：h=3 相邻 h=2、h=2 相邻 h=1、h=1 相邻平地 0
+    ok3 = any(any(r.hmap.get(q) == 2 for q in nb(c)) for c, h in r.hmap.items() if h == 3)
+    ok2 = any(any(r.hmap.get(q) == 1 for q in nb(c)) for c, h in r.hmap.items() if h == 2)
+    ok1 = any(any(r.hmap.get(q, 0) == 0 for q in nb(c)) for c, h in r.hmap.items() if h == 1)
+    assert ok3 and ok2 and ok1, 'h3→h2→h1→0 逐级爬升链必须存在'
+    # 连绵性：h≥2 脊必须存在大小 ≥6 的 4 邻连通块（非散点山包）
+    hi = {c for c, h in r.hmap.items() if h >= 2}
+    seen, big = set(), 0
+    for s in hi:
+        if s in seen:
+            continue
+        size, comp = 0, [s]
+        seen.add(s)
+        while comp:
+            c = comp.pop()
+            size += 1
+            for q in nb(c):
+                if q in hi and q not in seen:
+                    seen.add(q)
+                    comp.append(q)
+        big = max(big, size)
+    assert big >= 6, f'脊必须连绵（最大连通块 {big}）'
+    print("majestic ridge OK: h3=", sum(1 for v in r.hmap.values() if v == 3), "big=", big)
+
+
 def test_height_cfg_roundtrip():
     r = fresh(16, height_mult=0.0, water_amt=2.0, bld_amt=None)
     inf = r.info()
@@ -4501,7 +4538,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,

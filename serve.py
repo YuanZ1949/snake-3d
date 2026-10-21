@@ -987,8 +987,28 @@ class Room:
                 cx, cy = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
             return put
 
-        # 1) 山包：种子 h=2，70% 全环 h=1 阶梯 / 30% 缺一侧成立地峭壁
-        for _ in range(int(area / 40 * self.eff_height())):
+        # 1) 山包：eff_height() >= 2.0（批43「宏伟」档）→ 脊线山脉；否则保持原单种子山包（旧档零变化）
+        if self.eff_height() >= 2.0:
+            # 脊线山脉：随机游走主脊（peak 2~3，中段冲 peak、两端 -1），两侧 h=1 缓坡；
+            # 30% 概率丢一侧缓坡成 0→2/0→3 立地巨峭壁（与旧山包 30% 缺侧同语义，警戒面可见）
+            for _ in range(max(2, int(area / 160 * self.eff_height()))):
+                x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
+                dx, dy = random.choice(((1, 0), (-1, 0), (0, 1), (0, -1),
+                                        (1, 1), (1, -1), (-1, 1), (-1, -1)))
+                peak = 3 if random.random() < 0.4 else 2
+                L = random.randint(6, 14)
+                sides = (1,) if random.random() < 0.3 else (1, -1)
+                px, py = -dy, dx
+                for i in range(L):
+                    t = abs(2.0 * i / (L - 1) - 1)             # 0=脊中段 → 1=两端
+                    h = peak if t < 0.6 else peak - 1
+                    if take(x, y, h):                          # 主脊格
+                        for s in sides:                        # 两侧缓坡（缺侧=巨峭壁）
+                            take(x + px * s, y + py * s, 1)
+                    x += dx if random.random() < 0.8 else random.choice((-1, 0, 1))
+                    y += dy if random.random() < 0.8 else random.choice((-1, 0, 1))
+        # 1b) 旧单种子山包（eff_height < 2.0 与批32 行为逐字节一致）
+        for _ in range(int(area / 40 * self.eff_height()) if self.eff_height() < 2.0 else 0):
             cx, cy = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
             if not take(cx, cy, 2):
                 continue
