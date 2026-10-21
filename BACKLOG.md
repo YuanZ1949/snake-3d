@@ -292,3 +292,16 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **项C 候选池回写**：宏大起伏（地形起伏参数更极端档位）挪入候选池单独开轮——本批只做面积，不碰 height 参数（批32 cHeight 现有档位）与生成算法。
 - **门禁**：前端 node --check + python py_compile 绿；local_ci ALL GREEN（见报告）。
 - **部署**：见报告（生产隔离单测 + 200）。
+
+## 批42（2026-10-21 · push + 修全部已知问题 + 大世界论证 · 进行中）
+
+来源：用户原话「push 然后开始论证大世界  其他发现的问题都进行修复」。流程：backlog-sprint（契约 `.tamako/contract.json`）。
+
+- **push**：origin/server（同址裸仓 ssh://vmsz/home/ubuntu/snake-3d.git）双双推平至 a72ab6e（批41 交付）。
+- **修复#4 flake（test_room_pass_bruteforce_throttle 时序）**：根因=Windows 同 tick 下 `now-rec[0]>win` 中 `0>0` False 误判未过期；serve.py:120 `_win_ok` 改 `>= win`（清扫判据 `_win_bump` 不动）+ 先红后绿新测试 `test_win_zero_window_expires_immediately`；两测试 20×2 轮全绿。
+- **修复#5 test_ws3 偶发**：根因纠偏（非批39 猜的 rooms/created 错配，服务端顺序恒定）——rock 断言元组漏 day 主题 0.8（THEME_CFG 并集 {0.5,0.6,0.8,1.0,1.7}）；补断言后 10 连跑 0 失败（修复前 4/10 失败）。
+- **修复#6 遥测只落不析**：新增 `scripts/death_stats.py`（只读，JSONL 容错退出0）——实跑 28475 行日志 217 die：wall 54 / bite 44 / crush 40 / cliff 36 / rock 22 / stuck 11 / self 10；cliff 36 全 dh≥2 与上行≥2 判定一致。
+- **修复#7 local_ci 第5步 8123 bind 失败（本轮 CI 发现）**：根因=本机 micont_service.exe 出站连接占用源端口 8123（bind 0.0.0.0→10048、127.0.0.1→Errno13）；serve.py 绑定地址改 `HOST` 环境变量可配（默认 0.0.0.0 生产不变），local_ci Start-Serve 绑 127.0.0.1 + 新增 `-WebPort` 参数（默认 8123 与文档一致，本机冲突时 `-WebPort 8125`）。
+- **修复#8 test_magnet_pulls_food 偶发（本轮 CI 发现）**：根因=构造性——`fresh()` 不清 eterrain（批33 元素地形测试依赖构造生成），随机簇可能占 (8,5) 使磁吸换轴到 (9,4)（cands 顺序构造性确凿：到达 (9,4) 的充要条件是 (8,5)∈occ）；用例内清 `r.eterrain = {}`（照 3678 先例）构造性消除。
+- **门禁**：local_ci ALL GREEN（11套E2E + 单测全过 + 静态 + Playwright 49 passed）。
+- **大世界论证**：brainstorming（architectural 路径 approaches 步）——方案对比报告交用户拍板，拍板前不动相机/生成算法（契约 notDo）。
