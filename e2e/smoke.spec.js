@@ -47,7 +47,7 @@ test('单人练习入局：收到快照、蛇动起来、canvas 非空、无报�
   const errors = watchErrors(page);
   const snap = watchFrames(page, /"t":\s*"snap"/);
   await page.goto('/');
-  // 点「🐍 单人练习」：自动建 24×24 + 3 AI 房并入局（批4）
+  // 点「🐍 单人练习」：自动建 48×48 + 3 AI 房并入局（批4；批41 尺寸 24→48）
   await page.click('#btnSolo');
   await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
   // 等服务端快照到达（入局成功判据）

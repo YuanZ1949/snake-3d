@@ -2925,9 +2925,10 @@ async def _msg_create(sess, m):
         await send(sess, {'t': 'error', 'err': '建房太频繁，请稍后再试'})
         return
     try:
-        size = int(m.get('size', 24))
+        # 批41：新建房默认尺寸 24→48（用户拍板"大世界"第1步：更大面积；历史房加载回退24不动）
+        size = int(m.get('size', 48))
     except (TypeError, ValueError):
-        size = 24
+        size = 48
     size = max(MAP_MIN, min(MAP_MAX, size))
     rid = new_room_id()
     name = str(m.get('name') or f'房间{rid}')[:16]

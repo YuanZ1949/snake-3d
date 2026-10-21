@@ -45,7 +45,7 @@ async def main():
         cr2 = await recv_until(ws, "created")
         f = [r for r in rm2["list"] if r["id"] == cr2["room"]][0]
         print("create(fallback):", f)
-        assert f["cols"] == 24 and f["rows"] == 24, f
+        assert f["cols"] == 48 and f["rows"] == 48, f   # 批41：新建房默认尺寸 24→48
         assert f["themeFixed"] is False, f
         assert f["rock"] in (0.5, 0.6, 1.0, 1.7), f
         assert isinstance(f["portal"], bool), f

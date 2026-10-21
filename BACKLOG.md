@@ -278,3 +278,17 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - 不做已守约：serve.py cliff 判定/碰撞、相机、玩法数值、H_UNIT 均未动；临时产物（scripts/_shot_cliff.js、_cliff_*.png、_ci_round*.log）已删。
 - **遗留**：`test_room_pass_bruteforce_throttle` 时序 flake（建议 `_win_ok` 窗过期判定改 `>=` 或测试 WIN=0 前 sleep(0.01)，未批不改）；批#2 test_ws3 偶发排查暂停归档（修复方向已定：先 recv `created` 拿 rid 再按 id==rid 查 rooms，测试侧）。
 - **部署（2026-10-21 10:30，用户拍板）**：批38+批39 一并上生产（生产此前停在批37 `a9e1a7a`）。漂移检查=纯换行差异（生产 CRLF serve.py `1333ed1d`==本地工作区，LF 化==blob `b3e316f0`，内容零漂移；批37 scp 投放遗留，坑 #10 复发）→ predeploy `20261021-103018.tar.gz` → `core.autocrlf=false archive` 投放（换行归一 LF）→ active/200/journal 零 error/双 sha 与 `878780b` blob 逐字节一致/`hDeadEdgeMat` 2 处/prod_verify35 VERDICT=pass/生产隔离单测 ALL PASSED。HANDOVER §11.3 已回写。**push 未执行**。
+
+## 批40（2026-10-21 · 已完成）
+
+- 见 HANDOVER（批40 段）；本批无 BACKLOG 独立条目。
+
+## 批41（2026-10-21 · 警戒面对焦 + 大世界 第1步 · 已完成）
+
+来源：用户原话「警戒面画错地方：把橙红描边对准真实致死面（尤其-2深坑出口），死亡瞬间看得见警戒色」+「大世界：更大面积 + 更宏大起伏（两者都要）」。流程：backlog-sprint（契约 `.tamako/contract.json`）。
+
+- **项A 警戒面对焦（index.html 渲染层）**：批39 的「h≥2 整格描边」撤掉（c2/c3 挂 Edges 分支删除，ab 深渊青描边保留）；新增 `rebuildFatalEdge()`（syncHeight 末尾 + ensureBoard 尺寸变化后调用）——遍历 hmapD 找 **|Δh|≥2 真实致死交界**（hmapD 稀疏，h=0 不存，必须双向判断否则 0→2 边界漏标），每条交界画「地面警示条（宽.18 橙红半透明）+ 沿边立面（向低位侧外推 .03 防 z-fight）+ 5 条轮廓线」；小地图 hmap 层重写：h≥3/h==2/h==1 中性分层色，橙红只画致死交界线，h=1 台阶无警戒色。探针 `window.__fatalDbg()`。e2e/fatal41.spec.js 3 测试全绿（-2坑口4边+seg/fill>0、h=1台阶零警戒、裸峰4边 vs h=1环峰0边、c2/c3 kids==0 ab kids==1）；截图取证（坑口/峰壁橙红警示面可见、绿色 h=1 无警戒色）。
+- **项B 大世界·面积（默认 24→48）**：serve.py create handler 默认 size 24→48（**历史房加载回退 24 不动**——旧档自带尺寸）；index.html 四处：btnSolo title、cSize 默认档 48×48（从「大」组挪入「标准」组 selected）、soloCreate size:48、createRoom/saveRoomCfg fallback 48；test_ws3.py 容错局回退断言 24→48；smoke.spec 注释同步。**DEFAULT_ROOMS 不动**（新手村 24×24 是批30① 用户拍板的预设房，非「新建房」，验收未要求改）。
+- **项C 候选池回写**：宏大起伏（地形起伏参数更极端档位）挪入候选池单独开轮——本批只做面积，不碰 height 参数（批32 cHeight 现有档位）与生成算法。
+- **门禁**：前端 node --check + python py_compile 绿；local_ci ALL GREEN（见报告）。
+- **部署**：见报告（生产隔离单测 + 200）。
