@@ -3830,6 +3830,9 @@ async def process_request(path, headers):
 
 PORT = int(os.environ.get('PORT', '20000'))
 PORT = cfg_val('PORT', PORT, lo=1, hi=65535)   # 批37 项7：SNAKE_CONFIG/SNAKE_PORT 可覆盖
+# 批42 修复#7：绑定地址可配（默认 0.0.0.0 不变）。本机 CI 用 HOST=127.0.0.1，
+# 免疫其他进程抢占同号源端口导致的 bind 10048（micont 出站连接占 8123 案例）。
+HOST = os.environ.get('HOST', '0.0.0.0')
 
 
 # ---------------- 批26③：SIGTERM 优雅关闭（systemctl restart 默认信号） ----------------
@@ -3892,7 +3895,7 @@ async def main():
     usage.note('start', port=PORT, pid=os.getpid() if hasattr(os, 'getpid') else None)
     MAIN_LOOP = asyncio.get_running_loop()
     install_shutdown_handlers()   # 批26③：SIGTERM → 优雅结算当场星尘后退出
-    async with websockets.serve(handler, '0.0.0.0', PORT,
+    async with websockets.serve(handler, HOST, PORT,
                                 process_request=process_request,
                                 ping_interval=20, ping_timeout=20,
                                 max_size=2 ** 20):

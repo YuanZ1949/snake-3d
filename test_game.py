@@ -1404,6 +1404,7 @@ def test_double_item_doubles_score():
 
 def test_magnet_pulls_food():
     r = fresh(16)
+    r.eterrain = {}      # 批42修复#8：构造时随机撒的元素地形可能占 (8,5) → 磁吸换轴 (9,4) 偶发红（清掉构造性消除）
     now = serve.now_ms()
     p = mk(r, 1, "A", [(5, 5), (4, 5), (3, 5)], (1, 0))
     p["eff"] = {"magnet": now + 9999}

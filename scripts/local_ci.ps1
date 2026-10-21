@@ -4,7 +4,10 @@
 #        -> 起 8123 -> Playwright 全量 -> 汇总（任一失败 Exit 1）
 param(
     [switch]$SkipPlaywright,
-    [switch]$SkipE2E
+    [switch]$SkipE2E,
+    # 批42 修复#7：Playwright 步骤端口可覆盖（默认 8123 与文档一致）。
+    # 本机其他进程（micont_service）抢占 8123 源端口时用 -WebPort 8125 之类绕开。
+    [int]$WebPort = 8123
 )
 
 $ErrorActionPreference = 'Continue'
@@ -26,6 +29,8 @@ function Stop-Serve {
 function Clean-Persist { if (Test-Path 'data\persist_rooms.json') { Remove-Item 'data\persist_rooms.json' -Force } }
 function Start-Serve([int]$port) {
     $env:PORT = "$port"
+    # 批42 修复#7：本机 CI 绑 127.0.0.1，免疫其他进程抢占同号源端口（bind 10048）
+    $env:HOST = '127.0.0.1'
     Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList 'serve.py' -WindowStyle Hidden
     # 等端口就绪
     foreach ($i in 1..40) {
@@ -86,17 +91,17 @@ if (Test-Path $staticJs) {
 }
 
 if (-not $SkipPlaywright) {
-    Say "5/5 Playwright 全量 (8123)"
+    Say "5/5 Playwright 全量 ($WebPort)"
     Stop-Serve
-    $ok = Start-Serve 8123
+    $ok = Start-Serve $WebPort
     if ($ok) {
-        $env:BASE = 'http://127.0.0.1:8123'
+        $env:BASE = "http://127.0.0.1:$WebPort"
         $p = & npx playwright test 2>&1 | Out-String
         $pcode = $LASTEXITCODE
         Write-Host (($p -split "`n" | Where-Object { $_ -match 'passed|failed|error' } | Select-Object -Last 5) -join "`n")
         Check "Playwright" ($pcode -eq 0)
     } else {
-        Check "8123 起服" $false
+        Check "$WebPort 起服" $false
     }
     Stop-Serve; Clean-Persist
 }
