@@ -800,6 +800,22 @@ class Room:
     def ev(self, t, **kw):
         self.events.append(dict(t=t, **kw))
 
+    def _die_telemetry(self, p, fatal=None):
+        """批40：死亡遥测落 usage.log 明细（头格/致死格/高度/邻环），供统计真实死因分布。
+        只记真人（bot 高频死亡会刷爆日志）；不参与任何玩法判定。"""
+        if p.get('bot') or not p.get('cells'):
+            return
+        hx, hy = p['cells'][0]
+        fx, fy = fatal if fatal else (hx, hy)
+        usage.note('die', room=self.id, name=p.get('name'), user=p.get('user'),
+                   cause=p.get('cause', 'wall'), by=p.get('by'),
+                   hx=hx, hy=hy, x=fx, y=fy,
+                   h0=self.hmap.get((hx, hy), 0), h1=self.hmap.get((fx, fy), 0),
+                   ring=[self.hmap.get((hx + dx, hy + dy), 0)
+                         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))],
+                   dirx=p['dir'][0], diry=p['dir'][1],
+                   score=p.get('score'), theme=getattr(self, 'theme', None))
+
     # -------- 主题 / 静态地形 --------
     def _pick_theme(self):
         # 固定主题的房间每局保持不变；否则每局随机，带来地图机制变化
@@ -1957,6 +1973,7 @@ class Room:
                     store.inc(q['user'], 'deaths')
                 self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
                 self.ev('die', id=vid, cause='crush', by=eid)
+                self._die_telemetry(q)                      # 批40：死亡遥测
                 self._bite_reaction(ep, q, q['cells'][idx], now)   # 批33：victim 已死 → 纯视觉
                 settle_dust(q)
                 continue
@@ -1984,6 +2001,7 @@ class Room:
                     store.inc(q['user'], 'deaths')
                 self.ev('bite', eater=eid, victim=vid, cut=cut, score=gained, kill=True)
                 self.ev('die', id=vid, cause='bite', by=eid)
+                self._die_telemetry(q)                      # 批40：死亡遥测
                 self._bite_reaction(ep, q, q['cells'][idx], now)   # 批33：victim 已死 → 纯视觉
                 settle_dust(q)          # 批25：死亡并账当场星尘
                 continue
@@ -2005,6 +2023,7 @@ class Room:
                 p['alive'] = False
                 p['died_at'] = now
                 self.ev('die', id=p['id'], cause=p.get('cause', 'wall'), by=p.get('by'))
+                self._die_telemetry(p, tent.get(id(p)))     # 批40：死亡遥测（致死格=尝试格）
                 if p.get('user'):
                     store.inc(p['user'], 'deaths')
                 settle_dust(p)          # 批25：死亡并账当场星尘

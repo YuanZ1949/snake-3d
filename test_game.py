@@ -4331,7 +4331,58 @@ def test_runtime_config_wired_defaults_unchanged():
     assert 1 <= serve.PORT <= 65535
 
 
-for fn in [test_ghost_wrap, test_wall_death_without_ghost, test_portal,
+def test_die_telemetry_batch40():
+    """批40：死亡遥测——环境致死（wall/cliff）落 usage.log 明细（头格/致死格/当前高/目标高/邻格高环）"""
+    import json as _json
+    import shutil
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp(prefix="snake-dietelem-"))
+    old_usage = serve.usage
+    try:
+        serve.usage = serve.Usage(d / "usage.log", d / "usage.json")
+        # 1) 撞墙：头在 (0,5) 向左 → 致死格 (-1,5)
+        r = fresh(10)
+        p = mk(r, 1, "A", [(0, 5), (1, 5), (2, 5)], (-1, 0))
+        p["user"] = "u1"
+        r.step(0.05, serve.now_ms())
+        assert not p["alive"] and p["cause"] == "wall", p.get("cause")
+        lines = [_json.loads(x) for x in (d / "usage.log").read_text("utf-8").splitlines()]
+        dies = [x for x in lines if x.get("e") == "die"]
+        assert len(dies) == 1, dies
+        w = dies[0]
+        assert w["cause"] == "wall" and w["user"] == "u1" and w["name"] == "A", w
+        assert (w["hx"], w["hy"]) == (0, 5) and (w["x"], w["y"]) == (-1, 5), w
+        assert w["h0"] == 0 and w["h1"] == 0, w
+        assert len(w["ring"]) == 4, w
+        # 2) 撞崖：(2,5) 向右踩上 h=2 峰 (3,5)
+        r2 = fresh(10)
+        r2.hmap[(3, 5)] = 2
+        q = mk(r2, 1, "B", [(2, 5), (1, 5), (0, 5)], (1, 0))
+        r2.step(0.05, serve.now_ms())
+        assert not q["alive"] and q["cause"] == "cliff", q.get("cause")
+        lines = [_json.loads(x) for x in (d / "usage.log").read_text("utf-8").splitlines()]
+        dies = [x for x in lines if x.get("e") == "die"]
+        assert len(dies) == 2, dies
+        c = dies[1]
+        assert c["cause"] == "cliff" and (c["x"], c["y"]) == (3, 5), c
+        assert c["h0"] == 0 and c["h1"] == 2, c
+        # 3) 机器人不落盘（防 bot 高频死亡刷爆日志）
+        r3 = fresh(10)
+        b = mk(r3, 2, "Bot", [(0, 5), (1, 5), (2, 5)], (-1, 0))
+        b["bot"] = True
+        b["cause"] = "wall"
+        r3._die_telemetry(b, (-1, 5))
+        lines = [_json.loads(x) for x in (d / "usage.log").read_text("utf-8").splitlines()]
+        assert len([x for x in lines if x.get("e") == "die"]) == 2, "bot death must not be logged"
+        print("die telemetry OK ->", c)
+    finally:
+        serve.usage = old_usage
+        shutil.rmtree(d, ignore_errors=True)
+
+
+for fn in [test_die_telemetry_batch40,
+           test_ghost_wrap, test_wall_death_without_ghost, test_portal,
            test_item_pickup, test_speed_effect, test_shield_immunity,
            test_shield_item_immunity, test_bite_truncates_not_kills,
            test_bite_min_len_eliminates, test_bite_immunity,
