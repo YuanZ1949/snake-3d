@@ -117,7 +117,7 @@ def _win_ok(fails, key, now, max_n, win):
     rec = fails.get(key)
     if rec is None:
         return True
-    if now - rec[0] > win:
+    if now - rec[0] >= win:    # 批41 修复#4：>= 使 WIN=0 同 tick 立即过期（原 > 会 0>0=False 误拒）
         fails.pop(key, None)
         return True
     return rec[1] < max_n

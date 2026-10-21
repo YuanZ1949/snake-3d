@@ -2623,6 +2623,19 @@ def test_room_pass_bruteforce_throttle():
     print('room pass throttle OK')
 
 
+def test_win_zero_window_expires_immediately():
+    """批41 修复#4：WIN=0 须立即过期。原 _win_ok 用 `now-rec[0] > win`，
+    同一时钟 tick 内差值恰为 0 时 `0 > 0` 为 False → 窗未过期 → 限流误拒
+    （test_room_pass_bruteforce_throttle 的时序 flake 根因，构造性钉死）"""
+    fails = {}
+    t0 = 1000.0
+    serve._win_bump(fails, 'k', t0, 0)                  # 记 1 次失败，窗宽 0
+    assert serve._win_ok(fails, 'k', t0, 3, 5) is True   # 正常窗内未超限 → 放行（行为不回归）
+    assert serve._win_ok(fails, 'k', t0, 1, 0) is True, \
+        'WIN=0 且 now==rec[0]（同 tick）必须视为窗过期放行，否则限流误拒'
+    print('win zero window expires immediately OK')
+
+
 def test_anonymous_resume_ip_bound():
     """批22 M1：匿名挂起蛇只认同 IP（防任意新加入者 10s 窗内抢蛇）；
     登录账户凭账号跨 IP 恢复不变；off_ip 由 leave_room(hard=False) 落标"""
@@ -4513,6 +4526,7 @@ for fn in [test_die_telemetry_batch40,
              test_roomcfg_no_pass_anyone_edits,
              test_runtime_config_precedence_and_fallback,
              test_runtime_config_file_load,
-             test_runtime_config_wired_defaults_unchanged]:
+             test_runtime_config_wired_defaults_unchanged,
+             test_win_zero_window_expires_immediately]:
     fn()
 print("ALL GAME UNIT TESTS PASSED")

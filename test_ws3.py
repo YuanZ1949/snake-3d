@@ -47,7 +47,7 @@ async def main():
         print("create(fallback):", f)
         assert f["cols"] == 48 and f["rows"] == 48, f   # 批41：新建房默认尺寸 24→48
         assert f["themeFixed"] is False, f
-        assert f["rock"] in (0.5, 0.6, 1.0, 1.7), f
+        assert f["rock"] in (0.5, 0.6, 0.8, 1.0, 1.7), f   # 批41 修复#5：与 serve THEME_CFG rock 并集同步（原漏 day=0.8 → 随机主题 flake）
         assert isinstance(f["portal"], bool), f
         await ws.send(json.dumps({"t": "create", "name": "岩石超限", "size": 48, "rock": 99}))
         await recv_until(ws, "rooms")
