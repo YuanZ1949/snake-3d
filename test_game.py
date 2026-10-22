@@ -3364,6 +3364,27 @@ def test_reach_rules_batch46():
     assert (6,5) not in r.reach_set()
 
 
+def test_solid_fatal_fall_batch46():
+    """批46 §5：_solid 挡致命坠落（bot 贪心防摔死）；_deflect_dir 过滤致命候选方向"""
+    r = fresh(16)
+    # cur_h=0 时 -4 坠亡格视为 solid；-3 落差不断尾格不挡
+    assert r._solid(6, 5, cur_h=0) is False                       # 平地不挡
+    r.hmap = {(6,5): -4}; assert r._solid(6, 5, cur_h=0) is True  # 坠亡格挡
+    r.hmap = {(6,5): -3}; assert r._solid(6, 5, cur_h=0) is False # 落差3（断尾）不挡
+    r.hmap = {(6,5): -9}; assert r._solid(6, 5, cur_h=0) is True  # 深渊挡
+    r.hmap = {(6,5): 2};  assert r._solid(6, 5, cur_h=0) is True  # 既有上行≥2 挡
+    r.hmap = {(6,5): -6}; assert r._solid(6, 5, cur_h=-2) is True # 高台上摔下同样挡（-2→-6 落差4）
+    # _deflect_dir：shield 在「一边崖一边深渊」夹缝 → 候选全滤掉 → None（照死不折进深渊）
+    r = fresh(16); r.hmap = {(5,6): 2, (5,4): -9}; r._reach = None   # 上=崖 下=深渊
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0)); p['inv'] = 0
+    nd = r._deflect_dir(p, set(), cur_h=0)
+    assert nd is None
+    # 只有一边可走 → 折向安全边
+    r2 = fresh(16); r2.hmap = {(5,6): 2}; r2._reach = None
+    p2 = mk(r2, 1, "A", [(5,5),(4,5)], (1,0)); p2['inv'] = 0
+    assert r2._deflect_dir(p2, set(), cur_h=0) == (0, -1)
+
+
 def test_height_majestic_ridge_batch43():
     """批43「宏伟」档（2.6）→ 脊线山脉：连绵 h≥2 脊 + h=3 峰 + 逐级爬升链（h3→h2→h1→0 相邻存在）"""
     def nb(c):
@@ -4670,7 +4691,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,

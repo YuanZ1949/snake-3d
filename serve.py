@@ -1183,13 +1183,16 @@ class Room:
     # -------- 玩家生命周期 --------
     def _solid(self, x, y, skip_pid=None, cur_h=None):
         """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）。
-        批32：cur_h 传值时，上行 ≥2（含深渊 9）视为峭壁挡（下行自由）。"""
+        批32：cur_h 传值时，上行 ≥2（含深渊 9）视为峭壁挡（下行自由）。
+        批46 §5：致命坠落（dst_h <= cur_h-4，含 -9 深渊）同样挡（bot 贪心防摔死）。"""
         if x < 0 or y < 0 or x >= self.cols or y >= self.rows:
             return True
         if (x, y) in self.rocks or (x, y) in self.walls or (x, y) in self.portals:
             return True
-        if cur_h is not None and self.hmap.get((x, y), 0) - cur_h >= 2:
-            return True
+        if cur_h is not None:
+            _hs = self.hmap.get((x, y), 0)
+            if _hs - cur_h >= 2 or _hs <= cur_h - 4:
+                return True
         for pid, q in self.players.items():
             if pid == skip_pid or not q['alive']:
                 continue
@@ -1964,7 +1967,7 @@ class Room:
             guard = shielded or ((self.effect_active(p, 'deflect', now) or self.walldeflect)
                                  and wall)
             if guard:
-                nd = self._deflect_dir(p, blockset)
+                nd = self._deflect_dir(p, blockset, cur_h=cur_h32)
                 if nd is not None:
                     p['dir'] = nd
                     p['queue'] = []
@@ -2147,9 +2150,10 @@ class Room:
             self.items = [it for it in self.items if it['id'] not in eaten_items]
         self.check_win(now)
 
-    def _deflect_dir(self, p, blockset):
+    def _deflect_dir(self, p, blockset, cur_h=None):
         """折返方向：取蛇头垂直两方向中可走（界内、无岩石墙块、无传送门、
-        不压自己身体）且前方空间最大的那格；都走不了返回 None（照死）。"""
+        不压自己身体、批46：高度安全——上行<2 且非致命坠落且非 -9）且前方空间最大的那格；
+        都走不了返回 None（照死）。"""
         hx, hy = p['cells'][0]
         dx, dy = p['dir']
         best, best_open = None, -1
@@ -2161,6 +2165,10 @@ class Room:
                 continue
             if (nx, ny) in p['cells'][1:]:
                 continue
+            if cur_h is not None:
+                _hd = self.hmap.get((nx, ny), 0)
+                if _hd - cur_h >= 2 or _hd <= cur_h - 4 or _hd == -9:
+                    continue                       # 折返不折进崖/致命坠落/深渊
             o = self._open_ahead(hx, hy, nd, p.get('id'))
             if o > best_open:
                 best_open, best = o, nd
