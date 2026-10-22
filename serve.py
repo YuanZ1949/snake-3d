@@ -2069,6 +2069,13 @@ class Room:
             hx, hy = tent[id(p)]
             p['cells'].insert(0, (hx, hy))
             p.pop('hstreak', None)               # 批14④：成功移动即解除僵持计数
+            # 批46 §2：坠落额外断尾（落差 2~3 → 相对常规结算净掉 N=落差-1 节）
+            # MIN_LEN 保底，不扣分；吃果/生长不取消坠落伤害；坠亡(≥4)已在 section 4 判死
+            fall_extra = 0
+            dst_h46s = self.hmap.get((hx, hy), 0)
+            cur_h46s = self.hmap.get(p['cells'][1], 0)   # insert 后 cells[1] = 移动前头格
+            if 2 <= cur_h46s - dst_h46s <= 3:
+                fall_extra = cur_h46s - dst_h46s - 1
             el33 = self.eterrain.get((hx, hy))
             if el33:
                 self.set_aura(p, el33, now)      # 批33：踩格替换——覆盖旧 aura、时长重置
@@ -2117,6 +2124,12 @@ class Room:
                 p['grow'] -= 1                    # 被咬截断并入的长度逐步生长
             else:
                 p['cells'].pop()
+            if fall_extra:
+                for _ in range(fall_extra):       # 批46：常规结算后再断坠落节（MIN_LEN 保底）
+                    if len(p['cells']) > MIN_LEN:
+                        p['cells'].pop()
+                    else:
+                        break
         if eaten_items:
             self.items = [it for it in self.items if it['id'] not in eaten_items]
         self.check_win(now)

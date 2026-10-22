@@ -3445,6 +3445,30 @@ def test_fall_death_batch46():
                        eff={'ghost': serve.now_ms()+9999})[1]['alive']
 
 
+def test_fall_cut_batch46():
+    """批46 §2：落差 2~3 断 N=落差-1 节尾不死（MIN_LEN 保底，不扣分，取代常规缩尾）"""
+    # 落差 2：3 节 → 2 节（断 1），存活不扣分（分数前后不变）
+    r, p = _cliff_case({(6,5): -2}, (5,5), [(4,5),(3,5)], (1,0))
+    assert p['alive'] and len(p['cells']) == 2
+    # 落差 3：4 节 → 2 节（断 2）
+    r, p = _cliff_case({(6,5): -3}, (5,5), [(4,5),(3,5),(2,5)], (1,0))
+    assert p['alive'] and len(p['cells']) == 2
+    # 吃果不取消坠落伤害：落差 2 + 落点有果 → 仍断 1 节，但吃果净长 +1-1（3 节吃果 → 3 节）
+    r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
+    r.foods = [{'id': 1, 'x': 6, 'y': 5, 'score': 10, 'color': 0}]
+    p = mk(r, 1, "A", [(5,5),(4,5),(3,5)], (1,0)); p['inv'] = 0
+    r.step(0.05, serve.now_ms())
+    assert p['alive'] and len(p['cells']) == 3          # 吃果(+1) 断尾(-1)
+    # MIN_LEN 保底：2 节蛇落差 2 → 不断（2-1=1 但 len-MIN_LEN=0）
+    r, p = _cliff_case({(6,5): -2}, (5,5), [(4,5)], (1,0))
+    assert p['alive'] and len(p['cells']) == 2
+    # 级联：落差 2 断到 MIN_LEN 后再被咬 → 整条淘汰（cause='bite'）
+    r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
+    p = mk(r, 1, "A", [(5,5),(4,5),(3,5)], (1,0)); p['inv'] = 0
+    r.step(0.05, serve.now_ms())                        # 断到 2 节
+    assert p['alive'] and len(p['cells']) == 2
+
+
 def test_spawn_h0():
     r = fresh(20)
     r.hmap = {(x, y): ((x + y) % 3) + 1 for x in range(0, 20, 3) for y in range(20)}
@@ -4583,7 +4607,7 @@ for fn in [test_die_telemetry_batch40,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
             test_height_gen_invariants, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
-            test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_spawn_h0, test_ghost_cross_height,
+            test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
             test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,
