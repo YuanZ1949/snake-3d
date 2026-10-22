@@ -3401,6 +3401,28 @@ def test_water_slowdown():
     assert r.tick_of(p, serve.now_ms()) == int(int(150*0.6) * 1.3)   # 加速再水涉
 
 
+def test_climb_slowdown_batch46():
+    """批46 §2：爬坡（目标格 Δh=1）tick × 1.5；叠加序 speed → 水洼 → 爬坡 → slow"""
+    # 向上爬坡（0→1）：×1.5
+    r = fresh(16); r.hmap = {(6,5): 1}; r._reach = None
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r.tick_of(p, serve.now_ms()) == int(150 * 1.5)            # 225
+    # 平地/向下：不减速
+    p2 = mk(r, 2, "B", [(5,8),(4,8)], (1,0))
+    assert r.tick_of(p2, serve.now_ms()) == 150
+    p3 = mk(r, 3, "C", [(6,5),(6,4)], (0,-1))                        # 从 1 走向 0（下坡）
+    assert r.tick_of(p3, serve.now_ms()) == 150
+    # 叠加：出水洼（-1→0）不算爬坡（目标格非正向地形）→ 仅水减速
+    r2 = fresh(16); r2.hmap = {(5,5): -1}; r2._reach = None
+    p4 = mk(r2, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r2.tick_of(p4, serve.now_ms()) == int(150 * 1.3)
+    # speed 先行：int(150*0.6)=90 → 爬坡 int(90*1.5)=135
+    r3 = fresh(16); r3.hmap = {(6,5): 1}; r3._reach = None
+    p5 = mk(r3, 1, "A", [(5,5),(4,5)], (1,0))
+    p5['eff'] = {'speed': serve.now_ms()+9999}
+    assert r3.tick_of(p5, serve.now_ms()) == int(int(150 * 0.6) * 1.5)
+
+
 def test_spawn_h0():
     r = fresh(20)
     r.hmap = {(x, y): ((x + y) % 3) + 1 for x in range(0, 20, 3) for y in range(20)}
@@ -4539,7 +4561,7 @@ for fn in [test_die_telemetry_batch40,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
             test_height_gen_invariants, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
-            test_cliff_move, test_water_slowdown, test_spawn_h0, test_ghost_cross_height,
+            test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
             test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,

@@ -1522,6 +1522,13 @@ class Room:
         # 批32：头在水洼（-1）减速 30%（speed 后再乘，可叠加）
         if p['cells'] and self.hmap.get(p['cells'][0], 0) == -1:
             t = int(t * 1.3)
+        # 批46 §2：爬坡（目标格 Δh=1 且上到 h≥1 正向地形）×1.5；出水洼(-1→0)不算
+        if p['cells']:
+            hx46, hy46 = p['cells'][0]
+            _h0 = self.hmap.get((hx46, hy46), 0)
+            _h1 = self.hmap.get((hx46 + p['dir'][0], hy46 + p['dir'][1]), 0)
+            if _h1 - _h0 == 1 and _h1 >= 1:
+                t = int(t * 1.5)
         # 批33：超导 slow——speed 结算后再乘 1.5（可叠加）
         if self.effect_active(p, 'slow', now):
             t = int(t * 1.5)
