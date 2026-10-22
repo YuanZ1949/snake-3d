@@ -3284,8 +3284,9 @@ def test_height_gen_invariants():
     r.build_terrain()
     vals = set(r.hmap.values())
     assert vals                                                # 默认主题必出地形
-    assert vals <= {-2, -1, 1, 2, 3, 9}, vals                  # 值域；0 不存
+    assert vals <= {-2, -1, 1, 2, 3, -9}, vals                 # 批46：值域哨兵 9 → -9；0 不存
     assert 0 not in vals
+    assert 9 not in vals                                       # 批46：旧哨兵 9 已废除
     assert -2 in vals                                          # 草丛必有生成来源（spec §7.3 第4类）
     assert len(r.hmap) <= int(0.35 * 24 * 24), len(r.hmap)   # ≤35% 预算
     assert not (set(r.rocks) & set(r.hmap))                  # 不与岩石重叠
@@ -3295,9 +3296,72 @@ def test_height_gen_invariants():
     rl = fresh(24, theme_fixed='lava')
     rl.build_terrain()
     assert -1 not in rl.hmap.values() and -2 not in rl.hmap.values()  # 熔岩无水洼无草
+    assert -9 not in rl.hmap.values()                          # 批46：熔岩 eff_water=0 → 无深渊
     r0 = fresh(16, height_mult=0.0, water_amt=0.0, bld_amt=0.0)
     r0.build_terrain()
     assert r0.hmap == {}                                     # 三旋钮全 0（预算=0 早退）= 纯平地
+
+
+def test_abyss_gen_batch46():
+    """批46 §3：深渊 -9 首次真正生成（挂 eff_water，预算 area/450）；深渊格 occupied 拦截"""
+    found = None
+    for seed in range(20):
+        r = fresh(48, theme_fixed='default')                  # water=0.7，48×48 → 3 次尝试/局
+        serve.random.seed(4600 + seed)
+        r.build_terrain()
+        ab = [c for c, h in r.hmap.items() if h == -9]
+        if ab:
+            found = (r, ab)
+            break
+    assert found, '20 个种子内 default 主题必须生成 ≥1 处深渊 -9'
+    r, ab = found
+    assert all(r.hmap[c] == -9 for c in ab)
+    # 每个连通块 ≤4 格（多次 blob 各自 2~4 格，可多处深渊）
+    seen_ab, comps = set(), []
+    nb46 = lambda c: [(c[0]+1,c[1]), (c[0]-1,c[1]), (c[0],c[1]+1), (c[0],c[1]-1)]
+    for c0 in ab:
+        if c0 in seen_ab:
+            continue
+        comp, dq2 = [], [c0]
+        seen_ab.add(c0)
+        while dq2:
+            cc = dq2.pop(); comp.append(cc)
+            for q in nb46(cc):
+                if q in set(ab) and q not in seen_ab:
+                    seen_ab.add(q); dq2.append(q)
+        comps.append(comp)
+    assert all(1 <= len(cm) <= 4 for cm in comps), comps      # walk_blob 重试可留孤格
+    assert all(r.occupied(*c) for c in ab)                    # 深渊格不可出生/占位
+    # 熔岩（eff_water=0）：20 局无深渊
+    for seed in range(20):
+        rl = fresh(48, theme_fixed='lava')
+        serve.random.seed(4690 + seed)
+        rl.build_terrain()
+        assert -9 not in rl.hmap.values()
+
+
+def test_reach_rules_batch46():
+    """批46 §5：reach_set 转移规则——上行≤1/下行≤3 可达；崖/坠亡/深渊不可达"""
+    # h3 无坡 → 顶不可达
+    r = fresh(16); r.hmap = {(6,5): 3}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) not in r.reach_set()
+    # h3 有坡（3→2→1→0）→ 顶可达
+    r = fresh(16); r.hmap = {(6,5): 3, (5,5): 2, (4,5): 1}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) in r.reach_set()
+    # 深渊 -9 不可达
+    r = fresh(16); r.hmap = {(6,5): -9}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) not in r.reach_set()
+    # 落差 2 浅坑可达（可进可出）
+    r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) in r.reach_set()
+    # 落差 4 坠亡坑不可达
+    r = fresh(16); r.hmap = {(6,5): -4}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) not in r.reach_set()
 
 
 def test_height_majestic_ridge_batch43():
@@ -3481,7 +3545,7 @@ def test_spawn_h0():
 
 
 def test_ghost_cross_height():
-    r = fresh(16); r.hmap = {(6,5): 9}; r._reach = None
+    r = fresh(16); r.hmap = {(6,5): 2}; r._reach = None        # 批46：9→2（上行崖 ghost 豁免）
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0)); p['inv'] = 0
     p['eff'] = {'ghost': serve.now_ms() + 9999}
     r.step(0.05, serve.now_ms())
@@ -3547,8 +3611,8 @@ def test_bullet_terrain():
     r._step_projectiles(0.05, now); assert r.projectiles == []             # 遇2碎
     r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): -1}
     r._step_projectiles(0.05, now); assert r.projectiles                   # 过水洼
-    r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): 9}
-    r._step_projectiles(0.05, now); assert r.projectiles                   # 深渊飞越
+    r.projectiles = [_shot(0, 6.0 - step + 0.1)]; r.hmap = {(6,5): -9}
+    r._step_projectiles(0.05, now); assert r.projectiles                   # 深渊 -9 飞越（批46）
     r.projectiles = [_shot(1, 6.0 - step + 0.1)]; r.hmap = {(6,5): 1}
     r._step_projectiles(0.05, now); assert r.projectiles                   # 弹h1 过 1
     r.projectiles = [_shot(1, 6.0 - step + 0.1)]; r.hmap = {(6,5): 2}
@@ -4606,7 +4670,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,

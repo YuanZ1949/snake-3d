@@ -1022,6 +1022,11 @@ class Room:
         for _ in range(int(area / 60 * self.eff_water())):
             walk_blob(random.randint(0, self.cols - 1), random.randint(0, self.rows - 1),
                       random.randint(3, 8), -1)
+        # 2.5) 批46 §3：真深渊——h=-9 深坑（挂 eff_water 旋钮，熔岩 water=0 天然无深渊；
+        #      预算 area/450 远小于山包；walk_blob 2~4 格；走通用坠亡无特殊条款）
+        for _ in range(int(area / 450 * self.eff_water())):
+            walk_blob(random.randint(0, self.cols - 1), random.randint(0, self.rows - 1),
+                      random.randint(2, 4), -9)
         # 3) 建筑：矩形 footprint，h1(40%)/h2(35%,60% 带入口坡)/h3(25%)
         fps = [(1, 2), (2, 2), (1, 3), (2, 3)]
         for _ in range(int(area / 80 * self.eff_bld())):
@@ -1063,8 +1068,8 @@ class Room:
         # 批14：出界格视为占用（spawn 主路径以本函数替代 _solid，须与 _solid 同等拦截 OOB）
         if not (0 <= x < self.cols and 0 <= y < self.rows):
             return True
-        if self.hmap.get((x, y), 0) >= 2:
-            return True                       # 批32：山峰/建筑/深渊不可作出生/占位格
+        if self.hmap.get((x, y), 0) >= 2 or self.hmap.get((x, y), 0) == -9:
+            return True                       # 批32：山峰/建筑不可作出生格；批46：深渊 -9 同拦
         if (x, y) in self.rocks or (x, y) in self.walls:
             return True
         if (x, y) in self.portals:
@@ -1328,12 +1333,15 @@ class Room:
         只看边界/岩石/墙块（蛇身是动态障碍不计入）；传送门当可走格且与配对口互连。
         缓存 self._reach：失效点 build_terrain / maybe_rocks / 子弹碎岩 / spawn / drop，
         另每次调用校验所有蛇头仍在缓存内（防幽灵穿墙跨区后缓存跨区漏算）。
-        96×96（9216 格）单次 BFS 计时见 test_place_food_reach_time_budget。"""
+        96×96（9216 格）单次 BFS 计时见 test_place_food_reach_time_budget。
+        批46 §5：转移规则化——上行≤1 / 下行≤3 可达；上行≥2（崖）、坠亡落差≥4、-9 不可达；
+        删 h>=2 无条件 block（山顶无坡=转移规则天然不可达，有坡=真正可达）。"""
         if self._reach is not None and all(
                 p['cells'][0] in self._reach
                 for p in self.players.values() if p['alive'] and p['cells']):
             return self._reach
-        block = set(self.rocks) | set(self.walls) | {c for c, hh in self.hmap.items() if hh >= 2}
+        block = set(self.rocks) | set(self.walls)
+        hm = self.hmap
         pm = self.portal_map()
         seen = set()
         dq = deque()
@@ -1354,11 +1362,16 @@ class Room:
                     break
         while dq:
             x, y = dq.popleft()
+            ch = hm.get((x, y), 0)
             for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                if 0 <= nx < self.cols and 0 <= ny < self.rows \
-                        and (nx, ny) not in block and (nx, ny) not in seen:
-                    seen.add((nx, ny))
-                    dq.append((nx, ny))
+                if not (0 <= nx < self.cols and 0 <= ny < self.rows) \
+                        or (nx, ny) in block or (nx, ny) in seen:
+                    continue
+                nh = hm.get((nx, ny), 0)
+                if nh - ch >= 2 or ch - nh >= 4 or nh == -9:
+                    continue                       # 撞崖 / 坠亡 / 深渊 → 不可达
+                seen.add((nx, ny))
+                dq.append((nx, ny))
             pr = pm.get((x, y))                     # 传送门：跳到配对口
             if pr is not None and pr not in seen:
                 seen.add(pr)
@@ -2276,9 +2289,9 @@ class Room:
                 self.ev('rock', x=gx, y=gy, by=pr['owner'], score=5)
                 self.projectiles.remove(pr)
                 continue
-            # 批32：高度地形挡弹——弹高 < 地形 h（深渊 9 飞越）→ 碎裂
+            # 批32：高度地形挡弹——弹高 < 地形 h → 碎裂；批46：深渊改 -9（-9>弹高 天然 False）删特判子句
             hh = self.hmap.get((gx, gy), 0)
-            if hh != 9 and hh > pr.get('h', 0):
+            if hh > pr.get('h', 0):
                 self.ev('phit', x=gx, y=gy, h=hh, by=pr['owner'])
                 self.projectiles.remove(pr)
                 continue
