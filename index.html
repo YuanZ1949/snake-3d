@@ -1414,7 +1414,6 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       scene.fog.near = Math.max(40, Math.round(diag * .6));
       scene.fog.far = Math.max(95, Math.round(diag * 1.15));
     }
-    if (hmapD.size) rebuildFatalEdge();   // 批41：cellW 原点随 COLS/ROWS 平移 → 致死面栅栏重算
   }
 
   function applyTheme(name) {
@@ -2019,23 +2018,11 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   window.__floatDbg = () => floaters.length;              // 批33 探针：3D 浮字 sprite 存活数（反应浮字出现断言）
   window.__mapDbgSet = t => syncHeight(t);        // 批32 探针：注入 hmap 三元组列表（e2e 用，不走服务端）
   window.__heightMeshDump = () => heightMeshes.map(e => ({k: e.key, kind: e.kind, dw: e.mesh.material.depthWrite, kids: e.mesh.children.length, x: +e.mesh.position.x.toFixed(2), y: +e.mesh.position.y.toFixed(2), z: +e.mesh.position.z.toFixed(2), vis: e.mesh.visible, inScene: e.mesh.parent === scene}));   // 批34：+dw（材质是否写深度=是否会挡视线）
-  // 批41 探针：真实致死面栅栏（地面警示条+立面）——seg=线段数, fill=填充顶点数(须为6的倍数), edges=致死交界清单
-  window.__fatalDbg = () => {
-    const edges = [];
-    const hv = (x, y) => (x < 0 || y < 0 || x >= COLS || y >= ROWS) ? null : (hmapD.get(pkey(x, y)) ?? 0);
-    for (const [k, h] of hmapD) {
-      const a = k.split(','), x = +a[0], y = +a[1];
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const hn = hv(x + dx, y + dy);
-        if (hn !== null && Math.abs(hn - h) >= 2) edges.push({x, y, nx: x + dx, ny: y + dy, h, hn});
-      }
-    }
-    return {
-      seg: hFatalLines ? hFatalLines.geometry.getAttribute('position').count / 2 : 0,
-      fill: hFatalFill ? hFatalFill.geometry.getAttribute('position').count : 0,
-      inScene: !!(hFatalLines && hFatalLines.parent === scene) || !!(hFatalFill && hFatalFill.parent === scene),
-      edges,
-    };
+  // 批46 探针：警戒栅栏退役——扫描场景中残留的 0xff5a2e（橙红警戒色）材质对象数，e2e 断言恒 0
+  window.__fenceScanDbg = () => {
+    let n = 0;
+    scene.traverse(o => { if (o.material && o.material.color && o.material.color.getHex() === 0xff5a2e) n++; });
+    return n;
   };
   window.__camDbg = () => ({x: +camera.position.x.toFixed(2), y: +camera.position.y.toFixed(2), z: +camera.position.z.toFixed(2), snake: myEnt ? myEnt.cells[0] : null, dir: myEnt ? myEnt.dir : null, sp0: myEnt && myEnt.spine[0] ? {x: +myEnt.spine[0].x.toFixed(2), y: +myEnt.spine[0].y.toFixed(2), z: +myEnt.spine[0].z.toFixed(2)} : null});
   window.__heightProject = () => { const v = new THREE.Vector3(); return heightMeshes.map(e => { v.copy(e.mesh.position).project(camera); return {k: e.key, ndc: [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)], dist: +camera.position.distanceTo(e.mesh.position).toFixed(1), visible: e.mesh.visible, inScene: e.mesh.parent === scene, matVis: e.mesh.material.visible, scale: e.mesh.scale.y}; }); };
@@ -2218,33 +2205,64 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   // 批34：实体地形（丘/峰/楼/深渊）depthWrite=true 真遮挡——山后之蛇会被正确挡住；
   //       水/草/元素面片是地板贴层，仍 depthWrite=false（否则贴层会挡住地板上的蛇）。
   const H_UNIT = 0.35;
-  const visH = h => h >= 0 ? h * H_UNIT : (h === -1 ? -0.12 : 0);
+  const visH = h => h >= 0 ? h * H_UNIT : (h === -1 ? -0.12 : (h === -9 ? -2.2 : 0));   // 批46：深渊 -9 → 井底 -2.2（坠落动画共用）
   let hmapD = new Map(), heightMeshes = [], heightKey = '';
   const heightPool = {};   // kind -> Mesh[]（rocks 池化同构）
-  const hKindOf = h => h === 9 ? 'ab' : h === -1 ? 'w' : h === -2 ? 'g'
+  const hKindOf = h => h === -9 ? 'ab' : h === -1 ? 'w' : h === -2 ? 'g'   // 批46：深渊哨兵 9 → -9
     : h >= 3 ? 'c3' : h === 2 ? 'c2' : h === 1 ? 'c1' : null;
   const heightColGeo = new THREE.BoxGeometry(.98, 1, .98);
   const heightPlaneGeo = new THREE.PlaneGeometry(.98, .98);
-  const heightGeo = {c1: heightColGeo, c2: heightColGeo, c3: heightColGeo, ab: heightColGeo,
+  // 批46 漏斗井（h=-9）：地板(y=.005)不透明整块铺满 → 真井腔不可见；用「地板之上的漏斗错觉」——
+  // 井口 .49 半宽 y=.045 → 井底 .18 半宽 y=.015，四面内壁 3 段变暗 + 井底黑雾 + 口沿青边（hEdgeMat）。
+  // 一切几何 y>.005；视觉深度靠内倾坡度+分段变暗；坠落动画沉到 y=-2.2 由地板+漏斗遮挡=「掉进坑里消失」。
+  const wellGeo = (() => {
+    const R = .49, r = .18, yT = .045, yB = .015, k = r / R;
+    const cols = [0x1a2233, 0x0a0e18, 0x02030a].map(c => new THREE.Color(c));
+    const pos = [], col = [];
+    const sides = [[[R, R], [R, -R]], [[-R, -R], [-R, R]], [[-R, R], [R, R]], [[R, -R], [-R, -R]]];
+    for (const [[ax, az], [bx, bz]] of sides) {
+      for (let i = 0; i < 3; i++) {                     // 纵向 3 段：越深越暗
+        const t0 = i / 3, t1 = (i + 1) / 3;
+        const P = (s, t) => [ax + (bx - ax) * s * (1 - k * t), yT + (yB - yT) * t, az + (bz - az) * s * (1 - k * t)];
+        const p00 = P(0, t0), p10 = P(1, t0), p11 = P(1, t1), p01 = P(0, t1);
+        pos.push(...p00, ...p10, ...p11, ...p00, ...p11, ...p01);
+        for (let v = 0; v < 6; v++) col.push(cols[i].r, cols[i].g, cols[i].b);
+      }
+    }
+    pos.push(-r, yB, -r, r, yB, -r, r, yB, r, -r, yB, -r, r, yB, r, -r, yB, r);   // 井底不透明封口
+    for (let v = 0; v < 6; v++) col.push(cols[2].r, cols[2].g, cols[2].b);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return g;
+  })();
+  const heightGeo = {c1: heightColGeo, c2: heightColGeo, c3: heightColGeo, ab: wellGeo,
                      w: heightPlaneGeo, g: heightPlaneGeo};
   const heightMat = {
     // 批34（地形遮挡）：实体地形 depthWrite=true → 真遮挡，山/楼/深渊会挡住蛇与弹（撤掉批32 的「蛇恒可见」妥协）
     c1: new THREE.MeshStandardMaterial({color: 0x5d6b45, roughness: .85}),   // 丘·草岩
     c2: new THREE.MeshStandardMaterial({color: 0x8a94a6, roughness: .7}),    // 峰·岩灰
     c3: new THREE.MeshStandardMaterial({color: 0xcabfae, roughness: .45, metalness: .2}),  // 楼·亮规整
-    ab: new THREE.MeshStandardMaterial({color: 0x0a0a14, roughness: 1}),     // 深渊·近黑
+    ab: new THREE.MeshBasicMaterial({vertexColors: true, side: THREE.DoubleSide}),   // 批46 漏斗井·免光照分段变暗
     // 批33修复：polygonOffset -2（比地板 -1 更靠前）→ 远距深度平局时水面/草面恒胜地板
     w: new THREE.MeshBasicMaterial({color: 0x3a7bd5, transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}),
     g: new THREE.MeshBasicMaterial({color: 0x4caf50, transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2})
   };
   const hEdgeMat = new THREE.LineBasicMaterial({color: 0x7fd8ff});
-  // 批39 橙红整格描边已撤（批41）：全环 h=1 的 h=2 峰爬上去根本不致死，整格报警只造成警戒脱敏。
-  // 真正的致死警戒改由 rebuildFatalEdge() 沿「上行≥2 的真实交界面」画警示栅栏。
-  const hDeadEdgeMat = new THREE.LineBasicMaterial({color: 0xff5a2e});
-  const takeHEdge = mat => {
-    const eg = new THREE.LineSegments(new THREE.EdgesGeometry(heightColGeo), mat);
-    eg.scale.setScalar(1.001);   // 略放大避免与盒面 z-fight；作为 child 随父 mesh 缩放
-    return eg;
+  // 批46：hDeadEdgeMat（批39 橙红整格描边）随警戒栅栏退役一并删除（hEdgeMat 保留做井口青边）。
+  const wellFogMat = new THREE.MeshBasicMaterial({color: 0x05060c, transparent: true, opacity: .45, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4});
+  const takeWellRim = () => {   // 井口青边方框（cell 边界 y=.045，LineSegments child）
+    const R = .49, y = .045;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(
+      [-R,y,-R, R,y,-R, R,y,-R, R,y,R, R,y,R, -R,y,R, -R,y,R, -R,y,-R], 3));
+    return new THREE.LineSegments(g, hEdgeMat);
+  };
+  const takeWellFog = () => {   // 井底黑雾面片（略高于井底 .015 防 z-fight）
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(.34, .34), wellFogMat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = .017;
+    return m;
   };
 
   function takeHeightMesh(kind) {
@@ -2252,8 +2270,9 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     let m = pool.pop();
     if (!m) {
       m = new THREE.Mesh(heightGeo[kind], heightMat[kind]);
-      if (kind === 'ab') {   // 深渊：黑柱 + 顶缘青描边（Edges 为 child，不计入 meshes 计数）
-        m.add(takeHEdge(hEdgeMat));
+      if (kind === 'ab') {   // 批46 漏斗井：口沿青边 + 井底黑雾（children 不计入 meshes 计数）
+        m.add(takeWellRim());
+        m.add(takeWellFog());
       }
       m.visible = false;
       scene.add(m);
@@ -2266,7 +2285,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     const w = cellW(x, y);
     // 批33修复（地形可见性）：地板(y=+.005,不透明)遮挡 → 三类面必须抬到地板之上：
     //   水 +.02 / 草 +.04 / 深渊顶面 +.03（原 -.05/.005/顶0 全在地板下或共面 → 永远不可见）
-    if (kind === 'ab') { m.position.set(w.x, -.57, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, 1.2, 1); }
+    if (kind === 'ab') { m.position.set(w.x, 0, w.z); m.rotation.set(0, 0, 0); m.scale.set(1, 1, 1); }   // 批46：wellGeo 局部坐标=格中心，y 全绝对值
     else if (kind === 'w' || kind === 'g') {
       m.position.set(w.x, kind === 'w' ? .02 : .04, w.z);
       m.rotation.set(-Math.PI / 2, 0, 0); m.scale.set(1, 1, 1);
@@ -2293,63 +2312,6 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       next.push(e);
     }
     heightMeshes = next;
-    rebuildFatalEdge();
-  }
-
-  // 批41（警戒面对焦）：真实致死面 = 相邻两格高差 ≥2 的交界面（与 serve.py 死亡判定同源）。
-  // 覆盖两类真实死法：h≥2 峰/楼的无阶立面（0→2、0→3），以及 -2 深坑出口（-2→0，批40 遥测 4/4 死因）。
-  // h=1 台阶（高差 1）不产生任何警戒色 → 整格报警撤掉治脱敏，警戒只落在真实交界。
-  // 注意 hmapD 稀疏（h=0 不存）→ 必须 |Δh| 双向判断，否则 0→2 的边界漏标（低格不在表里）。
-  // 可视化 = 地面警示条 + 半透明橙红立面 + 轮廓线（LineBasicMaterial 线宽恒 1px，大图看不清，故加面片）。
-  let hFatalLines = null, hFatalFill = null;
-  const hFenceMat = new THREE.MeshBasicMaterial({color: 0xff5a2e, transparent: true, opacity: .42, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3});
-  function rebuildFatalEdge() {
-    const lines = [], fill = [];
-    const hv = (x, y) => (x < 0 || y < 0 || x >= COLS || y >= ROWS) ? null : (hmapD.get(pkey(x, y)) ?? 0);
-    for (const [k, h] of hmapD) {
-      const a = k.split(','), x = +a[0], y = +a[1];
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const hn = hv(x + dx, y + dy);
-        if (hn === null) continue;
-        if (Math.abs(hn - h) < 2) continue;          // 高差≥2 才致命（上行即死；对称画一次即可）
-        const c = cellW(x, y);
-        const mx = c.x + dx * .5, mz = c.z + dy * .5;   // 交界中点（法向 (dx,dy)）
-        const ex = -dy * .5, ez = dx * .5;              // 沿边向量（半长 0.5 格）
-        const lowDx = hn > h ? -dx : dx, lowDz = hn > h ? -dy : dy;   // 指向低位侧的单位向量
-        const ox_ = lowDx * .03, oz_ = lowDz * .03;     // 立面外推防与高位柱面 z-fight
-        const yLo = .05;
-        const yHi = Math.max(.7, visH(Math.max(h, hn)) + .05);   // 低差坑口也给 .7 高警戒栏，够醒目
-        // 1) 地面警示条（宽 .18，沿交界）：四顶点两三角
-        const nx = dx * .09, nz = dy * .09;
-        fill.push(mx - ex - nx, .055, mz - ez - nz, mx + ex - nx, .055, mz + ez - nz, mx + ex + nx, .055, mz + ez + nz,
-                  mx - ex - nx, .055, mz - ez - nz, mx + ex + nx, .055, mz + ez + nz, mx - ex + nx, .055, mz - ez + nz);
-        // 2) 立面（沿边 1 格宽，yLo→yHi，双面半透明）
-        fill.push(mx - ex + ox_, yLo, mz - ez + oz_, mx + ex + ox_, yLo, mz + ez + oz_, mx + ex + ox_, yHi, mz + ez + oz_,
-                  mx - ex + ox_, yLo, mz - ez + oz_, mx + ex + ox_, yHi, mz + ez + oz_, mx - ex + ox_, yHi, mz - ez + oz_);
-        // 3) 轮廓线：地面条两侧 + 立面顶边与两竖边
-        lines.push(mx - ex, .055, mz - ez, mx + ex, .055, mz + ez);
-        lines.push(mx - ex + ox_, yLo, mz - ez + oz_, mx + ex + ox_, yLo, mz + ez + oz_);
-        lines.push(mx - ex + ox_, yLo, mz - ez + oz_, mx - ex + ox_, yHi, mz - ez + oz_);
-        lines.push(mx + ex + ox_, yLo, mz + ez + oz_, mx + ex + ox_, yHi, mz + ez + oz_);
-        lines.push(mx - ex + ox_, yHi, mz - ez + oz_, mx + ex + ox_, yHi, mz + ez + oz_);
-      }
-    }
-    for (const [obj, arr, mat] of [[hFatalLines, lines, hDeadEdgeMat], [hFatalFill, fill, hFenceMat]]) {
-      if (obj) { scene.remove(obj); obj.geometry.dispose(); }
-    }
-    hFatalLines = null; hFatalFill = null;
-    if (lines.length) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
-      hFatalLines = new THREE.LineSegments(g, hDeadEdgeMat);
-      scene.add(hFatalLines);
-    }
-    if (fill.length) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(fill, 3));
-      hFatalFill = new THREE.Mesh(g, hFenceMat);
-      scene.add(hFatalFill);
-    }
   }
 
   // ---- 批33：元素地形面片（PROTO 29，full/DELTA 均为 [[x,y,elem],...]) ----
@@ -4258,32 +4220,16 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     for (const r of wallCells) g.fillRect(ox + r[0] * s, oy + r[1] * s, sq, sq);
     g.fillStyle = '#59637c';
     for (const r of rocks) g.fillRect(ox + r.x * s + .5, oy + r.y * s + .5, Math.max(2, sq - 1), Math.max(2, sq - 1));
-    // 批41（警戒面对焦）：高度地形层——深渊黑底青缘 / 丘·峰·楼中性分层色（不再整格警戒，治脱敏）；
-    // 橙红只画在真实致死交界（上行≥2，含 -2 深坑出口），与 3D rebuildFatalEdge 同源
+    // 批46：高度地形层——深渊 -9 黑底青缘漏斗（井）/ 丘·峰·楼中性分层色（批41 橙红警戒栅栏已随真垂直物理退役）
     for (const [k, hv] of hmapD) {
-      if (hv !== 9 && hv < 1) continue;                 // 水(-1)/草(-2)/平地(0) 不画
+      if (hv !== -9 && hv < 1) continue;                // 水(-1)/草(-2)/平地(0) 不画
       const a = k.split(','), rx = ox + (+a[0]) * s, ry = oy + (+a[1]) * s;
-      if (hv === 9) {
+      if (hv === -9) {
         g.fillStyle = '#000'; g.fillRect(rx, ry, sq, sq);
         g.strokeStyle = 'rgba(127,216,255,.6)'; g.lineWidth = 1; g.strokeRect(rx + .5, ry + .5, sq - 1, sq - 1);
       } else {
         g.fillStyle = hv >= 3 ? '#cabfae' : hv === 2 ? '#8a94a6' : '#7c8465';
         g.fillRect(rx, ry, sq, sq);
-      }
-    }
-    g.strokeStyle = '#ff5a2e'; g.lineWidth = Math.max(1.5, sq * .34);
-    for (const [k, h] of hmapD) {
-      const a = k.split(','), x = +a[0], y = +a[1];
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
-        const hn = hmapD.get(pkey(nx, ny)) ?? 0;
-        if (Math.abs(hn - h) < 2) continue;   // 稀疏表：h=0 不存，必须双向判断（0→2 才标得到）
-        g.beginPath();   // 交界线：法向 (dx,dy) → 边向 (-dy,dx)
-        const mx = ox + (x + dx * .5) * s, my = oy + (y + dy * .5) * s;
-        g.moveTo(mx + dy * .5 * s, my - dx * .5 * s);
-        g.lineTo(mx - dy * .5 * s, my + dx * .5 * s);
-        g.stroke();
       }
     }
     portalCells.forEach((r, i) => dot(r[0], r[1], Math.max(2, s * .4), i % 2 ? '#61d0ff' : '#b197fc'));

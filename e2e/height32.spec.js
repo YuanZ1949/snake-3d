@@ -10,10 +10,10 @@ test('hmap 注入 → 高度地形 mesh 生成', async ({ page }) => {
   await ensureLogin(page, 'yuan', '123456');
   await page.click('#btnSolo');                          // 进单人房（服务端建房）
   await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
-  await page.evaluate(() => window.__mapDbgSet([[5, 5, 2], [5, 6, -1], [5, 7, -1], [5, 8, 9], [5, 9, 1], [5, 10, 3]]));
+  await page.evaluate(() => window.__mapDbgSet([[5, 5, 2], [5, 6, -1], [5, 7, -1], [5, 8, -9], [5, 9, 1], [5, 10, 3]]));
   await page.waitForTimeout(300);
   const d = await page.evaluate(() => window.__heightDbg());
-  expect(d.meshes).toBe(6);                              // 6 个非平格 → 6 个主 mesh（h=9 的 Edges 为 child 不计）
+  expect(d.meshes).toBe(6);                              // 6 个非平格 → 6 个主 mesh（-9 井的 rim/雾为 child 不计）
 });
 
 test('创建/编辑面三旋钮 height/water/bld 保存与回填', async ({ page }) => {
@@ -53,8 +53,8 @@ test('批34 地形遮挡：实体地形 depthWrite=true，水/草/元素面片 d
   await ensureLogin(page, 'yuan', '123456');
   await page.click('#btnSolo');
   await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
-  // 一次注入全部 6 类：丘1/峰2/楼3/深渊9/水-1/草-2
-  await page.evaluate(() => window.__mapDbgSet([[5, 5, 1], [5, 6, 2], [5, 7, 3], [5, 8, 9], [5, 9, -1], [5, 10, -2]]));
+  // 一次注入全部 6 类：丘1/峰2/楼3/深渊-9(批46)/水-1/草-2
+  await page.evaluate(() => window.__mapDbgSet([[5, 5, 1], [5, 6, 2], [5, 7, 3], [5, 8, -9], [5, 9, -1], [5, 10, -2]]));
   await page.waitForTimeout(300);
   const dw = await page.evaluate(() => window.__heightMeshDump());
   const byKind = k => dw.filter(m => m.kind === k);
