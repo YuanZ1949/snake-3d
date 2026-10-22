@@ -316,4 +316,4 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **e2e**：e2e/height43.spec.js（建 2.6 房→选中→btnStart 进局→断言脊线形态）绿。踩坑记录：进房=roomItem 选中（selectRoom）+ `#btnStart`（`#btnJoinIn` 是观战切入按钮）；每次 shell 全新进程 env 不保留，`$env:BASE` 必须与 npx 同命令内联。
 - **截图取证**：宏伟房实景 3 张（%TEMP%\\majestic43_a/b/c.png）——连绵山脉脊线 + 巨峭壁橙红警戒立面可见。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 + Playwright **51 passed**，含 fatal41/height43 回归；期间 reactions/ws4/pred-T7 各 flake 一轮，复跑均绿，非回归）。
-- **未部署生产**：生产仍在批42 `edf5e28`；批42+43 改动已推双远端，待拍板部署。
+- **未部署生产**：已改——**2026-10-22 09:20 部署批42+43 至生产 dev@`908b2b2`**（漂移零→predeploy 备份 `20261022-092004`→archive 投放→active→200/journal 零 error/双 sha 与 blob 一致/线上含宏伟档/prod_verify35 pass/隔离单测 ALL PASSED）。PROTO_VER=30 不变。

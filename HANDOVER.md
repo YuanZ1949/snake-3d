@@ -462,14 +462,14 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`edf5e28`（批41，2026-10-21 17:13 投放）** —— `git -c core.autocrlf=false archive dev` 全量 tar 投放，systemctl restart 后 active。
-投放后核验：生产 serve.py sha256 `dde81370…` 与 index.html `81169e25…` 均与 `edf5e28` blob 逐字节一致（LF 口径）、HTTP 200、journal 启动零 error 且 spawn 日志出现 `grid=48x48`（新默认尺寸生效直接证据，24x24=新手村预设房）、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）、生产隔离单测（/tmp/b41test，拷 serve.py+test_game.py+index.html 后跑）ALL PASSED。PROTO_VER=30 不变（默认尺寸仅缺省值语义，双端均显式传 size 的既有路径不受影响）。**git push 已于批42 完成**（origin/server 双双推平）。
-回滚点：**`snake-3d-predeploy-20261021-171158.tar.gz`**（8231406 B）。
+当前生产版本：**dev@`908b2b2`（批42+43，2026-10-22 09:20 投放）** —— `git -c core.autocrlf=false archive dev` 全量 tar 投放，systemctl restart 后 active。
+投放后核验：漂移检查零（投放前生产 serve.py `dde81370…`/index.html `81169e25…` 与 `edf5e28` blob 逐字节一致）、HTTP 200、journal 3 分钟内零 error/traceback、生产 serve.py sha256 `c6aba3fd…` 与 index.html `46a362f4…` 均与 `908b2b2` blob 逐字节一致（LF 口径）、线上 index.html 实测含「宏伟」档 `value="2.6"` 与 `__hmapDump` 探针（批43 新功能生效直接证据）、`node scripts/prod_verify35.js` → `VERDICT=pass`（皮肤 2/2、`ALL_ERRS=[]`）、生产隔离单测（/tmp/b43test，拷 serve.py+test_game.py+index.html 后跑）ALL PASSED EXIT=0。PROTO_VER=30 不变（批42/43 纯服务端生成算法修复 + 前端档位 UI，双端协议零改动）。**git push 批42/43 已推双远端**（origin/server 齐平 `908b2b2`）。
+回滚点：**`snake-3d-predeploy-20261022-092004.tar.gz`**（3172860 B）。
 批40 增量（`3d2162f`）：死亡遥测——die 事件落 usage.log（cause/头格/致死格/h0h1/ring/dir/theme），3 处死亡点挂载 + 单测。
 批41 增量（`edf5e28`）：警戒面对焦（`rebuildFatalEdge()` 致命面橙红警示：|Δh|≥2 真实致死交界画警示条/立面/轮廓线，替代批39 整格描边；小地图致死交界线；e2e/fatal41.spec.js 3 例）+ 大世界面积第 1 步（新建房默认 24→48：serve.py create handler / cSize 选中档 / soloCreate / createRoom·saveRoomCfg fallback / test_ws3 断言同步；**DEFAULT_ROOMS 新手村 24×24 维持批30① 用户拍板不动**）；「宏大起伏」挪候选池单独开轮。
 批42 增量（`c548905`+`e6c92a3`，**已 commit 并推双远端，尚未部署生产**——生产仍在 `edf5e28`，待拍板后随大世界改动一起或单独部署）：修#4 `_win_ok` 同 tick 过期误判（`>`→`>=`）+ 新测试；修#5 test_ws3 rock 断言补 day 0.8；修#6 新增 `scripts/death_stats.py` 死因统计（只读）；修#7 serve.py 绑定地址 `HOST` 环境变量可配（默认 0.0.0.0 不变）+ local_ci 绑 127.0.0.1 与 `-WebPort` 参数；修#8 test_magnet 用例内清随机 eterrain。local_ci ALL GREEN（11套E2E+单测+静态+Playwright 49 passed）。
 批43 增量（大世界第 2 步「宏大起伏」方案一，**已 commit 并推双远端，尚未部署生产**）：serve.py gen_heights 新增**脊线山脉分支**——`eff_height>=2.0` 时随机游走主脊成山（L=6~14、peak∈{2,3} 40%取3、两侧 h=1 缓坡、30% 单侧缺失成 0→2/0→3 巨峭壁，脊条数 `max(2,int(area/160*eff))`，预算仍 0.35*area），`<2.0` 原逻辑逐字节不变（既有档零影响）；cHeight 新增「宏伟」档（2.6，height_custom 既有协议，clamp 0..4 零改动）；新探针 `window.__hmapDump()`；单测 `test_height_majestic_ridge_batch43` + e2e `e2e/height43.spec.js`（进房路径：roomItem 选中→`#btnStart`）。local_ci ALL GREEN（Playwright 51 passed）。PROTO_VER 不变（纯服务端生成算法+前端档位 UI）。
- 历史回滚点：`snake-3d-predeploy-20261019-232953.tar.gz`（批37，549052 B）/ `snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一生产版本记录：dev@`a9e1a7a`（批37 全量，2026-10-19 23:32 scp 投放，双远端已推至 a9e1a7a）。
+ 历史回滚点：`snake-3d-predeploy-20261021-171158.tar.gz`（批41，8231406 B）/ `snake-3d-predeploy-20261019-232953.tar.gz`（批37，549052 B）/ `snake-3d-predeploy-20261019-134813.tar.gz`（批35 第 2 轮）；上一生产版本记录：dev@`edf5e28`（批41 全量，2026-10-21 17:13 投放）。
 
 > 第 2 轮（2026-10-19，用户拍板「只补备份，先不推」）：① 生产补建 predeploy 备份 `snake-3d-predeploy-20261019-134813.tar.gz`；② 新增**可复现验收脚本** `scripts/prod_verify35.js`（从本机打生产 8090，实跑 `VERDICT=pass`、`ALL_ERRS=[]`、皮肤 16/17 `mine.node=true`，退出码 0；该脚本**只留在仓库，未投放生产**，它不需要跑在服务器上）；③ 批35 存证图入库 `docs/evidence/batch35/`（**10 张**，`git ls-files` 计数=10；原先在被 `.gitignore` 忽略、且 Playwright 每次运行会清空的 `test-results/` 里；脚本重跑产出的 4 张 ON/OFF 落 `test-results/` 不入库，可由脚本重新生成）；④ `git push` **仍未执行**（`dev` ahead `origin/dev` 16 / ahead `server/dev` 27），须人工拍板。
 
