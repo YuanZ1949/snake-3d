@@ -317,3 +317,15 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **截图取证**：宏伟房实景 3 张（%TEMP%\\majestic43_a/b/c.png）——连绵山脉脊线 + 巨峭壁橙红警戒立面可见。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 + Playwright **51 passed**，含 fatal41/height43 回归；期间 reactions/ws4/pred-T7 各 flake 一轮，复跑均绿，非回归）。
 - **未部署生产**：已改——**2026-10-22 09:20 部署批42+43 至生产 dev@`908b2b2`**（漂移零→predeploy 备份 `20261022-092004`→archive 投放→active→200/journal 零 error/双 sha 与 blob 一致/线上含宏伟档/prod_verify35 pass/隔离单测 ALL PASSED）。PROTO_VER=30 不变。
+
+## 批44（2026-10-22 · 祈愿/皮肤 UI 三改：十连叠牌排 + 局内换肤浮层 + 大厅直入口 · 已完成）
+
+来源：用户对三张改版建议截图拍板「好」。流程：直通（契约 `.tamako/contract.json`）。纯前端，协议/概率/相机/死亡判定/自动暂停零改动。
+
+- **十连结果改原神式横向叠牌排**：`.wishGrid` flex nowrap 单排，相邻负 margin 重叠（默认 -42px / ≤1080px -62px / ≤800px -70px 三档 media query），右卡压左卡（JS 内联 `zIndex=i`），5★ 压轴卡最右全露；New 标左上、+N 返还角标左下（右下会被右卡盖住）；**删底部 44px 缩略图排**（`.wishThumbs` CSS/HTML + drawWishThumbs 调用 ×2，5★ drawWishThumb 改 64×40 逻辑坐标 setTransform）。单抽 196px 布局不动。
+- **局内换肤改半屏浮层**：HUD `btnSkin` 不再 `cycleSkin()`（函数保留未绑），改为开 `#skinDrawer` overlay——按星级分组（5★/4★/3★ 标签行）、当前款金框+「使用中」徽标（`.using` CSS）、点选即换肤即关（`card.onclick` 内自行 close，遮罩点击/「关闭」按钮/Esc 亦可关）、**不自动暂停**；Esc 并入 wishLayer 既有 handler else 分支。
+- **大厅皮肤直入口**：`startBtns` 新增 `🎨 皮肤` chip（`btnSkinsLobby`，blur 列表同步）→ `openWish('skins')` 直落皮肤 tab（tab pressed + 使用中徽标可见）。
+- **祈愿 tab 重排**：UP 横幅加大（canvas 92×58）、两枚抽卡按钮全宽纵排 `min(440px,86vw)`、概率提示收一行、皮肤网格 `auto-fill minmax(104px,1fr)` 自适应 + `max-height:46vh` 可滚。
+- **e2e**：`e2e/skin44.spec.js` 3 例（十连 10 卡单排/nowrap/无缩略图/5★最右/z 序；浮层开→选→生效→关 + localStorage；大厅直入口 tab+徽标）；`renderWishSkins` 泛化 `renderSkinGrid`+`refreshSkinGrids`，`.wishSkn`/`#wishSkins` 结构保留（gift_skin31/skin35 辉夜/奶龙/芙宁娜断言回归绿）。
+- **截图取证**：`%TEMP%\b44_tenpull.png`（10 张右压左+5★金卡压轴）/ `b44_skins_tab.png`（自适应网格+使用中徽标+大 UP 横幅）/ `b44_drawer.png`（半屏浮层分组+金框）。
+- **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 + Playwright **55 passed**）。

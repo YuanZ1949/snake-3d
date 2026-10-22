@@ -174,14 +174,14 @@
   .wishBalRow b { font-size: 26px; letter-spacing: 1px; }
   .wishDust { margin-left: 8px; font-size: 13px; color: #c5cae8; }
   .wishUp {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 18px; border-radius: 12px;
-    background: linear-gradient(120deg, rgba(255,201,77,.16), rgba(43,33,24,.6));
-    border: 1px solid rgba(255,201,77,.45);
-    box-shadow: 0 0 22px rgba(255,201,77,.18);
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 22px; border-radius: 14px; width: min(460px, 88vw);
+    background: linear-gradient(120deg, rgba(255,201,77,.2), rgba(43,33,24,.65));
+    border: 1px solid rgba(255,201,77,.55);
+    box-shadow: 0 0 30px rgba(255,201,77,.28);
   }
-  .wishUpThumb { width: 64px; height: 40px; border-radius: 8px; background: #2b2118; }
-  .wishUpTxt { text-align: left; font-size: 15px; color: #ffe9a8; line-height: 1.5; }
+  .wishUpThumb { width: 92px; height: 58px; border-radius: 9px; background: #2b2118; }
+  .wishUpTxt { text-align: left; font-size: 17px; color: #ffe9a8; line-height: 1.55; }
   .wishUpBadge {
     display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
     color: #2b2118; background: linear-gradient(120deg, #ffd43b, #ffb347); font-weight: 700;
@@ -191,13 +191,21 @@
   .wishTabs .chip[aria-pressed="true"] { border-color: #ffd43b; color: #ffe9a8; }
   .wishPane { display: flex; flex-direction: column; align-items: center; gap: 10px; }
   .wishPane.hidden { display: none; }
-  .wishBtns { display: flex; gap: 16px; }
-  .wishBtns button.primary { margin-top: 0; width: 170px; height: 56px; letter-spacing: 1px; }
+  .wishBtns { display: flex; flex-direction: column; gap: 12px; width: min(440px, 86vw); }
+  .wishBtns button.primary { margin-top: 0; width: 100%; height: 58px; letter-spacing: 1px; }
   .wishBtns button.primary small { font-size: 11px; font-weight: 600; opacity: .8; letter-spacing: 0; }
   .wishHint { font-size: 12px; color: #9aa3c7; line-height: 1.7; text-align: center; margin: 0; }
   .wishSkins {
-    display: grid; grid-template-columns: repeat(4, 96px); gap: 10px;
-    max-height: 280px; overflow-y: auto; padding: 4px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px;
+    max-height: 46vh; overflow-y: auto; padding: 4px; width: min(560px, 88vw);
+  }
+  /* 批44：「使用中」徽标（原先只有金边不明显） */
+  .wishSkn { position: relative; }
+  .wishSkn .using {
+    position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%);
+    padding: 0 7px; border-radius: 999px; font-size: 10px; line-height: 16px; white-space: nowrap;
+    background: linear-gradient(120deg, #ffd43b, #ffb347); color: #2b2118; font-weight: 700;
+    box-shadow: 0 1px 6px rgba(0,0,0,.45); pointer-events: none;
   }
   .wishStarRow { grid-column: 1 / -1; font-size: 12px; color: #ffd166; letter-spacing: 2px; text-align: left; margin-top: 4px; }
   .wishSkn {
@@ -386,7 +394,11 @@
   .wishResult {
     display: none; position: relative; z-index: 2; flex-direction: column; align-items: center; gap: 16px; max-height: 92vh;
   }
-  .wishGrid { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: center; max-width: 88vw; }
+  /* 批44：十连原神式叠牌排——单横排不折行，右卡压左卡约 1/3（露出侧=New 角标侧），5★ 最右全露 */
+  .wishGrid { display: flex; gap: 0; flex-wrap: nowrap; justify-content: center; align-items: center; }
+  .wishGrid .wishCard + .wishCard { margin-left: -42px; }
+  @media (max-width: 1080px) { .wishGrid .wishCard + .wishCard { margin-left: -62px; } }
+  @media (max-width: 800px) { .wishGrid .wishCard + .wishCard { margin-left: -70px; } }
   .wishCard {
     position: relative; width: 128px; border-radius: 10px; overflow: hidden;
     animation: cardFlip .45s ease both;
@@ -400,15 +412,14 @@
   #wishGrid.single .wishCard { width: 196px; }
   @keyframes cardFlip { from { transform: perspective(760px) rotateY(85deg); opacity: 0; } to { transform: perspective(760px) rotateY(0); opacity: 1; } }
   .wishDup {
-    position: absolute; right: 6px; bottom: 30px; padding: 1px 8px; border-radius: 999px;
+    position: absolute; left: 6px; bottom: 6px; padding: 1px 8px; border-radius: 999px;
     background: rgba(10,10,20,.85); border: 1px solid #ffd43b; color: #ffe9a8; font-size: 12px;
   }
   .wishNew {
     position: absolute; left: 6px; top: 6px; padding: 1px 8px; border-radius: 999px;
     background: linear-gradient(90deg, rgba(255,212,59,.95), rgba(255,150,40,.95)); color: #231a05; font-size: 12px; font-weight: 700;
   }
-  .wishThumbs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-  .wishThumbs canvas { width: 44px; height: 66px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
+  /* 批44：十连底部缩略图一排已删（卡片单排全露，缩略图冗余） */
   .wishSkipHint { font-size: 12px; color: #9aa3c7; letter-spacing: 2px; }
   #wishAnim.skipped .meteor, #wishAnim.skipped .wishFlash, #wishAnim.skipped .wishStage, #wishAnim.skipped .wishCap, #wishAnim.skipped .wishPillar { display: none; }   /* 跳过：演出立即撤 */
   @media (prefers-reduced-motion: reduce) {
@@ -953,6 +964,7 @@
       <div class="startBtns">
         <button class="chip" id="btnSpectate">👁 观战</button>
         <button class="chip" id="btnLeaderboard">🏆 排行榜</button>
+        <button class="chip" id="btnSkinsLobby">🎨 皮肤</button>
         <a class="chip dl" href="/download">⬇ 下载程序</a>
       </div>
     </div>
@@ -968,7 +980,7 @@
       <h2>✨ 祈愿</h2>
       <div class="wishBalRow">星尘 <b id="wishBal">0</b><span id="wishDust" class="wishDust hidden"></span></div>
       <div class="wishUp">
-        <canvas class="wishUpThumb" id="wishUpThumb" width="64" height="40"></canvas>
+        <canvas class="wishUpThumb" id="wishUpThumb" width="92" height="58"></canvas>
         <div class="wishUpTxt"><b>辉夜</b> <span class="wishUpBadge">本期UP</span><br><span class="wishUpSub">五星概率提升 · 剩余 ——</span></div>
       </div>
       <div class="wishTabs">
@@ -980,7 +992,7 @@
           <button class="primary" id="wish1">祈愿 ×1<br><small>160 ✨</small></button>
           <button class="primary" id="wish10">祈愿 ×10<br><small>1600 ✨ 必出四星+</small></button>
         </div>
-        <p class="wishHint">五星 1.6% · 90 抽必出五星 · 十连必出四星+<br>重复皮肤自动返还星尘</p>
+        <p class="wishHint">五星 1.6% · 90 抽必出五星 · 十连必出四星+ · 重复皮肤自动返还星尘</p>
       </div>
       <div id="wishSkinsPane" class="wishPane hidden">
         <div id="wishSkins" class="wishSkins"></div>
@@ -1001,9 +1013,15 @@
       </div>
       <div class="wishResult">
         <div class="wishGrid" id="wishGrid"></div>
-        <div class="wishThumbs" id="wishThumbs"></div>
         <div class="wishSkipHint">点击跳过演出 · 结果页点击关闭</div>
       </div>
+    </div>
+
+    <!-- 批44：局内换肤浮层（半屏列表点选，不打断对局；不自动暂停） -->
+    <div class="overlay hidden" id="skinDrawer">
+      <h2>🎨 选择皮肤</h2>
+      <div class="wishSkins" id="skinDrawerGrid"></div>
+      <button class="chip" id="btnSkinClose">关闭</button>
     </div>
 
     <div class="overlay hidden" id="pauseScreen">
@@ -4829,7 +4847,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   };
   ['btnStart', 'btnRestart', 'btnResume', 'btnPause', 'btnPauseGame', 'btnMute', 'btnCam', 'btnAtk', 'btnSpeed', 'btnSkin', 'btnSpectate', 'btnJoinIn',
    'btnHome', 'btnPauseHome', 'btnOverHome', 'btnOverSpectate', 'btnCfgCancel',
-   'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose'].forEach(id =>
+   'btnLogin', 'btnRegister', 'btnLogout', 'btnRoomRefresh', 'btnRoomCreate', 'btnSolo', 'btnCreateGo', 'btnLeaderboard', 'btnLbClose', 'btnSkinsLobby', 'btnSkinClose'].forEach(id =>
     $(id).addEventListener('click', e => e.currentTarget.blur()));
   btnMute.onclick = () => {
     muted = !muted;
@@ -4851,7 +4869,13 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     applySkin();
     sEat();
   }
-  $('btnSkin').onclick = cycleSkin;
+  // 批44：点开浮层列表（不再逐个循环；cycleSkin 保留备用）
+  $('btnSkin').onclick = () => {
+    renderSkinGrid($('skinDrawerGrid'));
+    $('skinDrawer').classList.remove('hidden');
+  };
+  $('btnSkinClose').onclick = () => $('skinDrawer').classList.add('hidden');
+  $('skinDrawer').onclick = e => { if (e.target === $('skinDrawer')) $('skinDrawer').classList.add('hidden'); };
 
   // ================= 19 祈愿（抽卡）界面（批25 T5） =================
   let wishBalVal = 0;                       // 展示余额 = 账号总账 + 局内当场
@@ -4871,14 +4895,19 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   function drawWishThumb() {                // UP 横幅：辉夜缩略
     const c = $('wishUpThumb'), g = c.getContext('2d'), s = SKINS[15];
     g.clearRect(0, 0, c.width, c.height);
+    g.setTransform(c.width / 64, 0, 0, c.height / 40, 0, 0);   // 批44：画布随横幅放大，按 64×40 逻辑坐标绘制
     g.fillStyle = s.base; g.fillRect(0, 0, c.width, c.height);
     g.strokeStyle = s.belly; g.lineWidth = 6; g.lineCap = 'round';
     g.beginPath(); g.moveTo(6, 30); g.quadraticCurveTo(20, 8, 34, 20); g.quadraticCurveTo(46, 30, 58, 12); g.stroke();
     g.fillStyle = s.belly; g.beginPath(); g.arc(58, 12, 5, 0, 7); g.fill();
     g.fillStyle = '#101426'; g.beginPath(); g.arc(60, 11, 1.6, 0, 7); g.fill();
   }
-  function renderWishSkins() {
-    const box = $('wishSkins');
+  function renderWishSkins() { renderSkinGrid($('wishSkins')); }
+  function refreshSkinGrids() {          // 批44：选肤后两处网格同步（浮层开着才刷浮层）
+    renderSkinGrid($('wishSkins'));
+    if (!$('skinDrawer').classList.contains('hidden')) renderSkinGrid($('skinDrawerGrid'));
+  }
+  function renderSkinGrid(box) {
     box.innerHTML = '';
     const ids = [...ownedSkins].sort((a, b) => (SKINS[b].star - SKINS[a].star) || (a - b));
     let lastStar = 0;
@@ -4897,21 +4926,29 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       card.innerHTML = '<canvas width="72" height="40"></canvas><span class="nm"></span><span class="st"></span>';
       card.querySelector('.nm').textContent = s.name;
       card.querySelector('.st').textContent = '★'.repeat(s.star);
+      if (id === skinIdx) {              // 批44：「使用中」徽标（原先只有金边不明显）
+        const u = document.createElement('span');
+        u.className = 'using';
+        u.textContent = '使用中';
+        card.appendChild(u);
+      }
       const cc = card.querySelector('canvas'), g = cc.getContext('2d');
       g.fillStyle = s.base; g.fillRect(0, 0, 72, 40);
       g.strokeStyle = s.belly; g.lineWidth = 5; g.lineCap = 'round';
       g.beginPath(); g.moveTo(6, 28); g.quadraticCurveTo(22, 10, 38, 20); g.quadraticCurveTo(52, 28, 66, 12); g.stroke();
-      card.onclick = () => {                // 选用：大厅本地生效+localStorage；入局 applySkin 内发 skin 服务端鉴权
+      card.onclick = () => {                // 选用：本地生效+localStorage；入局 applySkin 内发 skin 服务端鉴权
         skinIdx = id;
         localStorage.setItem('snake-skin', id);
         applySkin();
         sEat();
-        renderWishSkins();
+        refreshSkinGrids();
+        $('skinDrawer').classList.add('hidden');   // 批44：点选即关（大厅侧本就关闭，无副作用）
       };
       box.appendChild(card);
     }
   }
-  function openWish() {
+  function openWish(tab) {
+    if (tab === 'skins' || tab === 'gacha') wishTab = tab;   // 批44：大厅皮肤直入口（直落皮肤 tab）
     // 终审 MINOR-3：未登录只 toast 并指引回主页（登录表单仅在 startScreen，局内打不开面板）
     if (!loggedUser) { showToast('抽卡需要登录，请回主页登录'); return; }
     send({t: 'gachainfo'});                 // 权威余额/皮肤集合（回包时若面板已开则刷新）
@@ -5013,14 +5050,15 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     const ordered = items.filter(i => i.star < maxStar).concat(items.filter(i => i.star === maxStar));
     const capIdx = ordered.findIndex(i => i.cap);       // 批27：捕获明光位置（赢50/50的5★）
     // 结果陈列网格（done 阶段显示）+ New 标（首次获得）
-    const grid = $('wishGrid'), thumbs = $('wishThumbs');
-    grid.innerHTML = ''; thumbs.innerHTML = '';
+    const grid = $('wishGrid');
+    grid.innerHTML = '';
     grid.classList.toggle('single', ordered.length === 1);
     ordered.forEach((it, i) => {
       const s = SKINS[it.skin] || SKINS[0];
       const card = document.createElement('div');
       card.className = 'wishCard'; card.dataset.star = it.star;
       card.style.animationDelay = (i * 120) + 'ms';                   // 十连 120ms 依次翻出
+      card.style.zIndex = i;                                          // 批44：右卡压左卡，5★ 最右压轴全露
       card.appendChild(makeCardArt(s));
       if (it.dup && it.refund) {                                      // 重复返还提示 +N
         const b = document.createElement('span'); b.className = 'wishDup';
@@ -5029,12 +5067,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
         const b = document.createElement('span'); b.className = 'wishNew';   // 批27：New 标
         b.textContent = 'New'; card.appendChild(b);
       }
-      grid.appendChild(card);
-      if (ordered.length > 1) {                                       // 十连底部一排缩略图
-        const t = document.createElement('canvas'); t.width = 48; t.height = 72;
-        t.getContext('2d').drawImage(makeCardArt(s), 0, 0, 48, 72);
-        thumbs.appendChild(t);
-      }
+      grid.appendChild(card);                                         // 批44：底部缩略图一排删除（卡已单排全露）
     });
     $('wishHero').className = 'wishHero'; $('wishBeams').classList.remove('on');
     layer.classList.remove('skipped', 'hidden', 'glitch', 'punch');
@@ -5118,7 +5151,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     $('wishBeams').classList.remove('on'); $('wishCap').classList.remove('on');
     $('wishPillar').classList.remove('on'); $('wishBloom').classList.remove('on');
     $('wishHero').className = 'wishHero';
-    $('wishGrid').innerHTML = ''; $('wishThumbs').innerHTML = '';
+    $('wishGrid').innerHTML = '';
   }
   function wishAnimBusy() {          // 动画期间锁键盘输入（done 后解锁）
     const el = $('wishAnim');
@@ -5152,6 +5185,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   window.__predDbg = { mkPred, predNextMoveAt, advanceStep, predAdvance, predReconcile, syncApplied, predInterval };
   $('btnWish').onclick = openWish;
   $('btnWishLobby').onclick = openWish;   // 批25 T5：大厅入口（startScreen 全屏遮罩盖住顶栏）
+  $('btnSkinsLobby').onclick = () => openWish('skins');   // 批44：皮肤直入口（直落皮肤 tab）
   $('btnWishClose').onclick = closeWish;
   // ===== 批29④：版本更新庆祝弹窗 =====
   let giftShown = false;   // 每会话至多弹一次（服务端另有每版本一次性入账兜底）
@@ -5171,6 +5205,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   $('wish10').onclick = () => { if (loggedUser) send({t: 'gacha', n: 10}); else showToast('抽卡需要登录'); };
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !wishAnimBusy() && !$('wishLayer').classList.contains('hidden')) closeWish();   // T6：动画层优先
+    else if (e.key === 'Escape' && !$('skinDrawer').classList.contains('hidden')) $('skinDrawer').classList.add('hidden');   // 批44：换肤浮层
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && !joined && state === 'idle' && !demoPaused) togglePause();
