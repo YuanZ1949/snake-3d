@@ -4,7 +4,7 @@
 # 架构：多房间（Room），每房间独立棋盘与对局状态；连接（Session）可加入房间
 # 或旁观。账户与战绩持久化到 data/store.json。协议对旧客户端保持向后兼容：
 # 旧客户端不带 room / 账户也能正常游戏（默认进入 "a" 房间、以游客身份游玩）。
-import asyncio, json, os, time, random, http, zipfile, io, hashlib, secrets, traceback, signal
+import asyncio, json, os, time, random, http, zipfile, io, hashlib, secrets, traceback, signal, heapq
 from collections import deque
 from pathlib import Path
 import websockets
@@ -1678,10 +1678,11 @@ class Room:
 
     # -------- 世界推进 --------
     def _bot_path_step(self, p, tgt, cap=None):
-        """批24 O5：目标最短路首步（BFS）——修贪心打分绕墙死循环（边角转圈吃不到水果，
-        确定性复现 test-results/repro_circling.py）。阻挡=静态地形+传送门+全部活蛇身
-        （己身除头，颈格本属己身阻挡故反向天然禁）；同长多路优先当前直行（少转向）；
-        超 cap/无路/目标被占返回 None → 回落既有贪心打分（保持原兜底行为）。"""
+        """批24 O5：目标最短路首步；批46 §5：BFS→Dijkstra 加权（爬坡 2 / 坠落 2~3 为 4
+        择优绕行；崖/坠亡/深渊不可走，与 reach_set 转移规则同款）。阻挡=静态地形+传送门+
+        全部活蛇身（己身除头，颈格本属己身阻挡故反向天然禁）；同价多路优先当前直行
+        （heap 元素 (cost, x, y) 确定性破平局，起步直行另加分段）；超 cap/无路/目标被占
+        返回 None → 回落既有贪心打分（保持原兜底行为）。"""
         hx, hy = p['cells'][0]
         tgt = (tgt[0], tgt[1])
         if (hx, hy) == tgt:
@@ -1695,34 +1696,45 @@ class Room:
             block.update(q['cells'][1:] if q is p else q['cells'])
         if tgt in block:
             return None
-        cap = cap or min(self.cols * self.rows, 2000)     # 大图无路时的兜底预算
+        cap = cap or min(self.cols * self.rows * 2, 8000)   # 批46：加权绕行更贵 → cap 4×
         cur = p['dir']
         opp = (-cur[0], -cur[1])
         start = (hx, hy)
         prev = {start: None}
-        dq = deque([start])
+        g = {start: 0}
+        heap = [(0, start[0], start[1])]
         hit = None
         n = 0
-        while dq and n < cap:
-            x, y = dq.popleft()
+        hm = self.hmap
+        while heap and n < cap:
+            cost, x, y = heapq.heappop(heap)
+            if (x, y) != start and g.get((x, y)) != cost:
+                continue                               # 陈旧堆项（已被更优路径松弛过）
             n += 1
+            if (x, y) == tgt:
+                hit = (x, y)
+                break
             dirs = DIRS4
             if (x, y) == start:
-                dirs = (cur,) + tuple(d for d in DIRS4 if d != cur)   # 起步直行优先破同长平局
+                dirs = (cur,) + tuple(d for d in DIRS4 if d != cur)   # 起步直行优先破同价平局
+            ch = hm.get((x, y), 0)
             for d in dirs:
                 nx, ny = x + d[0], y + d[1]
                 if not (0 <= nx < self.cols and 0 <= ny < self.rows):
                     continue
                 np = (nx, ny)
-                if np in block or np in prev:
+                if np in block:
                     continue
+                nh = hm.get(np, 0)
+                if nh - ch >= 2 or ch - nh >= 4 or nh == -9:
+                    continue                           # 崖 / 坠亡 / 深渊不可走（同 reach_set）
+                w = 2 if (nh - ch == 1 and nh >= 1) else (4 if ch - nh >= 2 else 1)
+                nc = cost + w                          # 平/下浅 1、爬坡 2、坠落 2~3 为 4
+                if nc >= g.get(np, 1 << 30):
+                    continue                           # 非更优路径（允许多次松弛，Dijkstra 语义）
+                g[np] = nc
                 prev[np] = (x, y)
-                if np == tgt:
-                    hit = np
-                    break
-                dq.append(np)
-            if hit:
-                break
+                heapq.heappush(heap, (nc, nx, ny))
         if not hit:
             return None
         node = hit

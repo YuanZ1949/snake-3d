@@ -3385,6 +3385,35 @@ def test_solid_fatal_fall_batch46():
     assert r2._deflect_dir(p2, set(), cur_h=0) == (0, -1)
 
 
+def test_bot_dijkstra_batch46():
+    """批46 §5：bot 寻路 BFS→Dijkstra 加权——爬坡 2 / 坠落 2~3 为 4 择优绕行；
+    崖/坠亡/深渊不可走；cap 4× 大迷宫（旧 2000 必失败）可达"""
+    # 峰顶 h3 无坡：目标本身不可进入 → None（回落贪心）
+    r = fresh(16); r.hmap = {(6,5): 3}
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r._bot_path_step(p, (6,5)) is None
+    # 直路撞崖（h2）→ 绕行，不返回 (1,0)
+    r = fresh(16); r.hmap = {(6,5): 2}
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    d = r._bot_path_step(p, (7,5))
+    assert d in ((0,1), (0,-1)), d
+    # 直路落差 3（断尾代价 4）vs 绕行 4 步平地（代价 4）——同价时平局破法不确定，改用落差 2（代价 4，绕行 2 步更优）
+    r = fresh(16); r.hmap = {(6,5): -2}
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    d = r._bot_path_step(p, (7,5))
+    assert d in ((0,1), (0,-1)), d
+    # 爬坡 1（代价 2+1=3）< 绕行 4 → 直接爬
+    r = fresh(16); r.hmap = {(6,5): 1}
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r._bot_path_step(p, (7,5)) == (1,0)
+    # 大迷宫（64×64 三隔间，需 >2000 弹出）：旧 cap 2000 失败返回 None，新 cap 8000 可达
+    r = fresh(64)
+    r.walls = [(21, yy) for yy in range(63)] + [(42, yy) for yy in range(1, 64)]
+    p = mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    d = r._bot_path_step(p, (60,2))
+    assert d is not None, '64×64 三隔间迷宫须在 cap 内找到路'
+
+
 def test_height_majestic_ridge_batch43():
     """批43「宏伟」档（2.6）→ 脊线山脉：连绵 h≥2 脊 + h=3 峰 + 逐级爬升链（h3→h2→h1→0 相邻存在）"""
     def nb(c):
@@ -4691,7 +4720,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_bot_dijkstra_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
