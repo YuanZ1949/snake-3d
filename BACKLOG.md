@@ -329,6 +329,7 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **e2e**：`e2e/skin44.spec.js` 3 例（十连 10 卡单排/nowrap/无缩略图/5★最右/z 序；浮层开→选→生效→关 + localStorage；大厅直入口 tab+徽标）；`renderWishSkins` 泛化 `renderSkinGrid`+`refreshSkinGrids`，`.wishSkn`/`#wishSkins` 结构保留（gift_skin31/skin35 辉夜/奶龙/芙宁娜断言回归绿）。
 - **截图取证**：`%TEMP%\b44_tenpull.png`（10 张右压左+5★金卡压轴）/ `b44_skins_tab.png`（自适应网格+使用中徽标+大 UP 横幅）/ `b44_drawer.png`（半屏浮层分组+金框）。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 + Playwright **55 passed**）。
+- **部署**：✅ **2026-10-22 15:31 随批45 一并部署生产 dev@`18f4c6d`**（回滚点 `20261022-153147`，线上 `skinDrawer`×9/`btnSkinsLobby`×3 生效证据）。
 
 ## 批45（2026-10-22 · 奶龙/芙宁娜 GLB 站姿改版：脚贴蛇头球顶 + 高0.65 + 光环避让 + 头球深色衬托 · 已完成）
 
@@ -341,3 +342,4 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **e2e**：`skin35.spec.js` 断言随语义更新（挂载 `skull=true` 球可见；新增 `foot≈0.24`、`h∈[0.5,0.81]`、`ringY>foot+h` 光环在头顶上方；回切复位 `ringY≈0.34`）；`__modelDbg` 探针 mine 增 `h/foot/ringY` 三字段。gift_skin31/skin44 回归绿。
 - **截图取证**：`%TEMP%\b45_nailong.png`（黄模型立深橙头球）/ `b45_furina.png`（白蓝模型立 tan 头球+金环头顶），实测 `foot=0.24 / h=0.65 / ringY=0.99`。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 js=945 + Playwright **54 passed**，含临时取证 1 例，源码 `test(` 总数 54 结构核对无用例丢失）。
+- **部署**：✅ **2026-10-22 15:31 部署生产 dev@`18f4c6d`**（漂移零→predeploy `20261022-153147`→archive→active→200/journal 零 error→双 sha 与 blob 一致→prod_verify35 pass→线上 `MODEL_STAND_H`/`headColorOf` 生效证据→用户局内实拍截图达标：奶龙站黄色深色衬托球顶、脚贴球面、球常可见）。
