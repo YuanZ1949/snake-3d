@@ -1936,8 +1936,14 @@ class Room:
             rock = not ghost and (hx, hy) in blockset
             # 批32：上行 ≥2（含深渊 9）= 撞崖；ghost 豁免（下行/水草本就无障碍）
             cur_h32 = self.hmap.get(p['cells'][0], 0)
-            cliff = (not ghost) and (self.hmap.get((hx, hy), 0) - cur_h32 >= 2)
+            dst_h46 = self.hmap.get((hx, hy), 0)
+            cliff = (not ghost) and (dst_h46 - cur_h32 >= 2)
             own = (hx, hy) in p['cells'][1:]
+            # 批46 §2：坠落 ≥4 = 坠亡（ghost/shield 均不豁免——重力对所有人生效）
+            if dst_h46 - cur_h32 <= -4:
+                dead.add(id(p))
+                p['cause'] = 'fall'
+                continue
             if not (wall or rock or cliff or own):
                 continue
             shielded = self.effect_active(p, 'shield', now)

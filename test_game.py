@@ -3423,6 +3423,28 @@ def test_climb_slowdown_batch46():
     assert r3.tick_of(p5, serve.now_ms()) == int(int(150 * 0.6) * 1.5)
 
 
+def test_fall_death_batch46():
+    """批46 §2：坠落≥4 = 坠亡 cause='fall'；ghost 不豁免坠落；shield 不救坠落"""
+    # 0→-4 坠亡
+    r, p = _cliff_case({(6,5): -4}, (5,5), [(4,5)], (1,0))
+    assert not p['alive'] and p['cause'] == 'fall'
+    assert any(e['t']=='die' and e['cause']=='fall' for e in r.events)
+    # 0→-3 坠落断尾不死（T3 实现断尾；此处先断言存活）
+    assert _cliff_case({(6,5): -3}, (5,5), [(4,5)], (1,0))[1]['alive']
+    # ghost 0→-4 也死 cause='fall'（不豁免）
+    assert not _cliff_case({(6,5): -4}, (5,5), [(4,5)], (1,0),
+                           eff={'ghost': serve.now_ms()+9999})[1]['alive']
+    # 深渊 -9：0→-9 坠亡 cause='fall'
+    r9, p9 = _cliff_case({(6,5): -9}, (5,5), [(4,5)], (1,0))
+    assert not p9['alive'] and p9['cause'] == 'fall'
+    # shield 不救坠落（shield 只折返碰撞类死亡）
+    assert not _cliff_case({(6,5): -4}, (5,5), [(4,5)], (1,0),
+                           eff={'shield': serve.now_ms()+9999})[1]['alive']
+    # ghost 0→2 上行撞崖仍豁免（既有语义回归）
+    assert _cliff_case({(6,5): 2}, (5,5), [(4,5)], (1,0),
+                       eff={'ghost': serve.now_ms()+9999})[1]['alive']
+
+
 def test_spawn_h0():
     r = fresh(20)
     r.hmap = {(x, y): ((x + y) % 3) + 1 for x in range(0, 20, 3) for y in range(20)}
@@ -4561,7 +4583,7 @@ for fn in [test_die_telemetry_batch40,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
             test_height_gen_invariants, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
-            test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_spawn_h0, test_ghost_cross_height,
+            test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
             test_reactions_table_complete_batch33, test_reaction_same_or_none_elem_batch33,
