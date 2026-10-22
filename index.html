@@ -1629,12 +1629,16 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     return geo;
   }
 
+  // 批45：头球取色——带 GLB 模型的皮肤用 dark 色衬托模型（模型与 head 同色会融成一坨，如奶龙黄）；
+  // 无模型皮肤照旧用 head 色，老款零变化。
+  function headColorOf(s) { return s.model ? s.dark : s.head; }
+
   function paintEnt(e) {
     const s = SKINS[e.skin % SKINS.length];
     e.bodyMat.map = makeSkinTexture(s);
     e.bodyMat.metalness = s.metal;
     e.bodyMat.needsUpdate = true;
-    e.skull.material.color.setHex(s.head);
+    e.skull.material.color.setHex(headColorOf(s));
     mountHeadModel(e.head, e.skull, s.model || null);   // 批35：角色皮肤换头
     applyOffTint(e);   // 挂起灰化在皮肤色之上再乘（paintEnt 会覆盖 skull 色，需重应用）
   }
@@ -1642,7 +1646,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   function applyOffTint(e) {
     // 断线挂起蛇（批12）：整体压暗灰化，名字加 💤——bodyMat.color 默认白色乘贴图，置灰即全身上色罩
     e.bodyMat.color.setHex(e.off ? 0x5a5a5a : 0xffffff);
-    e.skull.material.color.setHex(e.off ? 0x777777 : SKINS[e.skin % SKINS.length].head);
+    e.skull.material.color.setHex(e.off ? 0x777777 : headColorOf(SKINS[e.skin % SKINS.length]));
     tintHeadModel(e.head, e.off ? 0x777777 : 0xffffff);   // 批35：模型同套灰化（材质已逐实体克隆）
   }
 
@@ -1652,7 +1656,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     bodyMat.map = makeSkinTexture(s);
     bodyMat.metalness = s.metal;
     bodyMat.needsUpdate = true;
-    skullMesh.material.color.setHex(s.head);
+    skullMesh.material.color.setHex(headColorOf(s));
     mountHeadModel(head, skullMesh, s.model || null);   // 批35：本地蛇头
     tintHeadModel(head, 0xffffff);
     if (myEnt) {
@@ -1695,7 +1699,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
                                       transparent: true, opacity: .85})
     );
     ring.rotation.x = Math.PI / 2;
-    ring.position.y = .34;
+    ring.position.y = RING_Y;
     ring.visible = false;
     g.add(ring);
     g.userData.ring = ring;
@@ -1707,7 +1711,10 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   // 批37 项9：GLTFLoader 改由原生 ESM 引入（three r161 + importmap），模块作用域标识 GLTFLoader。
   // 蛇头仍保留 skull 球（有模型时 invisible），保证无模型/加载失败时零回归。
   const HEAD_MODEL_GLB = {nailong: 'models/nailong.glb', furina: 'models/furina.glb'};
-  const MODEL_FIT = .3;        // 拟合到现有蛇头量级（SphereGeometry(.3)）
+  const MODEL_STAND_H = .65;   // 批45：站姿拟合高度（用户拍板「更大」档，脚贴球顶后头顶约 0.89）
+  const MODEL_STAND_W = .8;    // 批45：拟合后最长边安全上限（防扁宽模型炸宽）
+  const MODEL_FOOT_Y = .24;    // 批45：脚贴蛇头球顶（球顶 y=.255，微沉 .015 防飘）
+  const RING_Y = .34;          // 5★ 头部光环默认高度（与 makeHeadGroup 同值；挂模型时抬高避让）
   const MODEL_TPL = {};        // key -> 归一化模板（只读，用前 clone）
   const MODEL_PEND = {};       // key -> Promise，防重复请求
 
@@ -1726,16 +1733,17 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
               if (o.material) { o.material.vertexColors = true; o.material.needsUpdate = true; }
             }
           });
-          // 归一化：包围盒最长边缩放到 MODEL_FIT，几何中心对齐原点
+          // 批45 归一化：包围盒最长边缩到 1（单位模板），几何中心对齐原点；实际尺寸在挂载时按高 .65 求
           const box = new THREE.Box3().setFromObject(root);
           const size = new THREE.Vector3(); box.getSize(size);
           const ctr = new THREE.Vector3(); box.getCenter(ctr);
           const maxDim = Math.max(size.x, size.y, size.z);
-          const k = maxDim > 1e-6 ? MODEL_FIT / maxDim : 1;
+          const k = maxDim > 1e-6 ? 1 / maxDim : 1;
           root.scale.setScalar(k);
           root.position.set(-ctr.x * k, -ctr.y * k, -ctr.z * k);
           const wrap = new THREE.Group();
           wrap.add(root);
+          wrap.userData.uSize = {x: size.x * k, y: size.y * k, z: size.z * k};  // 单位化后包围盒尺寸（挂载拟合用）
           MODEL_TPL[key] = wrap;
           MODEL_PEND[key] = null;
           res(wrap);
@@ -1745,12 +1753,16 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     return MODEL_PEND[key];
   }
 
-  // 挂/卸模型：key 为 null 时恢复 skull 球。异步，带换肤令牌防串。
+  // 挂/卸模型：key 为 null 时卸模型。异步，带换肤令牌防串。
+  // 批45：模型不再替代头（原批35 藏球设计）——skull 球常可见（球=蛇头），模型站姿拟合高 .65、
+  // 脚贴球顶 .24，5★ 光环抬到模型头顶上方；无模型/加载失败逻辑保持球可见，零回归。
   function mountHeadModel(headGrp, skullMesh, key) {
     const prev = headGrp.userData.modelNode;
     if (prev) { headGrp.remove(prev); headGrp.userData.modelNode = null; }
     headGrp.userData.modelKey = key || null;
-    skullMesh.visible = !key;
+    skullMesh.visible = true;   // 批45：球常可见（球=蛇头，模型站在球上；原批35 挂载藏球已废）
+    const ringRst = headGrp.userData.ring;
+    if (ringRst) ringRst.position.y = RING_Y;   // 先复位光环高度（无模型/失败兜底）
     if (!key) return;
     loadHeadModel(key).then(tpl => {
       if (headGrp.userData.modelKey !== key) return;   // 已换肤/已销毁（后续调用已重置可见性）
@@ -1758,8 +1770,18 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       const node = tpl.clone(true);
       // 逐实体克隆材质：applyOffTint 只灰化本条蛇，不污染全场
       node.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
+      // 批45：站姿拟合——按高 .65 缩放（最长边 ≤.8 上限），脚（包围盒 min.y）贴蛇头球顶 .24
+      const sz = tpl.userData.uSize || {x: .3, y: .3, z: .3};
+      let s = MODEL_STAND_H / (sz.y || 1e-6);
+      const wmax = Math.max(sz.x, sz.z);
+      if (wmax * s > MODEL_STAND_W) s = MODEL_STAND_W / (wmax || 1e-6);
+      node.scale.setScalar(s);
+      node.position.set(0, MODEL_FOOT_Y + sz.y * s * .5, 0);   // 中心抬到脚贴球顶
+      node.userData.h = sz.y * s;               // 实际高度（e2e 断言/探针用）
       headGrp.add(node);
       headGrp.userData.modelNode = node;
+      const ring1 = headGrp.userData.ring;
+      if (ring1) ring1.position.y = MODEL_FOOT_Y + sz.y * s + .1;   // 光环抬到模型头顶上方 +.1
     });
   }
 
@@ -2066,10 +2088,14 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     pending: Object.keys(MODEL_PEND).filter(k => MODEL_PEND[k]),
     mine: (() => {                                    // 本地蛇
       const s = SKINS[skinIdx % SKINS.length];
+      const nd = head.userData.modelNode;
       return {want: s.model || null,
               key: head.userData.modelKey || null,
-              node: !!head.userData.modelNode,
-              skull: skullMesh.visible};
+              node: !!nd,
+              skull: skullMesh.visible,
+              h: nd ? +((nd.userData.h) || 0).toFixed(3) : null,                       // 批45：模型实际高度
+              foot: nd ? +(nd.position.y - ((nd.userData.h) || 0) / 2).toFixed(3) : null, // 批45：脚底 y（应=.24 贴球顶）
+              ringY: head.userData.ring ? +head.userData.ring.position.y.toFixed(3) : null}; // 批45：光环高度
     })(),
     others: [...ents.values()].map(e => ({skin: e.skin,
                                  want: SKINS[e.skin % SKINS.length].model || null,

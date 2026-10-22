@@ -1,5 +1,5 @@
 // 批35：角色皮肤「奶龙 / 芙宁娜」迷你模型（GLB + GLTFLoader 挂头）
-// 断言：SKINS 扩到 18 款、16/17 带 model 字段、选中后蛇头挂载模型且 skull 隐藏、加载失败静默回退。
+// 断言：SKINS 扩到 18 款、16/17 带 model 字段、选中后挂载模型且球可见（批45 站姿：脚贴球顶/高≈0.65/光环避让）、加载失败静默回退。
 const { test, expect } = require('@playwright/test');
 const { ensureLogin } = require('./_helpers');
 
@@ -18,7 +18,7 @@ test('GLTFLoader 就位（ESM 引入可用 · 批37 项9）', async ({ page }) =
   expect(d.loader).toBe(true);
 });
 
-test('选中奶龙 → 蛇头挂载模型，skull 球隐藏', async ({ page }) => {
+test('选中奶龙 → 蛇头挂载模型（批45 站姿：脚贴球顶、高≈0.65，球可见）', async ({ page }) => {
   await ensureLogin(page, 'yuan', '123456');
   await page.click('#btnSolo');
   await page.waitForFunction(() => document.getElementById('startScreen').classList.contains('hidden'), null, { timeout: 15000 });
@@ -32,7 +32,11 @@ test('选中奶龙 → 蛇头挂载模型，skull 球隐藏', async ({ page }) =
   expect(d.mine.want).toBe('nailong');
   expect(d.mine.key).toBe('nailong');
   expect(d.mine.node).toBe(true);
-  expect(d.mine.skull).toBe(false);
+  expect(d.mine.skull).toBe(true);              // 批45：球可见（模型站在球上）
+  expect(Math.abs(d.mine.foot - 0.24)).toBeLessThan(0.01);   // 脚贴球顶
+  expect(d.mine.h).toBeGreaterThanOrEqual(0.5); // 站姿高（0.65 或被宽度上限压低）
+  expect(d.mine.h).toBeLessThanOrEqual(0.81);
+  expect(d.mine.ringY).toBeGreaterThan(0.24 + d.mine.h);     // 光环在模型头顶上方
 });
 
 test('切换芙宁娜 → 换成 furina 模型；回切普通皮肤 → 卸载恢复 skull', async ({ page }) => {
@@ -46,13 +50,15 @@ test('切换芙宁娜 → 换成 furina 模型；回切普通皮肤 → 卸载�
   }, null, { timeout: 15000 });
   let d = await page.evaluate(() => window.__modelDbg());
   expect(d.mine.key).toBe('furina');
-  expect(d.mine.skull).toBe(false);
-  // 回切 0 号（无 model）→ 必须卸掉模型并恢复 skull 球
+  expect(d.mine.skull).toBe(true);               // 批45：球可见（站姿设计）
+  expect(Math.abs(d.mine.foot - 0.24)).toBeLessThan(0.01);
+  // 回切 0 号（无 model）→ 必须卸掉模型，球保持可见，光环复位默认高度
   await page.evaluate(() => { localStorage.setItem('snake-skin', '0'); window.__applySkinDbg(Number(localStorage.getItem('snake-skin'))); });
   await page.waitForFunction(() => window.__modelDbg().mine.key === null, null, { timeout: 5000 });
   d = await page.evaluate(() => window.__modelDbg());
   expect(d.mine.node).toBe(false);
   expect(d.mine.skull).toBe(true);
+  expect(Math.abs(d.mine.ringY - 0.34)).toBeLessThan(0.01);   // 光环复位
 });
 
 test('皮肤页可选到两款角色皮肤（渲染进祈愿面板且能点选）', async ({ page }) => {
