@@ -3484,7 +3484,7 @@ def test_height_mixed_batch47():
     assert any(h >= 14 for h in vals), vals             # 神峰∈[14,18]
     assert len(r.hmap) <= int(0.35 * 48 * 48), len(r.hmap)   # 预算仍是硬顶
     # 阶梯缓坡：主脊格存在 h-1 邻格（缓坡侧贴脊）
-    assert any(min(r.hmap.get(q, 0) for q in nb(c)) == h - 1
+    assert any(any(r.hmap.get(q) == h - 1 for q in nb(c))
                for c, h in r.hmap.items() if 6 <= h <= 11), '主脊应有阶梯缓坡侧'
     # 缓坡单调递减：同向相邻三格 h / h-1 / h-2（每步落差恰好 1，天然可下行）
     def chain3():
@@ -3499,6 +3499,45 @@ def test_height_mixed_batch47():
     assert chain3(), '缓坡必须逐格递减 1（h, h-1, h-2 同向相邻）'
     assert sum(1 for h in hs if h >= 6) >= 6, '主脊峰群应成规模（h≥6 至少 6 格）'
     print("mixed height batch47 OK: max=", max(hs), "n=", len(r.hmap))
+
+
+def test_height_mountain_budget_batch47():
+    """批47 修复回归：① 主脊缓坡必须 4 邻可达（斜向脊的斜邻缓坡=不可达裸崖，已改仅正方向）；
+    ② 山体阶段（神峰+主脊）≤70% 高度预算，余量必须留给水洼/草丛/深渊/建筑"""
+    def nb(c):
+        x, y = c
+        return [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    budget = int(0.35 * 48 * 48)
+    cap = int(0.7 * budget)
+    # 山体单独跑（水/建筑关）：hmap 只有山体，消耗直接可测，必须 ≤70% 预算
+    m = fresh(48, theme_fixed='default', height_mult=2.6, water_amt=0.0, bld_amt=0.0)
+    serve.random.seed(4761)
+    m.build_terrain()
+    assert 0 < len(m.hmap) <= cap, f'山体预算闸失效: {len(m.hmap)}/{cap}'
+    # 4 邻逐格 -1 下行链：至少半数 h>=6 高格能一路降到 h=1
+    def down_exact(c):
+        h, cur = m.hmap[c], c
+        while h > 1:
+            nxt = [q for q in nb(cur) if m.hmap.get(q) == h - 1]
+            if not nxt:
+                return False
+            cur, h = nxt[0], h - 1
+        return True
+    hi = [c for c, h in m.hmap.items() if h >= 6]
+    assert hi, '宏伟档应有 h>=6 主脊/神峰'
+    walk = sum(1 for c in hi if down_exact(c))
+    assert walk >= len(hi) * 0.5, f'主脊缓坡必须 4 邻可下行: {walk}/{len(hi)}'
+    # 完整地形（水/建筑开，同种子）：总预算仍是硬顶，且余量真的落到其它地形
+    r = fresh(48, theme_fixed='default', height_mult=2.6)
+    serve.random.seed(4761)
+    r.build_terrain()
+    vals = list(r.hmap.values())
+    assert len(r.hmap) <= budget, len(r.hmap)
+    assert len(r.hmap) < budget, f'高度预算不得被山体吃满: {len(r.hmap)}/{budget}'
+    assert -1 in vals and -2 in vals and -9 in vals, sorted(set(vals))   # 水洼/草丛/深渊
+    assert any(h >= 14 for h in vals) and any(6 <= h <= 11 for h in vals)
+    print("mountain budget batch47 OK: mountain=", len(m.hmap), "cap=", cap,
+          "full=", len(r.hmap), "budget=", budget, "walk=", walk, "/", len(hi))
 
 
 def test_height_cfg_roundtrip():
@@ -4796,7 +4835,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_bot_dijkstra_batch46, test_height_majestic_ridge_batch43, test_height_mixed_batch47, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_bot_dijkstra_batch46, test_height_majestic_ridge_batch43, test_height_mixed_batch47, test_height_mountain_budget_batch47, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_fall_thresholds_batch47, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,

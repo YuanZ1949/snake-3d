@@ -994,20 +994,32 @@ class Room:
             # 批47 §2：宏伟档混合级——
             #   神峰：1 座（128 图 2 座）h14~18，小顶 2~3 格（顶 + 1~2 邻格 peak-1），
             #         仅一侧阶梯缓坡（逐格 -1 到 1），其余侧不放格=裸峭壁（>=8 坠亡级，spec 有意）；
-            #   主脊：随机游走脊线，peak 9~11(40%)/6~8(60%)，中段 peak、两端 peak-1，
+            #   主脊：随机游走脊线（仅 4 正方向：斜向的垂直缓坡只斜邻，4 邻移动不可达），
+            #         peak 9~11(40%)/6~8(60%)，中段 peak、两端 peak-1，
             #         每侧贴脊 h-1,h-2,... 逐格递减到 1（落差恒 1，天然可下行）；
             #         30% 缺一侧 → 该侧 0→peak 立地巨峭壁（peak>=8 即坠亡级，警戒面可见）。
-            # 神峰先放：主脊条数随面积放大，与后续水草建筑共享 take() 预算；
-            # 若排在主脊之后必被吃光预算而一座不剩。
+            # 预算闸（批47 修复）：山体阶段（神峰+主脊）至多吃高度预算 70%，
+            # 其余 30% 留给水洼/深渊/建筑/草丛——0.35*area 是全体地形共享预算。
+            # 神峰先放：spec 硬性座数，且 70% 闸内必定放得下。
+            mountain_budget_start = budget
+            mountain_cap = int(0.7 * budget)
+
+            def mountain_take(x, y, h):
+                if mountain_budget_start - budget >= mountain_cap:
+                    return False
+                return take(x, y, h)
+
             for _ in range(2 if max(self.cols, self.rows) >= 128 else 1):
+                if mountain_budget_start - budget >= mountain_cap:
+                    break
                 x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
                 peak = random.randint(14, 18)
-                if not take(x, y, peak):                   # 占位失败 → 放弃该峰（不挪位重试）
+                if not mountain_take(x, y, peak):           # 占位失败 → 放弃该峰（不挪位重试）
                     continue
-                dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+                dirs = DIRS4
                 tops = random.sample(dirs, random.randint(1, 2))   # 小顶：顶 + 1~2 邻格 peak-1
                 for tdx, tdy in tops:
-                    take(x + tdx, y + tdy, peak - 1)
+                    mountain_take(x + tdx, y + tdy, peak - 1)
                 # 缓坡侧：小顶占用侧之外挑「最长直行余量」侧（仍是单侧缓坡，避免半截悬空坡）
                 cands = [d for d in dirs if d not in tops]
 
@@ -1023,12 +1035,13 @@ class Room:
                 best = max(clear_run(dd) for dd in cands)
                 sdx, sdy = random.choice([dd for dd in cands if clear_run(dd) == best])
                 for k in range(1, peak):                   # 单侧阶梯缓坡，k 距处 h-k，直到 1
-                    if not take(x + sdx * k, y + sdy * k, peak - k):
+                    if not mountain_take(x + sdx * k, y + sdy * k, peak - k):
                         break
             for _ in range(max(2, int(area / 160 * self.eff_height()))):
+                if mountain_budget_start - budget >= mountain_cap:
+                    break                                      # 70% 闸到顶 → 让位给水/建筑/草
                 x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
-                dx, dy = random.choice(((1, 0), (-1, 0), (0, 1), (0, -1),
-                                        (1, 1), (1, -1), (-1, 1), (-1, -1)))
+                dx, dy = random.choice(DIRS4)                  # 仅正方向：垂直侧缓坡才 4 邻可达
                 peak = random.randint(9, 11) if random.random() < 0.4 else random.randint(6, 8)
                 L = random.randint(6, 14)
                 sides = (1,) if random.random() < 0.3 else (1, -1)
@@ -1036,10 +1049,10 @@ class Room:
                 for i in range(L):
                     t = abs(2.0 * i / (L - 1) - 1)             # 0=脊中段 → 1=两端
                     h = peak if t < 0.6 else peak - 1
-                    if take(x, y, h):                          # 主脊格
+                    if mountain_take(x, y, h):                 # 主脊格
                         for s in sides:                        # 两侧阶梯缓坡（缺侧=巨峭壁）
                             for k in range(1, h):
-                                if not take(x + px * s * k, y + py * s * k, h - k):
+                                if not mountain_take(x + px * s * k, y + py * s * k, h - k):
                                     break
                     x += dx if random.random() < 0.8 else random.choice((-1, 0, 1))
                     y += dy if random.random() < 0.8 else random.choice((-1, 0, 1))
