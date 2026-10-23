@@ -361,4 +361,4 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **p5 修复 `a9701c2`**：重连长度断言改有界容忍 |Δ|≤2（首帧快照前必走≥1步），修 ~1/5 flaky。
 - **T12 `f5ca1cf`**：height46 flaky 根治——注入缩 2 格（头格 h3+前一格 h0，只需 1 格自由）+ 回合终局恢复环（toPass：win→restart / over→等 AI 出 win / playing→重注入）+ local_ci Playwright `--retries=2` 兜环境竞态。
 - **门禁**：local_ci ALL GREEN（**12套E2E** + 单测 + 静态 + Playwright **55 passed**）。
-- **部署**：见 `.tamako/contract.json` 批46 部署契约（漂移零→predeploy tar→archive 投放→PROTO_VER31 线上生效→推双远端）。
+- **部署**：✅ **2026-10-23 11:57 部署生产 dev@`294d321`**（漂移零→predeploy `20261023-115738`→archive→active→200 259368B/journal 零 error→双 sha `2ef61de7…`/`b6faa86d…` 与 blob 一致→线上 PROTO_VER=31 双端+`wellGeo`/`__fallDbg`/坠亡逻辑在位→推双远端齐平）。
