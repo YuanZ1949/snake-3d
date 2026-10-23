@@ -3789,7 +3789,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       if (e && e.cells[0]) burst(cellW(e.cells[0].x, e.cells[0].y).x, .6, cellW(e.cells[0].x, e.cells[0].y).z, 0xb7ffce, 24);
       if (ev.id === myId) onMyDeath(ev);
     };
-    if (drop >= 2 && e) setTimeout(pres, e.moveDt || 200); else pres();
+    if (drop >= FALL_BREAK[0] && e) setTimeout(pres, e.moveDt || 200); else pres();   // 批47：断尾下界=坠落动画下界
   }
   window.__dieDbg = (ev) => handleDie(ev || { id: myId, cause: 'fall' });   // e2e：合成 die 事件走真实呈现路径（H6 时序断言用）
 
@@ -3893,7 +3893,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
         // 批32：插值 y 随所在格 visH（爬坡/下坡节节起伏）；批46 §4.1：落差≥2 的坠落步 Y 改 t² 重力加速
         const ch0 = hmapD.get(pkey(f.x, f.y)) || 0, ch1 = hmapD.get(pkey(c.x, c.y)) || 0;
         const v0 = visH(ch0), v1 = visH(ch1);
-        const ty = ch0 - ch1 >= 2 ? ph * ph : ph;   // M5：新 step 硬替换插值，动画天然不排队
+        const ty = ch0 - ch1 >= FALL_BREAK[0] ? ph * ph : ph;   // M5：新 step 硬替换插值，动画天然不排队；批47：阈值走 FALL_BREAK 下界
         _vb.set(f.x + (c.x - f.x) * ph - COLS / 2 + .5, SEG_H / 2 + .02 + v0 + (v1 - v0) * ty,
                 f.y + (c.y - f.y) * ph - ROWS / 2 + .5);
       } else {
@@ -3956,7 +3956,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     // 批46 §4.1：坠落动画状态机——头格落差≥2 记起跳（新 step 硬替换，M5）；落地帧尘土/微震/顿挫
     const fc = e.cells[0], fp = e.lastCells[0] || fc;
     const fh0 = hmapD.get(pkey(fp.x, fp.y)) || 0, fh1 = hmapD.get(pkey(fc.x, fc.y)) || 0;
-    if (fh0 - fh1 >= 2 && (!e._fallFx || e._fallFx.cx !== fc.x || e._fallFx.cy !== fc.y))
+    if (fh0 - fh1 >= FALL_BREAK[0] && (!e._fallFx || e._fallFx.cx !== fc.x || e._fallFx.cy !== fc.y))
       e._fallFx = {cx: fc.x, cy: fc.y, h0: fh0, h1: fh1, landed: false};
     syncBody(e.cells, e.spine, e.dir, e.rotT, e.bodyMesh, e.bodyMat, e.head, e.tongue, e.skull, {
       now, dead: !e.alive, deathAt: e.deathAt, headColor: SKINS[e.skin % SKINS.length].head,
