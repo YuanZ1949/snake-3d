@@ -989,15 +989,47 @@ class Room:
                 cx, cy = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
             return put
 
-        # 1) 山包：eff_height() >= 2.0（批43「宏伟」档）→ 脊线山脉；否则保持原单种子山包（旧档零变化）
+        # 1) 山包：eff_height() >= 2.0（批43「宏伟」档）→ 批47 混合级山脉
         if self.eff_height() >= 2.0:
-            # 脊线山脉：随机游走主脊（peak 2~3，中段冲 peak、两端 -1），两侧 h=1 缓坡；
-            # 30% 概率丢一侧缓坡成 0→2/0→3 立地巨峭壁（与旧山包 30% 缺侧同语义，警戒面可见）
+            # 批47 §2：宏伟档混合级——
+            #   神峰：1 座（128 图 2 座）h14~18，小顶 2~3 格（顶 + 1~2 邻格 peak-1），
+            #         仅一侧阶梯缓坡（逐格 -1 到 1），其余侧不放格=裸峭壁（>=8 坠亡级，spec 有意）；
+            #   主脊：随机游走脊线，peak 9~11(40%)/6~8(60%)，中段 peak、两端 peak-1，
+            #         每侧贴脊 h-1,h-2,... 逐格递减到 1（落差恒 1，天然可下行）；
+            #         30% 缺一侧 → 该侧 0→peak 立地巨峭壁（peak>=8 即坠亡级，警戒面可见）。
+            # 神峰先放：主脊条数随面积放大，与后续水草建筑共享 take() 预算；
+            # 若排在主脊之后必被吃光预算而一座不剩。
+            for _ in range(2 if max(self.cols, self.rows) >= 128 else 1):
+                x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
+                peak = random.randint(14, 18)
+                if not take(x, y, peak):                   # 占位失败 → 放弃该峰（不挪位重试）
+                    continue
+                dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+                tops = random.sample(dirs, random.randint(1, 2))   # 小顶：顶 + 1~2 邻格 peak-1
+                for tdx, tdy in tops:
+                    take(x + tdx, y + tdy, peak - 1)
+                # 缓坡侧：小顶占用侧之外挑「最长直行余量」侧（仍是单侧缓坡，避免半截悬空坡）
+                cands = [d for d in dirs if d not in tops]
+
+                def clear_run(dd):
+                    n = 0
+                    for k in range(1, peak):
+                        nx, ny = x + dd[0] * k, y + dd[1] * k
+                        if not (0 <= nx < self.cols and 0 <= ny < self.rows):
+                            break
+                        n += 1
+                    return n
+
+                best = max(clear_run(dd) for dd in cands)
+                sdx, sdy = random.choice([dd for dd in cands if clear_run(dd) == best])
+                for k in range(1, peak):                   # 单侧阶梯缓坡，k 距处 h-k，直到 1
+                    if not take(x + sdx * k, y + sdy * k, peak - k):
+                        break
             for _ in range(max(2, int(area / 160 * self.eff_height()))):
                 x, y = random.randint(0, self.cols - 1), random.randint(0, self.rows - 1)
                 dx, dy = random.choice(((1, 0), (-1, 0), (0, 1), (0, -1),
                                         (1, 1), (1, -1), (-1, 1), (-1, -1)))
-                peak = 3 if random.random() < 0.4 else 2
+                peak = random.randint(9, 11) if random.random() < 0.4 else random.randint(6, 8)
                 L = random.randint(6, 14)
                 sides = (1,) if random.random() < 0.3 else (1, -1)
                 px, py = -dy, dx
@@ -1005,8 +1037,10 @@ class Room:
                     t = abs(2.0 * i / (L - 1) - 1)             # 0=脊中段 → 1=两端
                     h = peak if t < 0.6 else peak - 1
                     if take(x, y, h):                          # 主脊格
-                        for s in sides:                        # 两侧缓坡（缺侧=巨峭壁）
-                            take(x + px * s, y + py * s, 1)
+                        for s in sides:                        # 两侧阶梯缓坡（缺侧=巨峭壁）
+                            for k in range(1, h):
+                                if not take(x + px * s * k, y + py * s * k, h - k):
+                                    break
                     x += dx if random.random() < 0.8 else random.choice((-1, 0, 1))
                     y += dy if random.random() < 0.8 else random.choice((-1, 0, 1))
         # 1b) 旧单种子山包（eff_height < 2.0 与批32 行为逐字节一致）

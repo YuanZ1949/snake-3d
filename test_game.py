@@ -3420,7 +3420,8 @@ def test_bot_dijkstra_batch46():
 
 
 def test_height_majestic_ridge_batch43():
-    """批43「宏伟」档（2.6）→ 脊线山脉：连绵 h≥2 脊 + h=3 峰 + 逐级爬升链（h3→h2→h1→0 相邻存在）"""
+    """批43「宏伟」档（2.6）→ 批47 迁移：混合级山脉——主脊 h6~11 连绵、
+    阶梯缓坡逐格递减（h→h-1→h-2…→1→0）、30% 缺侧巨峭壁、神峰 h14~18、预算不超"""
     def nb(c):
         x, y = c
         return [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
@@ -3428,16 +3429,23 @@ def test_height_majestic_ridge_batch43():
     serve.random.seed(4301)
     r.build_terrain()
     vals = set(r.hmap.values())
-    assert 3 in vals, vals                          # 宏伟档必出 h=3 脊峰
-    assert 2 in vals and 1 in vals
-    assert len(r.hmap) <= int(0.35 * 48 * 48), len(r.hmap)   # 预算不变
-    # 逐级爬升链存在：h=3 相邻 h=2、h=2 相邻 h=1、h=1 相邻平地 0
-    ok3 = any(any(r.hmap.get(q) == 2 for q in nb(c)) for c, h in r.hmap.items() if h == 3)
-    ok2 = any(any(r.hmap.get(q) == 1 for q in nb(c)) for c, h in r.hmap.items() if h == 2)
-    ok1 = any(any(r.hmap.get(q, 0) == 0 for q in nb(c)) for c, h in r.hmap.items() if h == 1)
-    assert ok3 and ok2 and ok1, 'h3→h2→h1→0 逐级爬升链必须存在'
-    # 连绵性：h≥2 脊必须存在大小 ≥6 的 4 邻连通块（非散点山包）
-    hi = {c for c, h in r.hmap.items() if h >= 2}
+    assert vals, '宏伟档应有高度地形'
+    assert 1 <= min(vals) and max(vals) <= 18, vals           # 值域 1..18（水草关：无 0/负值）
+    assert any(6 <= h <= 11 for h in vals), vals              # 主脊混合级 peak∈[6,11]
+    assert any(h >= 14 for h in vals), vals                   # 神峰∈[14,18]
+    assert len(r.hmap) <= int(0.35 * 48 * 48), len(r.hmap)    # 预算不变
+    # 逐级缓坡链存在：h 相邻 h-1（每格恰好 -1）、h-1 相邻 h-2、h=1 相邻平地 0
+    ok_step = any(any(r.hmap.get(q) == h - 1 for q in nb(c))
+                  for c, h in r.hmap.items() if h >= 6)
+    ok2 = any(r.hmap.get((x + sdx, y + sdy)) == h - 1
+              and r.hmap.get((x + 2 * sdx, y + 2 * sdy)) == h - 2
+              for (x, y), h in r.hmap.items() if h >= 6
+              for sdx, sdy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+    ok_base = any(any(r.hmap.get(q, 0) == 0 for q in nb(c))
+                  for c, h in r.hmap.items() if h == 1)
+    assert ok_step and ok2 and ok_base, 'h→h-1→h-2→…→1→0 逐级缓坡链必须存在'
+    # 连绵性：h>=6 主脊必须存在大小 ≥6 的 4 邻连通块（非散点山包）
+    hi = {c for c, h in r.hmap.items() if h >= 6}
     seen, big = set(), 0
     for s in hi:
         if s in seen:
@@ -3453,7 +3461,44 @@ def test_height_majestic_ridge_batch43():
                     comp.append(q)
         big = max(big, size)
     assert big >= 6, f'脊必须连绵（最大连通块 {big}）'
-    print("majestic ridge OK: h3=", sum(1 for v in r.hmap.values() if v == 3), "big=", big)
+    # 30% 缺侧保留：高脊侧面直接临平地（0 不存 hmap）= 无缓坡立地巨峭壁（peak>=8 即坠亡级）
+    cliff = [c for c, h in r.hmap.items() if h >= 8
+             and any(q not in r.hmap for q in nb(c))]
+    assert cliff, '缺侧脊必须留下 0→h 立地巨峭壁'
+    print("majestic ridge OK: max=", max(vals), "big=", big, "cliff=", len(cliff))
+
+
+def test_height_mixed_batch47():
+    """批47 §2：宏伟档混合级——主脊 peak∈[6,11]、阶梯缓坡逐格递减 1、神峰∈[14,18]"""
+    def nb(c):
+        x, y = c
+        return [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    r = fresh(48, theme_fixed='default', height_mult=2.6, water_amt=0.0, bld_amt=0.0)
+    serve.random.seed(4701)
+    r.build_terrain()
+    hs = list(r.hmap.values())
+    assert hs, '宏伟档应有高度地形'
+    vals = set(hs)
+    assert all(1 <= h <= 18 for h in vals), vals        # 值域 1..18（水草关：无 0/负值）
+    assert any(6 <= h <= 11 for h in vals), vals        # 主脊混合级 peak∈[6,11]
+    assert any(h >= 14 for h in vals), vals             # 神峰∈[14,18]
+    assert len(r.hmap) <= int(0.35 * 48 * 48), len(r.hmap)   # 预算仍是硬顶
+    # 阶梯缓坡：主脊格存在 h-1 邻格（缓坡侧贴脊）
+    assert any(min(r.hmap.get(q, 0) for q in nb(c)) == h - 1
+               for c, h in r.hmap.items() if 6 <= h <= 11), '主脊应有阶梯缓坡侧'
+    # 缓坡单调递减：同向相邻三格 h / h-1 / h-2（每步落差恰好 1，天然可下行）
+    def chain3():
+        for (x, y), h in r.hmap.items():
+            if h < 6:
+                continue
+            for sdx, sdy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if (r.hmap.get((x + sdx, y + sdy)) == h - 1
+                        and r.hmap.get((x + 2 * sdx, y + 2 * sdy)) == h - 2):
+                    return True
+        return False
+    assert chain3(), '缓坡必须逐格递减 1（h, h-1, h-2 同向相邻）'
+    assert sum(1 for h in hs if h >= 6) >= 6, '主脊峰群应成规模（h≥6 至少 6 格）'
+    print("mixed height batch47 OK: max=", max(hs), "n=", len(r.hmap))
 
 
 def test_height_cfg_roundtrip():
@@ -4751,7 +4796,7 @@ for fn in [test_die_telemetry_batch40,
             test_pause_afk_batch30, test_pause_counts_as_present_batch30,
             test_admin_core_batch30, test_admin_notice_grant_report_batch30,
             test_login_gift_batch31,
-            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_bot_dijkstra_batch46, test_height_majestic_ridge_batch43, test_height_cfg_roundtrip,
+            test_height_gen_invariants, test_abyss_gen_batch46, test_reach_rules_batch46, test_solid_fatal_fall_batch46, test_bot_dijkstra_batch46, test_height_majestic_ridge_batch43, test_height_mixed_batch47, test_height_cfg_roundtrip,
             test_cliff_move, test_water_slowdown, test_climb_slowdown_batch46, test_fall_death_batch46, test_fall_cut_batch46, test_fall_thresholds_batch47, test_spawn_h0, test_ghost_cross_height,
             test_crush, test_bullet_terrain, test_bullet_hit_range,
             test_snapshot_height,
