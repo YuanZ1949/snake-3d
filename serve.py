@@ -45,8 +45,10 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 31          # 批46：hmap 值域哨兵 9 → -9（地形值域含 -9 雪坡，0 不存）；改协议必须同步 bump 双端
+PROTO_VER = 32          # 批47：hmap 值域 0..4→0..18 + 坠落阈值放大；改协议必须同步 bump 双端
                         # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
+FALL_DEATH = 8          # 批47 §3：坠亡落差下限（>= 死，cause='fall'）
+FALL_BREAK = (2, 7)     # 批47 §3：坠落断尾落差闭区间（净掉 落差-1 节，MIN_LEN=2 保底）
 ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
@@ -1184,14 +1186,14 @@ class Room:
     def _solid(self, x, y, skip_pid=None, cur_h=None):
         """静态阻挡或其它蛇身体（食物/道具/奖励不算阻挡，便于计算前方空间）。
         批32：cur_h 传值时，上行 ≥2（含深渊 9）视为峭壁挡（下行自由）。
-        批46 §5：致命坠落（dst_h <= cur_h-4，含 -9 深渊）同样挡（bot 贪心防摔死）。"""
+        批46 §5：致命坠落（dst_h <= cur_h-FALL_DEATH，含 -9 深渊）同样挡（bot 贪心防摔死）。"""
         if x < 0 or y < 0 or x >= self.cols or y >= self.rows:
             return True
         if (x, y) in self.rocks or (x, y) in self.walls or (x, y) in self.portals:
             return True
         if cur_h is not None:
             _hs = self.hmap.get((x, y), 0)
-            if _hs - cur_h >= 2 or _hs <= cur_h - 4:
+            if _hs - cur_h >= 2 or _hs <= cur_h - FALL_DEATH:
                 return True
         for pid, q in self.players.items():
             if pid == skip_pid or not q['alive']:
@@ -1371,7 +1373,7 @@ class Room:
                         or (nx, ny) in block or (nx, ny) in seen:
                     continue
                 nh = hm.get((nx, ny), 0)
-                if nh - ch >= 2 or ch - nh >= 4 or nh == -9:
+                if nh - ch >= 2 or ch - nh >= FALL_DEATH or nh == -9:
                     continue                       # 撞崖 / 坠亡 / 深渊 → 不可达
                 seen.add((nx, ny))
                 dq.append((nx, ny))
@@ -1726,10 +1728,10 @@ class Room:
                 if np in block:
                     continue
                 nh = hm.get(np, 0)
-                if nh - ch >= 2 or ch - nh >= 4 or nh == -9:
+                if nh - ch >= 2 or ch - nh >= FALL_DEATH or nh == -9:
                     continue                           # 崖 / 坠亡 / 深渊不可走（同 reach_set）
                 w = 2 if (nh - ch == 1 and nh >= 1) else (4 if ch - nh >= 2 else 1)
-                nc = cost + w                          # 平/下浅 1、爬坡 2、坠落 2~3 为 4
+                nc = cost + w                          # 平/下浅 1、爬坡 2、坠落 2~7 为 4
                 if nc >= g.get(np, 1 << 30):
                     continue                           # 非更优路径（允许多次松弛，Dijkstra 语义）
                 g[np] = nc
@@ -1967,8 +1969,8 @@ class Room:
             dst_h46 = self.hmap.get((hx, hy), 0)
             cliff = (not ghost) and (dst_h46 - cur_h32 >= 2)
             own = (hx, hy) in p['cells'][1:]
-            # 批46 §2：坠落 ≥4 = 坠亡（ghost/shield 均不豁免——重力对所有人生效）
-            if dst_h46 - cur_h32 <= -4:
+            # 批47：坠落 ≥FALL_DEATH(8) = 坠亡（ghost/shield 均不豁免——重力对所有人生效）
+            if dst_h46 - cur_h32 <= -FALL_DEATH:
                 dead.add(id(p))
                 p['cause'] = 'fall'
                 continue
@@ -2097,12 +2099,12 @@ class Room:
             hx, hy = tent[id(p)]
             p['cells'].insert(0, (hx, hy))
             p.pop('hstreak', None)               # 批14④：成功移动即解除僵持计数
-            # 批46 §2：坠落额外断尾（落差 2~3 → 相对常规结算净掉 N=落差-1 节）
-            # MIN_LEN 保底，不扣分；吃果/生长不取消坠落伤害；坠亡(≥4)已在 section 4 判死
+            # 批47：坠落额外断尾（落差 FALL_BREAK 闭区间 → 相对常规结算净掉 N=落差-1 节）
+            # MIN_LEN 保底，不扣分；吃果/生长不取消坠落伤害；坠亡(≥FALL_DEATH)已在 section 4 判死
             fall_extra = 0
             dst_h46s = self.hmap.get((hx, hy), 0)
             cur_h46s = self.hmap.get(p['cells'][1], 0)   # insert 后 cells[1] = 移动前头格
-            if 2 <= cur_h46s - dst_h46s <= 3:
+            if FALL_BREAK[0] <= cur_h46s - dst_h46s <= FALL_BREAK[1]:
                 fall_extra = cur_h46s - dst_h46s - 1
             el33 = self.eterrain.get((hx, hy))
             if el33:
@@ -2179,7 +2181,7 @@ class Room:
                 continue
             if cur_h is not None:
                 _hd = self.hmap.get((nx, ny), 0)
-                if _hd - cur_h >= 2 or _hd <= cur_h - 4 or _hd == -9:
+                if _hd - cur_h >= 2 or _hd <= cur_h - FALL_DEATH or _hd == -9:
                     continue                       # 折返不折进崖/致命坠落/深渊
             o = self._open_ahead(hx, hy, nd, p.get('id'))
             if o > best_open:
