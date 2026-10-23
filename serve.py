@@ -14,7 +14,7 @@ DATA_DIR = ROOT / 'data'
 STORE_PATH = DATA_DIR / 'store.json'
 
 COLS, ROWS = 24, 24
-MAP_MIN, MAP_MAX = 12, 96
+MAP_MIN, MAP_MAX = 12, 128  # 批47：巨图 128
 FRUITS = [(10, 0xff5f5f), (15, 0xe74c3c), (20, 0xff6b81), (15, 0xa78bfa), (15, 0xffa94d)]
 CYCLE = 0.05            # 主循环 50ms
 PROJ_SPEED = 22.0       # 弹药格/秒

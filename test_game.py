@@ -1340,6 +1340,21 @@ def test_free_cells_big_map():
     print("free cells 96x96 OK: free=%d, %.2fms/scan" % (len(free), ms))
 
 
+def test_map_128_batch47():
+    """批47 §4：MAP_MAX=128——clamp 到 128、96 档不变、128 建房-进图往返"""
+    import serve
+    assert serve.MAP_MAX == 128
+    r = fresh(200)
+    assert r.cols == 128 and r.rows == 128, '超限应 clamp 128'
+    r96 = fresh(96)
+    assert r96.cols == 96, '96 档不变'
+    r128 = fresh(128)
+    assert r128.cols == 128
+    r128.build_terrain()   # 128 建房-进图不抛错、hmap 值域 <=18
+    assert all(h <= 18 for h in r128.hmap.values())
+    print('map 128 batch47 OK')
+
+
 def test_combo_increments_and_expires():
     r = fresh(16)
     now = serve.now_ms()
@@ -4752,7 +4767,7 @@ for fn in [test_die_telemetry_batch40,
             test_settle_dust_idempotent, test_stardust_grant_on_win_and_tie,
             test_skin_normalize_and_auth, test_join_skin_fallback_no_reject,
            test_room_custom_config, test_speed_change_instant,
-           test_free_cells_big_map, test_usage_log,
+           test_free_cells_big_map, test_map_128_batch47, test_usage_log,
            test_auth_login_throttle,
            test_combo_increments_and_expires, test_combo_multiplier_tiers,
            test_double_item_doubles_score, test_magnet_pulls_food,
