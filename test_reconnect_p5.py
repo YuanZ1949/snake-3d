@@ -65,10 +65,13 @@ async def main():
     me = [p for p in snap['players'] if p['id'] == old_id]
     assert me, 'resumed snake missing'
     new_cells = [tuple(c) for c in me[0]['cells']]
-    # 挂起期间蛇冻结；old_cells 采样于断线前最后一帧，允许 ≤2 格漂移，但不许重新出生（长度变）
+    # 挂起期间蛇冻结；old_cells 采样于断线前最后一帧，允许 ≤2 格漂移。
+    # 长度精确守恒不是服务端保证的不变量：重连后蛇在首帧快照广播前必然已走
+    # ≥1 步，那一步可能吃果(+1)或踩空坠落断尾(批46 §2, -1~-2)——都不是重生。
+    # 重生由 resumed/id/dist 三项判定（重生会换 id 或换出生点，dist≫2）。
     dist = sum(abs(a[0] - b[0]) + abs(a[1] - b[1])
                for a, b in zip(new_cells, old_cells)) / float(len(old_cells))
-    assert len(new_cells) == len(old_cells), 'snake respawned: len %d != %d' % (
+    assert abs(len(new_cells) - len(old_cells)) <= 2, 'snake length drifted too far (respawn?): len %d != %d' % (
         len(new_cells), len(old_cells))
     assert dist <= 2, 'snake jumped %d cells after resume' % dist
     print('2 resumed: id=%s cells kept (%d segs, drift=%.1f)' % (
