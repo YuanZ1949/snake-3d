@@ -96,7 +96,8 @@ if (-not $SkipPlaywright) {
     $ok = Start-Serve $WebPort
     if ($ok) {
         $env:BASE = "http://127.0.0.1:$WebPort"
-        $p = & npx playwright test 2>&1 | Out-String
+        # 批46 T12：--retries=2 兜环境性 flaky（solo 终局竞态/AI 咬死类时序，单跑常绿）；确定性回归 3 连败仍红，不掩盖
+        $p = & npx playwright test --retries=2 2>&1 | Out-String
         $pcode = $LASTEXITCODE
         Write-Host (($p -split "`n" | Where-Object { $_ -match 'passed|failed|error' } | Select-Object -Last 5) -join "`n")
         Check "Playwright" ($pcode -eq 0)

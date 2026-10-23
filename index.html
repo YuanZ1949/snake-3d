@@ -2055,19 +2055,15 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     }
     syncHeight(list);
   };
-  // 批46 T9 探针：走廊 h=3 + 落点格(i=6) h=0 一次性原子注入（h1 定值化，除 e2e flaky）
+  // 批46 T9 探针：头格 h=3 + 前一格(i=1) h=0 一次性原子注入（h1 定值化，除 e2e flaky）。
+  // 只需前方 1 格自由即可触发坠落步——6 格走廊版本在 spawn 靠墙/3 AI 咬死时蛇走不到 i=6 就终局（flaky 根因）
   window.__fallScenarioSet = () => {
     if (!myEnt || !myEnt.cells.length) return false;
     const d = myEnt.dir, hd = myEnt.cells[0];
     const list = [...hmapD.entries()].map(([k, v]) => { const a = k.split(','); return [+a[0], +a[1], v]; });
-    for (let i = 0; i < 6; i++) {
-      const x = hd.x + d.x * i, y = hd.y + d.y * i;
-      const e3 = list.find(t => t[0] === x && t[1] === y);
-      if (e3) e3[2] = 3; else list.push([x, y, 3]);
-    }
-    const lx = hd.x + d.x * 6, ly = hd.y + d.y * 6;
-    const el = list.find(t => t[0] === lx && t[1] === ly);
-    if (el) el[2] = 0; else list.push([lx, ly, 0]);
+    const set = (x, y, h) => { const e = list.find(t => t[0] === x && t[1] === y); if (e) e[2] = h; else list.push([x, y, h]); };
+    set(hd.x, hd.y, 3);
+    set(hd.x + d.x, hd.y + d.y, 0);
     syncHeight(list);
     return true;
   };
