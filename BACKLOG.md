@@ -343,3 +343,22 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **截图取证**：`%TEMP%\b45_nailong.png`（黄模型立深橙头球）/ `b45_furina.png`（白蓝模型立 tan 头球+金环头顶），实测 `foot=0.24 / h=0.65 / ringY=0.99`。
 - **门禁**：local_ci ALL GREEN（11套E2E + 单测 + 静态 js=945 + Playwright **54 passed**，含临时取证 1 例，源码 `test(` 总数 54 结构核对无用例丢失）。
 - **部署**：✅ **2026-10-22 15:31 部署生产 dev@`18f4c6d`**（漂移零→predeploy `20261022-153147`→archive→active→200/journal 零 error→双 sha 与 blob 一致→prod_verify35 pass→线上 `MODEL_STAND_H`/`headColorOf` 生效证据→用户局内实拍截图达标：奶龙站黄色深色衬托球顶、脚贴球面、球常可见）。
+
+## 批46（2026-10-23 · 真 3D 垂直物理：爬坡减速/坠落断尾/坠亡/深渊-9 · 已完成，部署闭环见契约）
+
+来源：候选池「宏大起伏」大世界第 3 步。spec `f0ccc0e` → oracle 审查 `483d91b`（采纳 17 项：B1 坠亡入 section4、H1 断尾取代常规缩尾、H3 `_solid` 挡致命坠落、H4 `reach_set` 单一事实源、H5 折返高度过滤、H6 死亡呈现延迟、M1 深渊挂 eff_water、M2 `visH(-9)=-2.2` 等）→ 计划 `5e1fc95`（T1-T13）。契约 `.tamako/contract.json`。
+
+- **T1 `3dd5576`**：`tick_of` 爬坡减速 ×1.5（目标格 Δh=1 且 h>=1；出水洼不算）。
+- **T2 `c828a11`**：坠落落差 ≥4 坠亡 `cause='fall'`（入 section4 结算；ghost/shield 不豁免）。
+- **T3 `46c0e1c`**：坠落断尾——落差 2~3 净掉 |落差|-1 节（MIN_LEN=2 保底；吃果不取消断尾）。
+- **T4+T5 `6995cb9`**：深渊 -9 生成（挂 `eff_water`）+ `occupied` 拦 -9 + 弹道删特判 + `reach_set` 转移规则化。
+- **T6 `a967df6`**：`_solid` 致命坠落挡 + `_deflect_dir` 高度过滤（`cur_h` 可选，旧调用兼容）。
+- **T7 `689620e`**：bot 寻路 BFS→Dijkstra 加权（爬坡代价 2 / 坠落代价 4），cap 4×=8000。
+- **T8 `988345d`**：客户端渲染——深渊 9→-9 漏斗井（`visH=-2.2`/井口青边/黑雾）+ 批41 橙红警戒栅栏整套退役 + 小地图 -9；e2e 迁移（fatal41/height32）。
+- **T9 `718f4db`**：坠落呈现（起跳缓冲/重力加速/落地尘土顿挫微震/坠亡延迟一步）+ H6 时序 e2e（`height46.spec.js`，`__fallScenarioSet` 原子注入）。
+- **T10 `f7830b8`**：PROTO_VER 30→31 双端同批 bump（hmap 值域哨兵 9→-9 协议语义变化，防跨部署旧标签页渲染 -9）。
+- **T11 `1f3c050`**：WS e2e 坠落双场景（`test_fall_p46.py`：落差3断尾存活 5→3节无 die / 落差4 ev die cause='fall'+alive=False，p33 进程内直写 hmap）+ 接入 local_ci/ci.yml 12 套。
+- **p5 修复 `a9701c2`**：重连长度断言改有界容忍 |Δ|≤2（首帧快照前必走≥1步），修 ~1/5 flaky。
+- **T12 `f5ca1cf`**：height46 flaky 根治——注入缩 2 格（头格 h3+前一格 h0，只需 1 格自由）+ 回合终局恢复环（toPass：win→restart / over→等 AI 出 win / playing→重注入）+ local_ci Playwright `--retries=2` 兜环境竞态。
+- **门禁**：local_ci ALL GREEN（**12套E2E** + 单测 + 静态 + Playwright **55 passed**）。
+- **部署**：见 `.tamako/contract.json` 批46 部署契约（漂移零→predeploy tar→archive 投放→PROTO_VER31 线上生效→推双远端）。
