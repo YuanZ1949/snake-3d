@@ -1170,7 +1170,9 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 31;   // 批46：hmap 值域哨兵 9 → -9（地形值域含 -9 雪坡，0 不存）；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
+  const PROTO_VER = 32;   // 批47：hmap 值域 0..4 → 0..18 + 坠落阈值放大；须与服务端 serve.PROTO_VER 同步；不等则下方 room-ok 重载
+  const FALL_DEATH = 8;      // 批47：坠亡落差（>= 死）——与 serve.FALL_DEATH 同步
+  const FALL_BREAK = [2, 7]; // 批47：断尾落差闭区间 [2,7]，净掉 落差-1 节——与 serve.FALL_BREAK 同步
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
@@ -3965,7 +3967,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
       fx.landed = true;
       e._landAt = now;
       burst(e.spine[0].x, e.spine[0].y + .05, e.spine[0].z, 0xb8c4bc, 8);   // 落地尘土（灰白）
-      if (fx.h0 - fx.h1 >= 4) shake = Math.max(shake, .4);                  // 落差≥4 相机微震
+      if (fx.h0 - fx.h1 >= FALL_DEATH) shake = Math.max(shake, .4);          // 批47：坠亡级落差才微震（断尾级 2~7 不震）
     }
     if (e._landAt && now - e._landAt < 160) {
       const dip = -.03 * Math.sin(Math.PI * (now - e._landAt) / 160);       // 落地顿挫：-0.03 峰值回弹
