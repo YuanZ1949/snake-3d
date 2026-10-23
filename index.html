@@ -1170,7 +1170,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 30;   // 批35：皮肤 16 -> 18（角色款奶龙/芙宁娜）；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
+  const PROTO_VER = 31;   // 批46：hmap 值域哨兵 9 → -9（地形值域含 -9 雪坡，0 不存）；须与服务端 serve.PROTO_VER 同步 bump；不等则下方 room-ok 重载
   let loggedUser = localStorage.getItem(USER_KEY) || '';
   let authToken = localStorage.getItem(TOKEN_KEY) || '';
   let myStats = null;
