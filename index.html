@@ -4279,7 +4279,9 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
         g.fillStyle = '#000'; g.fillRect(rx, ry, sq, sq);
         g.strokeStyle = 'rgba(127,216,255,.6)'; g.lineWidth = 1; g.strokeRect(rx + .5, ry + .5, sq - 1, sq - 1);
       } else {
-        g.fillStyle = hv >= 3 ? '#cabfae' : hv === 2 ? '#8a94a6' : '#7c8465';
+        // 批47：色阶扩到 h18——1 / 2~5 / 6~11 / 12~15 / 16~18，灰绿→灰白、越高越亮越白（末档近雪白）
+        g.fillStyle = hv <= 1 ? '#7c8465' : hv <= 5 ? '#9098a7'
+          : hv <= 11 ? '#ccc1b0' : hv <= 15 ? '#ded6c7' : '#ebe5d7';
         g.fillRect(rx, ry, sq, sq);
       }
     }

@@ -1990,7 +1990,7 @@ def test_place_food_avoids_sealed_pocket():
 
 
 def test_place_food_reach_time_budget():
-    """批15①：96×96 大图可达集 BFS 计时 + 缓存命中 + build_terrain 失效"""
+    """批15①/47：96×96 + 128×128 大图可达集 BFS 计时 + 缓存命中 + build_terrain 失效"""
     import time as _time
     r = fresh(96)
     r.walls = [(x, 48) for x in range(0, 96, 2)]                 # 虚线墙（留缝仍连通）
@@ -2005,6 +2005,17 @@ def test_place_food_reach_time_budget():
     r.build_terrain()
     assert r._reach is None, "build_terrain 未使可达集缓存失效"
     print("reach budget OK: %.2fms" % ms)
+    # 批47：128×128 巨图（16384 格）BFS 计时
+    r128 = fresh(128)
+    r128.walls = [(x, 64) for x in range(0, 128, 2)]
+    r128.rocks = [(x, y) for x in range(0, 128, 4) for y in range(0, 128, 8)]
+    mk(r128, 'p2', 'P', [(1, 1), (1, 2), (1, 3)], (0, -1))
+    t0 = _time.perf_counter()
+    reach128 = r128.reach_set()
+    ms128 = (_time.perf_counter() - t0) * 1000.0
+    assert ms128 < 50, "128 可达集 BFS 超时: %.2fms" % ms128
+    assert (1, 1) in reach128
+    print("reach budget 128 OK: %.2fms" % ms128)
 
 
 def test_bot_reaches_food_around_wall():
