@@ -1,6 +1,6 @@
 # local_ci.ps1 — 本地 CI 等价一键回归（批12.5 / A2）
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\local_ci.ps1 [-SkipPlaywright]
-# 内容：停服清库 -> 起双服(28000/8090) -> 11 套 E2E -> 停服清库 -> 单测 -> 静态检查
+# 内容：停服清库 -> 起双服(28000/8090) -> 12 套 E2E -> 停服清库 -> 单测 -> 静态检查
 #        -> 起 8123 -> Playwright 全量 -> 汇总（任一失败 Exit 1）
 param(
     [switch]$SkipPlaywright,
@@ -55,10 +55,10 @@ if (-not $SkipE2E) {
     Check "服2 8090 / 200" $ok2
 
     if ($ok1 -and $ok2) {
-        Say "2/5 11 套 E2E"
+        Say "2/5 12 套 E2E"
         $suites = @('test_ws.py','test_ws2.py','verify_rooms.py','test_p1.py',
                     'test_bots_p4.py','test_reconnect_p5.py','test_pass_p6.py','test_delta_p1.py',
-                    'test_reactions_p33.py', 'test_ws3.py', 'test_ws4.py')
+                    'test_reactions_p33.py', 'test_ws3.py', 'test_ws4.py', 'test_fall_p46.py')
         foreach ($s in $suites) {
             $out = & '.venv\Scripts\python.exe' $s 2>&1 | Out-String
             $code = $LASTEXITCODE
