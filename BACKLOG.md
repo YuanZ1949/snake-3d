@@ -376,4 +376,4 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **T6 `fd64d41`**：128²（16384 格）`reach_set` BFS 计时（实测 24-26ms / 50ms 预算）+ 小地图高度色阶扩到 h18 五档（1 / 2-5 / 6-11 / 12-15 / 16-18，灰绿→近雪白，老图山体不跳色）。
 - **T7 `fbb6ebf`**：`test_fall_p46.py` 场景按新阈值重算（A 落差7 断尾 9→3 存活 / A2 落差7 撞 MIN_LEN 保底 7→2 / B 落差9 坠亡 `cause='fall'`）+ 新增 `e2e/map128.spec.js`（建房选 128 → 进图断言 `cols/rows=128`）+ `test_ws4.py` clamp 断言 96→128 修红（T5 遗留）。
 - **门禁**：local_ci ALL GREEN（**12套E2E** + 单测 + 静态 + Playwright **55 passed**，e2e spec 19 个）。
-- **部署**：⏳ 待投放——生产仍 dev@`294d321`（批46）；投放后回写投放时间/双 sha/回滚点/线上 PROTO_VER=32 核验。
+- **部署**：✅ **2026-10-24 12:08 部署生产 dev@`6a20fe0`**（漂移零→predeploy `20261024-120728` 3208006 B→archive tar 4720640 B→scp+tar -xf→active→HTTP 200 259983B/journal 5 分钟零 error→双 sha `9a001172…`/`ebbc4485…` 与 `6a20fe0` blob 一致→线上 PROTO_VER=32 双端+index.html `FALL_BREAK`×5 在位）。
