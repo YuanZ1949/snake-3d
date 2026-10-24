@@ -1258,6 +1258,25 @@ class Room:
             cy += d[1]
         return n
 
+    def _spawn_open(self, x, y, d, skip_pid=None, cap=24):
+        """批47补丁：spawn 专用前方安全开阔度——逐格步进累计高度检查。
+        固定 cur_h 的 _open_ahead 对多格前瞻有盲区：h=-2 与 h=+1 各自相对 0
+        都合法（上行 <2），但相邻步是 +3 → cliff。线上抽查 ~9% 出生点面朝
+        峭壁直走 1~4 步即死，即此因。上行 ≥2 / 致命坠落 ≥FALL_DEATH / 深渊
+        均视为挡；挡后不再前探（与实际行走一致）。"""
+        n = 0
+        cx, cy = x + d[0], y + d[1]
+        h = self.hmap.get((x, y), 0)
+        while n < cap and not self._solid(cx, cy, skip_pid):
+            nh = self.hmap.get((cx, cy), 0)
+            if nh - h >= 2 or h - nh >= FALL_DEATH or nh == -9:
+                break
+            n += 1
+            h = nh
+            cx += d[0]
+            cy += d[1]
+        return n
+
     def _nearest_opp(self, x, y, skip_pid=None, cap=12):
         best = cap
         for pid, q in self.players.items():
@@ -1314,7 +1333,7 @@ class Room:
                        or (cx, cy) in self.eterrain
                        for cx, cy in cells):
                     continue
-                ahead = self._open_ahead(x, y, d, pid)
+                ahead = self._spawn_open(x, y, d, pid)   # 批47补丁：步进查高度（固定 cur_h 有跨格盲区）
                 if ahead < 4:
                     continue
                 # 前方越开阔越好（自然背对最近的外墙），且尽量远离其它蛇
@@ -1340,7 +1359,7 @@ class Room:
                            or (cx, cy) in occ
                            or self.hmap.get((cx, cy), 0) != 0 for cx, cy in cells):   # 批32：h==0
                         continue
-                    o = self._open_ahead(x, y, d, pid)
+                    o = self._spawn_open(x, y, d, pid)   # 批47补丁：步进查高度
                     if o > best_o:
                         best_o, cand = o, d
                 if cand and best_o >= 4:
@@ -1354,7 +1373,7 @@ class Room:
         cy = max(2, min(self.rows - 3, self.rows // 2))
         bd, ba = (1, 0), -1
         for d in dirs:
-            a = self._open_ahead(cx, cy, d, pid)
+            a = self._spawn_open(cx, cy, d, pid)   # 批47补丁：步进查高度
             if a > ba:
                 ba, bd = a, d
         p['dir'] = bd
