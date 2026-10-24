@@ -1354,7 +1354,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   function buildBoard() {
     clearBoard();
     const dim = Math.max(COLS, ROWS);
-    // 大地图要压缩单格像素，否则 96×96 会生成 3840² 贴图（≈59MB，手机会炸）
+    // 大地图要压缩单格像素，否则 128×128（及 96×96）会生成 3840² 贴图（≈59MB，手机会炸）
     const cp = Math.max(8, Math.min(40, Math.floor(2048 / dim)));
     const c = document.createElement('canvas');
     c.width = c.height = dim * cp;

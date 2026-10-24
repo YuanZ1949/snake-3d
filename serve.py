@@ -955,6 +955,14 @@ class Room:
         area = self.cols * self.rows
         budget = int(0.35 * area)
         used = set(self.rocks) | set(self.walls) | set(self.portals)
+        # 批47审查H-1补：门（传送门）四邻格也不抬高——门格本身强制 h=0，
+        # 若山体贴门生长，宏伟档出口四邻齐 >=2（上行撞崖）即「进退无路」：
+        # 出口四方向开阔度全 0，传出去无论朝哪边走首步必死（传送即死残余）。
+        # 邻格保持 h=0 → 至少一个非墙邻格可走一步，首步必安全（4 步契约
+        # 不足时按 run_portal 两级契约降级为 step>=2 的可避地形）。
+        for px, py in self.portals:
+            for nd in DIRS4:
+                used.add((px + nd[0], py + nd[1]))
 
         def ok(x, y):
             return (0 <= x < self.cols and 0 <= y < self.rows
@@ -1381,7 +1389,7 @@ class Room:
 
     def free_cells(self):
         """一次性构建占用集合，避免逐格调用 occupied() 时反复遍历所有蛇。
-        大地图（最高 96×96）扫描一次只需 1-2ms，否则会卡住主循环。"""
+        大地图（最高 128×128，96 及以下同路径）扫描一次只需 1-2ms，否则会卡住主循环。"""
         occ = set(self.rocks) | set(self.walls) | set(self.portals)
         occ.update(self.eterrain)   # 批33：食物/道具/岩石/出生兜底统一避开元素地形（M7 单点挂钩）
         occ.update((f['x'], f['y']) for f in self.foods)
@@ -1404,8 +1412,10 @@ class Room:
         只看边界/岩石/墙块（蛇身是动态障碍不计入）；传送门当可走格且与配对口互连。
         缓存 self._reach：失效点 build_terrain / maybe_rocks / 子弹碎岩 / spawn / drop，
         另每次调用校验所有蛇头仍在缓存内（防幽灵穿墙跨区后缓存跨区漏算）。
-        96×96（9216 格）单次 BFS 计时见 test_place_food_reach_time_budget。
-        批46 §5：转移规则化——上行≤1 / 下行≤3 可达；上行≥2（崖）、坠亡落差≥4、-9 不可达；
+        最大 128×128（16384 格，96×96=9216 格同路径）单次 BFS 计时见
+        test_place_food_reach_time_budget。
+        批46 §5 / 批47 阈值统一：上行≤1 可达；上行≥2（峭壁）、下行≥FALL_DEATH
+        （致命坠落，常量 serve.FALL_DEATH）、-9（深渊）不可达；
         删 h>=2 无条件 block（山顶无坡=转移规则天然不可达，有坡=真正可达）。"""
         if self._reach is not None and all(
                 p['cells'][0] in self._reach
@@ -1931,7 +1941,10 @@ class Room:
                         d for d in ((1, 0), (-1, 0), (0, 1), (0, -1)) if d != p['dir'])
                     best, bo = order[0], -1
                     for d in order:
-                        o = self._open_ahead(ex, ey, d, p['id'])
+                        # 批47审查H-1：传送门出口择向改用步进高度扫描——
+                        # 固定 cur_h 的 _open_ahead 与 spawn 同盲区，宏伟档
+                        # 17.1% 出口首步即崖/致命坠落（传送即死）。
+                        o = self._spawn_open(ex, ey, d, p['id'])
                         if o > bo:
                             bo, best = o, d
                     p['dir'] = best
@@ -2249,7 +2262,8 @@ class Room:
                 _hd = self.hmap.get((nx, ny), 0)
                 if _hd - cur_h >= 2 or _hd <= cur_h - FALL_DEATH or _hd == -9:
                     continue                       # 折返不折进崖/致命坠落/深渊
-            o = self._open_ahead(hx, hy, nd, p.get('id'))
+            # 首格已由上方 cur_h 拦截，此处仅平局择优——传 cur_h 补齐前瞻一致
+            o = self._open_ahead(hx, hy, nd, p.get('id'), cur_h=cur_h)
             if o > best_open:
                 best_open, best = o, nd
         return best
