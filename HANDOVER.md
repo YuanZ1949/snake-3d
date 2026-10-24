@@ -462,9 +462,9 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`dd7ebef`（批47 spawn 贴崖修复补丁，2026-10-24 13:38 投放）**；批47 审查修复 `8899125` 已 commit 已推双远端、**尚未部署**（生产仍 `dd7ebef`，待决定是否投放） —— `git archive` 全量 tar scp 投放 + `tar -xf`，systemctl restart 后 active。
+当前生产版本：**dev@`92f334a`（批47 审查修复，代码同 `8899125`，2026-10-24 14:58 投放）**；上一生产版本 dev@`dd7ebef`（spawn 贴崖修复，13:38 投放） —— `git archive` 全量 tar scp 投放 + `tar -xf`，systemctl restart 后 active。
 投放后核验：生产 serve.py（LF 口径）sha256 `cfa23a1b…` 与 `dd7ebef` blob **逐字节一致**、HTTP 200、`PROTO_VER=32`。线上抽查 `e2e/spot47.tmp.spec.js` 重跑 **1 passed**（128 列行 / 神峰 maxH=15∈[14,18] / 主脊 mid>0 / 无 reload 循环 / giftPop 关闭）。**git push 已推双远端**（origin/server 齐平 `dd7ebef`）。
-回滚点：**`snake-3d-predeploy-20261024-133844.tar.gz`**（4720640 B；= 批47 首投版本 `6a20fe0` 全量，内容与首投包一致）。上一回滚点：`snake-3d-predeploy-20261024-120728.tar.gz`（3208006 B；含批46 生产态）。上一生产版本记录：dev@`6a20fe0`（批47 高山巨图，2026-10-24 12:08 投放）。
+投放后核验（2026-10-24 14:58）：生产 serve.py（LF 口径）sha256 `d5af63e2…` 与 `92f334a` blob **逐字节一致**、HTTP 200、`PROTO_VER=32`、active；线上抽查 `e2e/spot47.tmp.spec.js` **1 passed**（hmap 5734 格/maxH=15/mid 1346/divine 5/giftPop 关闭）。回滚点：**`snake-3d-predeploy-20261024-145728.tar.gz`**（4720640 B；= 上一生产态 `dd7ebef` 全量）。上一回滚点：**`snake-3d-predeploy-20261024-133844.tar.gz`**（4720640 B；= 批47 首投版本 `6a20fe0` 全量，内容与首投包一致）。上一回滚点：`snake-3d-predeploy-20261024-120728.tar.gz`（3208006 B；含批46 生产态）。上一生产版本记录：dev@`6a20fe0`（批47 高山巨图，2026-10-24 12:08 投放）。
 批40 增量（`3d2162f`）：死亡遥测——die 事件落 usage.log（cause/头格/致死格/h0h1/ring/dir/theme），3 处死亡点挂载 + 单测。
 批41 增量（`edf5e28`）：警戒面对焦（`rebuildFatalEdge()` 致命面橙红警示：|Δh|≥2 真实致死交界画警示条/立面/轮廓线，替代批39 整格描边；小地图致死交界线；e2e/fatal41.spec.js 3 例）+ 大世界面积第 1 步（新建房默认 24→48：serve.py create handler / cSize 选中档 / soloCreate / createRoom·saveRoomCfg fallback / test_ws3 断言同步；**DEFAULT_ROOMS 新手村 24×24 维持批30① 用户拍板不动**）；「宏大起伏」挪候选池单独开轮。
 批42 增量（`c548905`+`e6c92a3`，**已 commit 并推双远端，尚未部署生产**——生产仍在 `edf5e28`，待拍板后随大世界改动一起或单独部署）：修#4 `_win_ok` 同 tick 过期误判（`>`→`>=`）+ 新测试；修#5 test_ws3 rock 断言补 day 0.8；修#6 新增 `scripts/death_stats.py` 死因统计（只读）；修#7 serve.py 绑定地址 `HOST` 环境变量可配（默认 0.0.0.0 不变）+ local_ci 绑 127.0.0.1 与 `-WebPort` 参数；修#8 test_magnet 用例内清随机 eterrain。local_ci ALL GREEN（11套E2E+单测+静态+Playwright 49 passed）。

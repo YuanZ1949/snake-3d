@@ -383,4 +383,5 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
   - **H-1 传送门出口择向**（serve.py:1937）：`_open_ahead` 无 `cur_h` 同根因盲区 → 改 `_spawn_open`；但宏伟档仍有残余「死门」——门格强制 h=0 而山体贴门生长，出口四邻齐 ≥2（上行撞崖）→ 四方向开阔度全 0，传出去首步必死（128 宏伟 28/3200 例）。**根修**：`gen_heights` 把门四邻格加入 `used` 不抬高（邻格保持 h=0 → 至少一个可走一步）→ 首步即死 **28→0**（128/96 × 默认/宏伟 四组全 0），四向围死降级 143 例全部 step≥2 可避（run_portal 两级契约，docstring 已写明）。
   - **M-1 测试缺口**：`test_spawn_height_p47.py` 补 `height_mult=2.6` 宏伟档参数化 + `eff_height()>=2.0` 断言（山脉分支首次进回归；修前该测试从未覆盖批47 山脉路径）。
   - **L-3** `_deflect_dir` 平局择优补 `cur_h`（首格已拦截）；**L-1/L-2** 陈旧「96×96」注释与 reach_set docstring 规则（下行≤3/坠亡≥4 → 上行≥2/下行≥FALL_DEATH=8/-9）更新。
-  - 验证：test_spawn_height_p47/test_game/test_fall_p46 全 PASS → **local_ci ALL GREEN ×2**（E2E 12套+单测+静态 ids=138/css=355/js=948+Playwright **57 passed**）。双远端齐平 `8899125`（**尚未部署**，生产仍 dev@`dd7ebef`）。
+  - 验证：test_spawn_height_p47/test_game/test_fall_p46 全 PASS → **local_ci ALL GREEN ×3**（E2E 12套+单测+静态 ids=138/css=355/js=948+Playwright **57 passed**）。双远端齐平 `92f334a`。
+  - **2026-10-24 14:58 部署生产 dev@`92f334a`**（用户拍板）：回滚点 `snake-3d-predeploy-20261024-145728.tar.gz`（4720640 B=dd7ebef 全量）→ archive 投放 → active/HTTP 200/PROTO_VER=32/生产 serve.py LF sha `d5af63e2…` 与 `92f334a` blob 逐字节一致 → 线上抽查 spot47 **1 passed**（5734 格/maxH=15/divine 5）。
