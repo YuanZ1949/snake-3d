@@ -362,3 +362,18 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **T12 `f5ca1cf`**：height46 flaky 根治——注入缩 2 格（头格 h3+前一格 h0，只需 1 格自由）+ 回合终局恢复环（toPass：win→restart / over→等 AI 出 win / playing→重注入）+ local_ci Playwright `--retries=2` 兜环境竞态。
 - **门禁**：local_ci ALL GREEN（**12套E2E** + 单测 + 静态 + Playwright **55 passed**）。
 - **部署**：✅ **2026-10-23 11:57 部署生产 dev@`294d321`**（漂移零→predeploy `20261023-115738`→archive→active→200 259368B/journal 零 error→双 sha `2ef61de7…`/`b6faa86d…` 与 blob 一致→线上 PROTO_VER=31 双端+`wellGeo`/`__fallDbg`/坠亡逻辑在位→推双远端齐平）。
+
+## 批47（2026-10-23~24 · 高山巨图：宏伟档混合级山脉 h6-11/神峰 14-18 + 128×128 巨图 + 坠落阈值放大 · 已完成，部署闭环见 HANDOVER §11.2/§11.3）
+
+来源：候选池「宏大起伏」大世界第 4 步（用户原话「地形不够宏大」→ 拍板「山太矮 + 图不够大」两者都修）。spec `5681700` → 计划 `5d7d3e0`（T1-T7，无独立 oracle 审查轮）。
+
+- **T1 `b466b78`**：客户端 `FALL_DEATH=8` / `FALL_BREAK=[2,7]` 常量 + `PROTO_VER 31→32` 双端 bump（坠亡微震改 `>= FALL_DEATH`）。
+- **T2 `1475bc5`**：服务端阈值单源常量（`serve.FALL_DEATH=8` / `FALL_BREAK=(2,7)` / `PROTO_VER=32`，`_solid`/`reach_set`/bot Dijkstra/坠亡/断尾/`_deflect_dir` 六处判定收敛；上行撞崖 `>=2` 字面量不动）+ 批46 五个测试阈值迁移（-4→-8、-3→-7）+ 新 `test_fall_thresholds_batch47`。
+- **T3 `26130a4`**：客户端断尾呈现三处（`handleDie` 延迟 / `syncBody` 插值 / `fallFx` 起跳）改引用 `FALL_BREAK[0]`，值仍为 2。
+- **T4 `7214dbe`**：宏伟档混合级生成——神峰 1 座（≥128 图 2 座）h14-18 带 2~3 格峰顶 + 单侧阶梯缓坡、主脊 h6-11（40% 取 9-11）、两侧阶梯缓坡至 h1、30% 单侧缺失成裸崖；预算仍 `0.35×area`；`test_height_mixed_batch47` + 批43 测试迁移。`eff_height<2.0` 旧分支逐字节不动。
+- **T4 修复 `6faed9b`**：主脊方向限四正方向（原 8 向致斜向缓坡 4 邻接不可达，可下坡率 21-32%→71-76%）+ 山脉预算封顶 70%（原吃满 100% 致宏伟房无水池/楼/草）+ 放宽 seed 耦合断言 + 新 `test_height_mountain_budget_batch47`。
+- **T5 `17c4801`**：`MAP_MAX 96→128` + 建房「超大」档新增 `128×128 巨无霸`（80/96 档保留）+ `test_map_128_batch47`（clamp 128 / 96 档不变 / 128 建房进图 hmap ≤18）。
+- **T6 `fd64d41`**：128²（16384 格）`reach_set` BFS 计时（实测 24-26ms / 50ms 预算）+ 小地图高度色阶扩到 h18 五档（1 / 2-5 / 6-11 / 12-15 / 16-18，灰绿→近雪白，老图山体不跳色）。
+- **T7 `fbb6ebf`**：`test_fall_p46.py` 场景按新阈值重算（A 落差7 断尾 9→3 存活 / A2 落差7 撞 MIN_LEN 保底 7→2 / B 落差9 坠亡 `cause='fall'`）+ 新增 `e2e/map128.spec.js`（建房选 128 → 进图断言 `cols/rows=128`）+ `test_ws4.py` clamp 断言 96→128 修红（T5 遗留）。
+- **门禁**：local_ci ALL GREEN（**12套E2E** + 单测 + 静态 + Playwright **55 passed**，e2e spec 19 个）。
+- **部署**：⏳ 待投放——生产仍 dev@`294d321`（批46）；投放后回写投放时间/双 sha/回滚点/线上 PROTO_VER=32 核验。
