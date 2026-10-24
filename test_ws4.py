@@ -35,7 +35,7 @@ async def main():
     async with websockets.connect(WS) as ws:
         w = await recv_until(ws, "welcome")
 
-        # ---- 1. 最大尺寸：96 生效，超过上限被夹到 96 ----
+        # ---- 1. 最大尺寸：96 生效；超上限夹到 MAP_MAX（批47：96→128）----
         await ws.send(json.dumps({"t": "create", "name": "超大图", "size": 96}))
         rm = await recv_until(ws, "rooms")
         cr = await recv_until(ws, "created")
@@ -49,7 +49,7 @@ async def main():
         cr2 = await recv_until(ws, "created")
         over = [r for r in rm2["list"] if r["id"] == cr2["room"]][0]
         print("create(9999) -> clamp:", over["cols"])
-        assert over["cols"] == 96, over
+        assert over["cols"] == 128, over   # 批47 MAP_MAX=128
 
         # ---- 2. 进 96 图：快照尺寸正确 ----
         await ws.send(json.dumps({"t": "join", "room": rid, "name": "巨蟒"}))

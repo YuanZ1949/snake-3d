@@ -2044,7 +2044,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     const c = myEnt.cells[0], f = (myEnt.lastCells && myEnt.lastCells[0]) || c;
     const h0 = hmapD.get(pkey(f.x, f.y)) || 0, h1 = hmapD.get(pkey(c.x, c.y)) || 0;
     return {cell: {x: c.x, y: c.y}, prev: {x: f.x, y: f.y}, h0, h1, drop: h0 - h1,
-            falling: h0 - h1 >= 2, fx: myEnt._fallFx || null, burstAt: window.__dieBurstAt || 0};
+            falling: h0 - h1 >= FALL_BREAK[0], fx: myEnt._fallFx || null, burstAt: window.__dieBurstAt || 0};
   };
   // 批32 探针：头格起沿 dir 6 格注入 h（走廊抬升，蛇移动也保持高台）
   window.__mapSelfCorridorSet = h => {

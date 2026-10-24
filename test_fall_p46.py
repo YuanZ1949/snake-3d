@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""批46 E2E：致命坠落（fall 死因）+ 坠落额外断尾（落差 2~3 净掉 落差-1 节）。
+"""批47 E2E：坠落阈值放大后重算的坠亡（fall 死因）+ 坠落额外断尾（落差 2~7 净掉 落差-1 节）。
 
-进程内起服（同 test_reactions_p33 模式）：外服随机地形不可控，直写 hmap
-才能确定性构造落差场景。覆盖：
-  A) 落差3（3→0）：存活 + 净掉2节（5→3），无 die 事件
-  B) 落差4（3→-1，致命线）：ev die cause='fall' + alive=False
+批46 原场景按旧阈值（落差 4 即坠亡）编码；批47 阈值单源化为
+FALL_DEATH=8 / FALL_BREAK=(2,7)，节数据重算：
+  A) 落差7（7→0）：存活 + 净掉6节（9→3），无 die 事件
+  A2) 落差7 + 仅7节（MIN_LEN=2 保底）：应掉6节但只能掉5节 → 恰好剩 2 节
+  B) 落差9（8→-1 ≥ FALL_DEATH=8）：ev die cause='fall' + alive=False
 """
 import asyncio, json, sys, time
 
@@ -75,27 +76,44 @@ async def main():
     p['base_tick'] = 150
     p['off_at'] = None
 
-    # ---- A) 落差3（3→0）：存活 + 净掉2节（5→3），头部落在落点格 ----
-    room.hmap = {(5, 5): 3, }
-    p['cells'] = [(5, 5), (4, 5), (3, 5), (2, 5), (1, 5)]
+    # ---- A) 落差7（7→0）：存活 + 净掉6节（9→3），头部落在落点格 ----
+    # 头格 (5,5) h=7，向 +x 走出到 (6,5) h=0：FALL_BREAK=[2,7] 命中断尾 6 节
+    room.hmap = {(5, 5): 7, }
+    p['cells'] = [(5, 5), (5, 6), (4, 6), (4, 7), (3, 7), (3, 8), (2, 8), (2, 9), (1, 9)]
     p['dir'] = (1, 0)
     p['queue'] = []
     p['last_move'] = 0
     await tick(room)
     snap, evs = await read_snaps(ws, rid, 1)
     me = [q for q in snap['players'] if q['id'] == pid][0]
-    assert me['alive'] is True, 'drop3 应存活: %r' % (me,)
+    assert me['alive'] is True, 'drop7 应存活: %r' % (me,)
     assert [int(c) for c in me['cells'][0]] == [6, 5], '头应落 (6,5): %r' % (me['cells'][0],)
-    assert len(me['cells']) == 3, '落差3 净掉2节（5→3），实际 %d' % len(me['cells'])
-    assert not any(e.get('t') == 'die' for e in evs), '落差3 不应有 die: %r' % (evs,)
-    print('A drop3 survive: len 5->3, head (6,5), no die')
+    assert len(me['cells']) == 3, '落差7 净掉6节（9→3），实际 %d' % len(me['cells'])
+    assert not any(e.get('t') == 'die' for e in evs), '落差7 不应有 die: %r' % (evs,)
+    print('A drop7 survive: len 9->3, head (6,5), no die')
 
-    # ---- B) 落差4（3→-1 = 致命线）：死亡 + cause=fall ----
-    room.hmap = {(10, 10): 3, (11, 10): -1}
+    # ---- A2) 落差7 + 7节：MIN_LEN=2 保底（应掉6节只能掉5节）----
+    p['cells'] = [(5, 5), (5, 6), (4, 6), (4, 7), (3, 7), (3, 8), (2, 8)]
+    p['dir'] = (1, 0)
+    p['queue'] = []
+    p['last_move'] = 0
+    p['alive'] = True
+    await tick(room)
+    snap, evs = await read_snaps(ws, rid, 1)
+    me = [q for q in snap['players'] if q['id'] == pid][0]
+    assert me['alive'] is True, 'drop7 7节 应存活: %r' % (me,)
+    assert [int(c) for c in me['cells'][0]] == [6, 5], '头应落 (6,5): %r' % (me['cells'][0],)
+    assert len(me['cells']) == serve.MIN_LEN, 'MIN_LEN=%d 保底，实际 %d' % (serve.MIN_LEN, len(me['cells']))
+    assert not any(e.get('t') == 'die' for e in evs), 'MIN_LEN 保底不应有 die: %r' % (evs,)
+    print('A2 drop7 floor: len 7->%d (MIN_LEN clamp), no die' % serve.MIN_LEN)
+
+    # ---- B) 落差9（8→-1 ≥ FALL_DEATH=8 = 致命线）：死亡 + cause=fall ----
+    room.hmap = {(10, 10): 8, (11, 10): -1}
     p['cells'] = [(10, 10), (9, 10), (8, 10)]
     p['dir'] = (1, 0)
     p['queue'] = []
     p['last_move'] = 0
+    p['alive'] = True
     await tick(room)
     snap, evs = await read_snaps(ws, rid, 1)
     dies = [e for e in evs if e.get('t') == 'die']
@@ -104,7 +122,7 @@ async def main():
     assert dies[0].get('cause') == 'fall', '死因应为 fall: %r' % (dies[0],)
     me = [q for q in snap['players'] if q['id'] == pid][0]
     assert me['alive'] is False, 'FallA 应已死亡: %r' % (me,)
-    print('B drop4 die: ev die cause=fall, alive=False')
+    print('B drop9 die: ev die cause=fall, alive=False')
 
     await ws.close()
     server.close()
