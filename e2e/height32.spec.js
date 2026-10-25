@@ -40,12 +40,14 @@ test('蛇节按 hmap 抬升 + 预测挡崖', async ({ page }) => {
   const base = await page.evaluate(() => window.__heightDbg());   // 平地基准（headY≈SEG_H/2）
   // 1) 走廊抬升：头格起沿 dir 6 格全 h=2（蛇移动也保持在高台上）
   await page.evaluate(() => window.__mapSelfCorridorSet(2));
-  await page.waitForTimeout(400);
+  // 时序竞态修复（批47 收尾）：抬升不保证 400ms 内生效，轮询到抬升再读数（CI 实测偶发不足）
+  await page.waitForFunction((b) => window.__heightDbg().headY > b + 0.5, base.headY, { timeout: 3000 });
   const d = await page.evaluate(() => window.__heightDbg());
   expect(d.headY).toBeGreaterThan(base.headY + 0.5);              // visH(2)=0.7 → 抬升 ≥0.5
   // 2) 预测挡崖：头前一格注入 h=4（相对头格上行 ≥2）→ advanceStep 悬停
-  await page.evaluate(() => window.__mapSelfCliffBlock());
-  const d2 = await page.evaluate(() => window.__heightDbg());
+  // 时序竞态修复（批47 收尾）：注入与预测必须同一次 evaluate 原子完成——
+  // 分两次调用会被服务端快照插队（本探针只改客户端 hmapD，快照推进蛇头后 blocked 窗口仅一个 tick）
+  const d2 = await page.evaluate(() => { window.__mapSelfCliffBlock(); return window.__heightDbg(); });
   expect(d2.blocked).toBe(true);
 });
 
