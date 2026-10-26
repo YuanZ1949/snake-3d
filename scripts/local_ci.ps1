@@ -21,8 +21,10 @@ function Check($name, $ok) {
     else     { Write-Host "[FAIL] $name" -ForegroundColor Red; $script:fail += $name }
 }
 function Stop-Serve {
+    # 批A3：只杀本 CI 自己起的 .venv 实例——原过滤只看 serve.py，会连用户手起的
+    # （anaconda/系统 python）一起清掉（2026-10-24 会话内实测误杀两次）
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-        Where-Object { $_.CommandLine -match 'serve\.py' } |
+        Where-Object { $_.CommandLine -match 'serve\.py' -and $_.CommandLine -like '*.venv*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 600
 }
