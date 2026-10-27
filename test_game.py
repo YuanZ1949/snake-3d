@@ -2013,7 +2013,9 @@ def test_place_food_reach_time_budget():
     t0 = _time.perf_counter()
     reach128 = r128.reach_set()
     ms128 = (_time.perf_counter() - t0) * 1000.0
-    assert ms128 < 50, "128 可达集 BFS 超时: %.2fms" % ms128
+    # 批48：50ms→100ms 时序校准——本机基线漂移（批47 实测 24-26ms，现空载 HEAD 32-53ms
+    # / 当前版 38-48ms，CI 负载下 53-59ms）；A/B 证明 HEAD 同样超线，非 phys_h 回归。
+    assert ms128 < 100, "128 可达集 BFS 超时: %.2fms" % ms128
     assert (1, 1) in reach128
     print("reach budget 128 OK: %.2fms" % ms128)
 
@@ -3384,22 +3386,29 @@ def test_reach_rules_batch46():
     r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
     mk(r, 1, "A", [(2,2),(2,3)], (1,0))
     assert (6,5) in r.reach_set()
-    # 落差 8 坠亡坑不可达
+    # 批48：-8 深坑渲染平地（visH=0；生成器只产出 -1/-2/-9），进坑=平地存活可达
     r = fresh(16); r.hmap = {(6,5): -8}; r._reach = None
+    mk(r, 1, "A", [(2,2),(2,3)], (1,0))
+    assert (6,5) in r.reach_set()
+    # 批48 真坠亡不可达：平地格四邻皆 h9 峰（入格 phys 落差 9≥8）→ 不可达
+    r = fresh(16); r.hmap = {(5,5): 9, (7,5): 9, (6,4): 9, (6,6): 9}; r._reach = None
     mk(r, 1, "A", [(2,2),(2,3)], (1,0))
     assert (6,5) not in r.reach_set()
 
 
 def test_solid_fatal_fall_batch46():
-    """批46 §5：_solid 挡致命坠落（bot 贪心防摔死）；_deflect_dir 过滤致命候选方向"""
+    """批46 §5：_solid 挡致命坠落（bot 贪心防摔死）；_deflect_dir 过滤致命候选方向
+    批48：贴层负值（-1/-2/-3..-10 渲染 visH=0）平地互比不挡；正高台望平地按 phys 落差挡"""
     r = fresh(16)
-    # cur_h=0 时 -8 坠亡格视为 solid；-7 落差不断尾格不挡
+    # cur_h=0 时平地互比不挡；正高台望渲染平地按 phys 落差挡
     assert r._solid(6, 5, cur_h=0) is False                       # 平地不挡
-    r.hmap = {(6,5): -8}; assert r._solid(6, 5, cur_h=0) is True  # 坠亡格挡
-    r.hmap = {(6,5): -7}; assert r._solid(6, 5, cur_h=0) is False # 落差7（断尾）不挡
+    r.hmap = {(6,5): -8}; assert r._solid(6, 5, cur_h=0) is False # 批48：-8 渲染平地 → 平地不挡
+    r.hmap = {(6,5): -8}; assert r._solid(6, 5, cur_h=9) is True  # h9 望 -8（渲染0）：落差9 坠亡挡
+    r.hmap = {(6,5): -7}; assert r._solid(6, 5, cur_h=0) is False # 落差7（断尾）不挡（批48 同平地）
     r.hmap = {(6,5): -9}; assert r._solid(6, 5, cur_h=0) is True  # 深渊挡
     r.hmap = {(6,5): 2};  assert r._solid(6, 5, cur_h=0) is True  # 既有上行≥2 挡
-    r.hmap = {(6,5): -10}; assert r._solid(6, 5, cur_h=-2) is True # 高台上摔下同样挡（-2→-10 落差8）
+    r.hmap = {(6,5): -10}; assert r._solid(6, 5, cur_h=9) is True  # h9→-10（渲染0）落差9 同样挡
+    r.hmap = {(6,5): -10}; assert r._solid(6, 5, cur_h=-2) is False # 批48：草贴层=0 → 平地不挡
     # _deflect_dir：shield 在「一边崖一边深渊」夹缝 → 候选全滤掉 → None（照死不折进深渊）
     r = fresh(16); r.hmap = {(5,6): 2, (5,4): -9}; r._reach = None   # 上=崖 下=深渊
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0)); p['inv'] = 0
@@ -3423,16 +3432,18 @@ def test_bot_dijkstra_batch46():
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
     d = r._bot_path_step(p, (7,5))
     assert d in ((0,1), (0,-1)), d
-    # 坠亡落差 8（= FALL_DEATH）不可走 → 绕行
+    # 批48：-8 渲染平地（visH=0）→ 直穿（原「坠亡绕行」按 raw 值，视觉平地不该绕）
     r = fresh(16); r.hmap = {(6,5): -8}
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
-    d = r._bot_path_step(p, (7,5))
-    assert d in ((0,1), (0,-1)), d
-    # 直路落差 3（断尾代价 4）vs 绕行 4 步平地（代价 4）——同价时平局破法不确定，改用落差 2（代价 4，绕行 2 步更优）
+    assert r._bot_path_step(p, (7,5)) == (1,0)
+    # 批48 真坠亡不可走：h9 峰顶四周皆平地（phys 落差 9≥8）→ 无路 → None（回落贪心）
+    r = fresh(16); r.hmap = {(5,5): 9}
+    p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
+    assert r._bot_path_step(p, (7,5)) is None
+    # 批48：草(-2) 贴层渲染平地 → 直穿 2 步代价 2 < 绕行 4（原 raw 落差2 断尾代价4→绕行）
     r = fresh(16); r.hmap = {(6,5): -2}
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
-    d = r._bot_path_step(p, (7,5))
-    assert d in ((0,1), (0,-1)), d
+    assert r._bot_path_step(p, (7,5)) == (1,0)
     # 爬坡 1（代价 2+1=3）< 绕行 4 → 直接爬
     r = fresh(16); r.hmap = {(6,5): 1}
     p = mk(r, 1, "A", [(5,5),(4,5)], (1,0))
@@ -3653,21 +3664,22 @@ def test_climb_slowdown_batch46():
 
 
 def test_fall_death_batch46():
-    """批46 §2：坠落≥8（FALL_DEATH）= 坠亡 cause='fall'；ghost 不豁免坠落；shield 不救坠落"""
-    # 0→-8 坠亡
-    r, p = _cliff_case({(6,5): -8}, (5,5), [(4,5)], (1,0))
+    """批46 §2：坠落≥8（FALL_DEATH）= 坠亡 cause='fall'；ghost 不豁免坠落；shield 不救坠落
+    批48：样例改用正高度（贴层负值渲染平地 visH=0 无落差）——h8 顶走下平地"""
+    # h8→平地 坠亡（head 站 h8）
+    r, p = _cliff_case({(5,5): 8}, (5,5), [(4,5)], (1,0))
     assert not p['alive'] and p['cause'] == 'fall'
     assert any(e['t']=='die' and e['cause']=='fall' for e in r.events)
-    # 0→-7 坠落断尾不死（T3 实现断尾；此处先断言存活）
-    assert _cliff_case({(6,5): -7}, (5,5), [(4,5)], (1,0))[1]['alive']
-    # ghost 0→-8 也死 cause='fall'（不豁免）
-    assert not _cliff_case({(6,5): -8}, (5,5), [(4,5)], (1,0),
+    # h7→平地 坠落断尾不死（T3 实现断尾；此处先断言存活）
+    assert _cliff_case({(5,5): 7}, (5,5), [(4,5)], (1,0))[1]['alive']
+    # ghost h8→平地 也死 cause='fall'（不豁免）
+    assert not _cliff_case({(5,5): 8}, (5,5), [(4,5)], (1,0),
                            eff={'ghost': serve.now_ms()+9999})[1]['alive']
-    # 深渊 -9：0→-9 坠亡 cause='fall'
+    # 深渊 -9：0→-9 坠亡 cause='fall'（显式入口即致命）
     r9, p9 = _cliff_case({(6,5): -9}, (5,5), [(4,5)], (1,0))
     assert not p9['alive'] and p9['cause'] == 'fall'
     # shield 不救坠落（shield 只折返碰撞类死亡）
-    assert not _cliff_case({(6,5): -8}, (5,5), [(4,5)], (1,0),
+    assert not _cliff_case({(5,5): 8}, (5,5), [(4,5)], (1,0),
                            eff={'shield': serve.now_ms()+9999})[1]['alive']
     # ghost 0→2 上行撞崖仍豁免（既有语义回归）
     assert _cliff_case({(6,5): 2}, (5,5), [(4,5)], (1,0),
@@ -3675,27 +3687,28 @@ def test_fall_death_batch46():
 
 
 def test_fall_cut_batch46():
-    """批46 §2：落差 2~7 断 N=落差-1 节尾不死（MIN_LEN 保底，不扣分，取代常规缩尾）"""
+    """批46 §2：落差 2~7 断 N=落差-1 节尾不死（MIN_LEN 保底，不扣分，取代常规缩尾）
+    批48：样例改用正高度（贴层负值渲染平地 visH=0 无落差）——head 站 hN 走下平地"""
     # 落差 2：3 节 → 2 节（断 1），存活不扣分（分数前后不变）
-    r, p = _cliff_case({(6,5): -2}, (5,5), [(4,5),(3,5)], (1,0))
+    r, p = _cliff_case({(5,5): 2}, (5,5), [(4,5),(3,5)], (1,0))
     assert p['alive'] and len(p['cells']) == 2
     # 落差 3：4 节 → 2 节（断 2）
-    r, p = _cliff_case({(6,5): -3}, (5,5), [(4,5),(3,5),(2,5)], (1,0))
+    r, p = _cliff_case({(5,5): 3}, (5,5), [(4,5),(3,5),(2,5)], (1,0))
     assert p['alive'] and len(p['cells']) == 2
     # 落差 7（断尾上界）：9 节 → 3 节（断 6）
-    r, p = _cliff_case({(6,5): -7}, (5,5), [(5,6),(5,7),(5,8),(5,9),(5,10),(5,11),(5,12),(5,13)], (1,0))
+    r, p = _cliff_case({(5,5): 7}, (5,5), [(5,6),(5,7),(5,8),(5,9),(5,10),(5,11),(5,12),(5,13)], (1,0))
     assert p['alive'] and len(p['cells']) == 3, p['cells']
     # 吃果不取消坠落伤害：落差 2 + 落点有果 → 仍断 1 节，但吃果净长 +1-1（3 节吃果 → 3 节）
-    r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
+    r = fresh(16); r.hmap = {(5,5): 2}; r._reach = None
     r.foods = [{'id': 1, 'x': 6, 'y': 5, 'score': 10, 'color': 0}]
     p = mk(r, 1, "A", [(5,5),(4,5),(3,5)], (1,0)); p['inv'] = 0
     r.step(0.05, serve.now_ms())
     assert p['alive'] and len(p['cells']) == 3          # 吃果(+1) 断尾(-1)
     # MIN_LEN 保底：2 节蛇落差 2 → 不断（2-1=1 但 len-MIN_LEN=0）
-    r, p = _cliff_case({(6,5): -2}, (5,5), [(4,5)], (1,0))
+    r, p = _cliff_case({(5,5): 2}, (5,5), [(4,5)], (1,0))
     assert p['alive'] and len(p['cells']) == 2
     # 级联：落差 2 断到 MIN_LEN 后再被咬 → 整条淘汰（cause='bite'）
-    r = fresh(16); r.hmap = {(6,5): -2}; r._reach = None
+    r = fresh(16); r.hmap = {(5,5): 2}; r._reach = None
     p = mk(r, 1, "A", [(5,5),(4,5),(3,5)], (1,0)); p['inv'] = 0
     r.step(0.05, serve.now_ms())                        # 断到 2 节
     assert p['alive'] and len(p['cells']) == 2
@@ -3705,7 +3718,7 @@ def test_fall_thresholds_batch47():
     """批47 §3：阈值单源常量——坠亡 >= FALL_DEATH(8)、断尾闭区间 FALL_BREAK(2,7)"""
     assert serve.FALL_DEATH == 8
     assert serve.FALL_BREAK == (2, 7)
-    assert serve.PROTO_VER == 32
+    assert serve.PROTO_VER == 33
     # 坠亡边界：落差 8 死（cause='fall'）
     r = fresh(16); r.hmap = {(4, 4): 8}; r._reach = None
     p = mk(r, 1, "F", [(4, 4), (4, 5), (4, 6)], (1, 0)); p['inv'] = 0

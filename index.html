@@ -1171,7 +1171,7 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
   let demoPaused = false, pausedGame = false;   // 批30③b：pausedGame=对局挂机态
   // ---- 账户 / 房间 / 道具 / 主题 ----
   const USER_KEY = 'snake-user', TOKEN_KEY = 'snake-token', ROOM_KEY = 'snake-room';
-  const PROTO_VER = 32;   // 批47：hmap 值域 0..4 → 0..18 + 坠落阈值放大；须与服务端 serve.PROTO_VER 同步；不等则下方 room-ok 重载
+  const PROTO_VER = 33;   // 批48：撞崖/坠亡按物理海拔 phys_h（水/草贴层=0）；须与服务端 serve.PROTO_VER 同步；不等则下方 room-ok 重载
   const FALL_DEATH = 8;      // 批47：坠亡落差（>= 死）——与 serve.FALL_DEATH 同步
   const FALL_BREAK = [2, 7]; // 批47：断尾落差闭区间 [2,7]，净掉 落差-1 节——与 serve.FALL_BREAK 同步
   let loggedUser = localStorage.getItem(USER_KEY) || '';
@@ -2992,9 +2992,11 @@ import { GLTFLoader } from './loaders/GLTFLoader.js';
     if (ghost) { nx = (nx + statics.cols) % statics.cols; ny = (ny + statics.rows) % statics.rows; }
     const k = pkey(nx, ny);
     // 批32：高度挡崖——目标比当前头格上行 ≥2 悬停（含深渊 9；下行自由；ghost 穿透）
+    // 批48：高度差按物理海拔（水/草贴层=0）——出草丛/出水面不再误判悬停
     const hCur = statics.hmap ? (statics.hmap.get(pkey(head.x, head.y)) || 0) : 0;
     const hT = statics.hmap ? statics.hmap.get(k) : undefined;
-    const cliff = hT !== undefined && hT - hCur >= 2;
+    const hp = h => (h > 0 ? h : 0);
+    const cliff = hT !== undefined && hp(hT) - hp(hCur) >= 2;
     const blocked = statics.portals.has(k) ||
       (!ghost && (nx < 0 || ny < 0 || nx >= statics.cols || ny >= statics.rows ||
                   statics.walls.has(k) || statics.rocks.has(k) || cliff));

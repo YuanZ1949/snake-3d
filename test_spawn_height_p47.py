@@ -36,9 +36,12 @@ def walk4(room, hx, hy, d):
         if (hx, hy) in room.rocks or (hx, hy) in room.walls:
             return 'rock', step
         nh = room.hmap.get((hx, hy), 0)
-        if nh - cur_h >= 2:
+        # 批48：判据镜像 serve 的物理海拔 phys_h（水/草贴层=0；-9 入口即致命）——
+        # 「面朝致命地形」= 真会死，草丛/水面出口是视觉平地不算崖
+        ph = lambda x: x if x > 0 else 0
+        if ph(nh) - ph(cur_h) >= 2:
             return 'cliff', step
-        if nh - cur_h <= -serve.FALL_DEATH:
+        if nh == -9 or ph(cur_h) - ph(nh) >= serve.FALL_DEATH:
             return 'fall', step
         cur_h = nh
     return None, 4

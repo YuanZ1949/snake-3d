@@ -45,10 +45,19 @@ REG_MAX = 30            # 批22 M2：同 IP 窗内成功注册上限（防批量
 REG_WIN = 300           # 批22 M2：注册计数窗口（秒）
 PASS_FAIL_MAX = 10      # 批22 M5：同 (ip, 房) 窗内口令错试上限（语义同登录防爆破）
 PASS_FAIL_WIN = 300     # 批22 M5：口令错试计数窗口（秒）
-PROTO_VER = 32          # 批47：hmap 值域 0..4→0..18 + 坠落阈值放大；改协议必须同步 bump 双端
-                        # （服务端 serve.py 与客户端 index.html），客户端不等即 reload
+PROTO_VER = 33          # 批48：撞崖/坠亡高度差改按物理海拔 phys_h（水/草贴层=0）；
+                        # 改协议必须同步 bump 双端（serve.py 与 index.html），客户端不等即 reload
 FALL_DEATH = 8          # 批47 §3：坠亡落差下限（>= 死，cause='fall'）
 FALL_BREAK = (2, 7)     # 批47 §3：坠落断尾落差闭区间（净掉 落差-1 节，MIN_LEN=2 保底）
+
+
+def phys_h(h):
+    """批48：物理海拔——只有正高度是真抬升；水(-1)/草(-2)/深渊(-9) 是地板贴层/井，
+    视觉海拔按 0 计。撞崖（上行>=2）、坠亡（落差>=FALL_DEATH）、可达性、断尾带
+    一律比较 phys_h；-9 深渊仍由各调用点显式判「入口即致命」。
+    起因：生产 183 起 cliff 死中 144 起(79%)是 h0<0 的「离开凹地」死亡
+    （草-2→平0 被算成爬升 2 判崖），客户端把水/草渲染为地板贴层 → 视觉无崖。"""
+    return h if h > 0 else 0
 ADMIN_USERS = {'yuan'}  # 批30④：管理员用户名白名单（登录后生效；加人改这里，匿名恒否）
 BULLET_CUT = 1          # 子弹命中其他蛇时截断的格数（不要太大）
 BITE_SCORE_PER_CELL = 8 # 咬断对方每格获得的分数
@@ -1248,7 +1257,9 @@ class Room:
             return True
         if cur_h is not None:
             _hs = self.hmap.get((x, y), 0)
-            if _hs - cur_h >= 2 or _hs <= cur_h - FALL_DEATH:
+            # 批48：贴层高度按 0 比较；-9 深渊显式挡（bot 免坠入）
+            if phys_h(_hs) - phys_h(cur_h) >= 2 or phys_h(cur_h) - phys_h(_hs) >= FALL_DEATH \
+                    or _hs == -9:
                 return True
         for pid, q in self.players.items():
             if pid == skip_pid or not q['alive']:
@@ -1277,7 +1288,7 @@ class Room:
         h = self.hmap.get((x, y), 0)
         while n < cap and not self._solid(cx, cy, skip_pid):
             nh = self.hmap.get((cx, cy), 0)
-            if nh - h >= 2 or h - nh >= FALL_DEATH or nh == -9:
+            if phys_h(nh) - phys_h(h) >= 2 or phys_h(h) - phys_h(nh) >= FALL_DEATH or nh == -9:
                 break
             n += 1
             h = nh
@@ -1449,7 +1460,7 @@ class Room:
                         or (nx, ny) in block or (nx, ny) in seen:
                     continue
                 nh = hm.get((nx, ny), 0)
-                if nh - ch >= 2 or ch - nh >= FALL_DEATH or nh == -9:
+                if phys_h(nh) - phys_h(ch) >= 2 or phys_h(ch) - phys_h(nh) >= FALL_DEATH or nh == -9:
                     continue                       # 撞崖 / 坠亡 / 深渊 → 不可达
                 seen.add((nx, ny))
                 dq.append((nx, ny))
@@ -1804,9 +1815,9 @@ class Room:
                 if np in block:
                     continue
                 nh = hm.get(np, 0)
-                if nh - ch >= 2 or ch - nh >= FALL_DEATH or nh == -9:
+                if phys_h(nh) - phys_h(ch) >= 2 or phys_h(ch) - phys_h(nh) >= FALL_DEATH or nh == -9:
                     continue                           # 崖 / 坠亡 / 深渊不可走（同 reach_set）
-                w = 2 if (nh - ch == 1 and nh >= 1) else (4 if ch - nh >= 2 else 1)
+                w = 2 if (phys_h(nh) - phys_h(ch) == 1) else (4 if phys_h(ch) - phys_h(nh) >= 2 else 1)
                 nc = cost + w                          # 平/下浅 1、爬坡 2、坠落 2~7 为 4
                 if nc >= g.get(np, 1 << 30):
                     continue                           # 非更优路径（允许多次松弛，Dijkstra 语义）
@@ -2046,10 +2057,11 @@ class Room:
             # 批32：上行 ≥2（含深渊 9）= 撞崖；ghost 豁免（下行/水草本就无障碍）
             cur_h32 = self.hmap.get(p['cells'][0], 0)
             dst_h46 = self.hmap.get((hx, hy), 0)
-            cliff = (not ghost) and (dst_h46 - cur_h32 >= 2)
+            # 批48：高度差按物理海拔 phys_h（水/草贴层=0）；-9 深渊入口即坠亡
+            cliff = (not ghost) and (phys_h(dst_h46) - phys_h(cur_h32) >= 2)
             own = (hx, hy) in p['cells'][1:]
             # 批47：坠落 ≥FALL_DEATH(8) = 坠亡（ghost/shield 均不豁免——重力对所有人生效）
-            if dst_h46 - cur_h32 <= -FALL_DEATH:
+            if dst_h46 == -9 or phys_h(cur_h32) - phys_h(dst_h46) >= FALL_DEATH:
                 dead.add(id(p))
                 p['cause'] = 'fall'
                 continue
@@ -2183,8 +2195,8 @@ class Room:
             fall_extra = 0
             dst_h46s = self.hmap.get((hx, hy), 0)
             cur_h46s = self.hmap.get(p['cells'][1], 0)   # insert 后 cells[1] = 移动前头格
-            if FALL_BREAK[0] <= cur_h46s - dst_h46s <= FALL_BREAK[1]:
-                fall_extra = cur_h46s - dst_h46s - 1
+            if FALL_BREAK[0] <= phys_h(cur_h46s) - phys_h(dst_h46s) <= FALL_BREAK[1]:
+                fall_extra = phys_h(cur_h46s) - phys_h(dst_h46s) - 1
             el33 = self.eterrain.get((hx, hy))
             if el33:
                 self.set_aura(p, el33, now)      # 批33：踩格替换——覆盖旧 aura、时长重置
@@ -2260,7 +2272,8 @@ class Room:
                 continue
             if cur_h is not None:
                 _hd = self.hmap.get((nx, ny), 0)
-                if _hd - cur_h >= 2 or _hd <= cur_h - FALL_DEATH or _hd == -9:
+                if phys_h(_hd) - phys_h(cur_h) >= 2 or phys_h(cur_h) - phys_h(_hd) >= FALL_DEATH \
+                        or _hd == -9:
                     continue                       # 折返不折进崖/致命坠落/深渊
             # 首格已由上方 cur_h 拦截，此处仅平局择优——传 cur_h 补齐前瞻一致
             o = self._open_ahead(hx, hy, nd, p.get('id'), cur_h=cur_h)
