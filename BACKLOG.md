@@ -397,3 +397,5 @@ push：`0e7c39e..b191c9f`，origin/server/dev 三者 = `b191c9f`，工作区干�
 - **性能 A/B 无回归**：空载 HEAD mean 40.9ms vs 当前 44.4ms（区间重叠，差值在噪声内）；CI 负载下两版均贴/超 50ms 线（批47 基线 24-26ms 已漂移）→ **128 可达集预算 50→100ms 时序校准**（保留 2x 余量，A/B 证据写在 test 注释；校准前 test_place_food_reach_time_budget 连续 2 次 CI 红 58.89/53.41ms）。
 - **验收**：local_ci ALL GREEN（12 E2E + 单测 + 静态 ids=138 + Playwright **56 passed**），CI_EXIT=0（2026-10-28）。
 - **遗留**：客户端纯动画层落差计算（handleDie drop / fallAnim / fallFx / shake）有意未改（动画层 e2e 时序风险）；**生产部署另行确认**（用户拍板后走 predeploy 流程，PROTO 33 会强制旧标签 reload）。
+
+- **部署**：✅ **2026-10-28 部署生产 dev@`4d4094c`**（用户拍板「部署」）：漂移检查=纯换行差异（生产 CRLF 归一后与 `92f334a` blob 逐字节一致，坑 #10）→ 回滚点 `snake-3d-predeploy-20261028-094507.tar.gz`（3233922 B）→ `git archive` 投放；**坑 #10 变体**：`e2e/scripts/docs/loaders/models/utils/.github` 为批47 root 属主致 ubuntu 提取报 `Cannot open: File exists` → `chown -R ubuntu:ubuntu` 后重提 **TAR_EXIT=0** 全树一致 → active/HTTP 200 260158B/双端 PROTO_VER=33/journal 10 分钟零 error/生产 serve.py+index.html sha 与 `4d4094c` blob 逐字节一致 → `prod_verify35` **VERDICT=pass**（ALL_ERRS=[]）→ 生产 serve.py 拷 `/tmp/b48test` 隔离跑 `test_depression_cliff_p48.py` **C1-C6 全过 EXIT=0**（已清理，防污染 data）。

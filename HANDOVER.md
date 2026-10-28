@@ -462,7 +462,7 @@ ssh tencent 'journalctl -u snake-3d --since "3 minutes ago" --no-pager | grep -i
 ssh tencent 'tar xzf /home/ubuntu/snake-3d-predeploy-<时间戳>.tar.gz -C /home/ubuntu && sudo systemctl restart snake-3d'
 ```
 
-当前生产版本：**dev@`92f334a`（批47 审查修复，代码同 `8899125`，2026-10-24 14:58 投放）**；上一生产版本 dev@`dd7ebef`（spawn 贴崖修复，13:38 投放） —— `git archive` 全量 tar scp 投放 + `tar -xf`，systemctl restart 后 active。
+当前生产版本：**dev@`4d4094c`（批48 隐形悬崖 phys_h 修复，PROTO_VER 33，2026-10-28 投放）**；上一生产版本 dev@`92f334a`（批47 审查修复，代码同 `8899125`，2026-10-24 14:58 投放） —— `git archive` 全量 tar scp 投放 + `tar -xf`，systemctl restart 后 active。
 投放后核验：生产 serve.py（LF 口径）sha256 `cfa23a1b…` 与 `dd7ebef` blob **逐字节一致**、HTTP 200、`PROTO_VER=32`。线上抽查 `e2e/spot47.tmp.spec.js` 重跑 **1 passed**（128 列行 / 神峰 maxH=15∈[14,18] / 主脊 mid>0 / 无 reload 循环 / giftPop 关闭）。**git push 已推双远端**（origin/server 齐平 `dd7ebef`）。
 投放后核验（2026-10-24 14:58）：生产 serve.py（LF 口径）sha256 `d5af63e2…` 与 `92f334a` blob **逐字节一致**、HTTP 200、`PROTO_VER=32`、active；线上抽查 `e2e/spot47.tmp.spec.js` **1 passed**（hmap 5734 格/maxH=15/mid 1346/divine 5/giftPop 关闭）。回滚点：**`snake-3d-predeploy-20261024-145728.tar.gz`**（4720640 B；= 上一生产态 `dd7ebef` 全量）。上一回滚点：**`snake-3d-predeploy-20261024-133844.tar.gz`**（4720640 B；= 批47 首投版本 `6a20fe0` 全量，内容与首投包一致）。上一回滚点：`snake-3d-predeploy-20261024-120728.tar.gz`（3208006 B；含批46 生产态）。上一生产版本记录：dev@`6a20fe0`（批47 高山巨图，2026-10-24 12:08 投放）。
 批40 增量（`3d2162f`）：死亡遥测——die 事件落 usage.log（cause/头格/致死格/h0h1/ring/dir/theme），3 处死亡点挂载 + 单测。
